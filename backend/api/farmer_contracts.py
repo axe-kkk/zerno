@@ -28,6 +28,7 @@ from backend.models import (
     FarmerContractType,
     FarmerContractStatus,
     FarmerGrainDeduction,
+    GrainVoucher,
     User
 )
 from backend.schemas import (
@@ -828,6 +829,17 @@ async def create_farmer_contract(
                     raise HTTPException(status_code=400, detail=f"Недостатньо {stock.name} на складі. Доступно: {available:.2f}")
                 stock.reserved_kg += item.quantity_kg
             item_name = stock.name
+        elif item.item_type == FarmerContractItemType.VOUCHER:
+            if not item.culture_id:
+                raise HTTPException(status_code=400, detail="Оберіть культуру для талону")
+            culture = session.get(GrainCulture, item.culture_id)
+            if not culture:
+                raise HTTPException(status_code=404, detail="Культуру не знайдено")
+            if culture.name != "Пшениця":
+                raise HTTPException(status_code=400, detail="Талони можна виписувати тільки на Пшеницю")
+            price = item.price_per_kg or culture.price_per_kg
+            item_name = f"Талон: {culture.name}"
+            # Талон не резервує фізичне зерно на складі
         else:
             price = item.price_per_kg or 1.0
             item_name = "Готівка"
@@ -845,18 +857,27 @@ async def create_farmer_contract(
         ))
         return item.quantity_kg * price
 
+    voucher_total = 0.0  # Сума талонних позицій (обліковуються окремо)
+
     for item in payload.company_items:
-        company_total += build_item(item, FarmerContractItemDirection.FROM_COMPANY)
+        item_value = build_item(item, FarmerContractItemDirection.FROM_COMPANY)
+        company_total += item_value
+        # Талонні позиції не входять у balance_uah контракту
+        item_type = item.item_type.value if hasattr(item.item_type, 'value') else item.item_type
+        if item_type == FarmerContractItemType.VOUCHER.value:
+            voucher_total += item_value
 
     for item in payload.farmer_items:
         farmer_total += build_item(item, FarmerContractItemDirection.FROM_FARMER)
 
+    # balance_uah = (сума від компанії БЕЗ талонів) - (сума від фермера)
+    non_voucher_company = company_total - voucher_total
     contract = FarmerContract(
         owner_id=payload.owner_id,
         contract_type=payload.contract_type.value if hasattr(payload.contract_type, 'value') else payload.contract_type,
         status=FarmerContractStatus.OPEN.value,
         total_value_uah=company_total,
-        balance_uah=max(company_total - farmer_total, 0.0),
+        balance_uah=max(non_voucher_company - farmer_total, 0.0),
         note=payload.note,
         created_by_user_id=current_user.id
     )
@@ -981,16 +1002,31 @@ async def list_farmer_contract_payments(
 
 
 def _check_contract_completion(session: Session, contract: FarmerContract):
-    """Перевірити чи контракт повністю виконаний"""
+    """Перевірити чи контракт повністю виконаний.
+    Контракт закривається коли:
+    - balance_uah <= 0 (всі грошові зобов'язання виконані)
+    - всі НЕталонні позиції видані/прийняті
+    Талонні позиції НЕ враховуються при закритті контракту —
+    вони обробляються окремо через «Хлібний завод».
+    """
     if contract.balance_uah > 0.01:
         return  # Ще є борг
+
     items = session.exec(
         select(FarmerContractItem).where(FarmerContractItem.contract_id == contract.id)
     ).all()
+
     if not items:
         contract.status = FarmerContractStatus.CLOSED.value
         return
-    all_delivered = all(item.delivered_kg >= item.quantity_kg - 0.01 for item in items)
+
+    # Перевіряємо тільки НЕталонні позиції
+    non_voucher_items = [i for i in items if i.item_type != FarmerContractItemType.VOUCHER.value]
+    if not non_voucher_items:
+        # Контракт тільки з талонами — не закриваємо автоматично
+        return
+
+    all_delivered = all(item.delivered_kg >= item.quantity_kg - 0.01 for item in non_voucher_items)
     if all_delivered:
         contract.status = FarmerContractStatus.CLOSED.value
 
@@ -1249,6 +1285,108 @@ async def create_farmer_contract_payment(
         ))
         contract.balance_uah = max(0.0, contract.balance_uah - amount_uah)
 
+    # ─── VOUCHER: талон на зерно (хлібний завод) ───
+    elif payload.payment_type == FarmerContractPaymentType.VOUCHER:
+        if not payload.culture_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Вкажіть культуру")
+        culture = session.get(GrainCulture, payload.culture_id)
+        if not culture:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Культуру не знайдено")
+        if culture.name != "Пшениця":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Талони можна виписувати тільки на Пшеницю")
+
+        # Визначаємо кількість з позиції контракту (талон виписується цілком)
+        voucher_item = None
+        voucher_contract_item_id = None
+        if payload.contract_item_id:
+            voucher_item = session.get(FarmerContractItem, payload.contract_item_id)
+            if not voucher_item or voucher_item.contract_id != contract_id:
+                raise HTTPException(status_code=400, detail="Позицію талону не знайдено")
+            if voucher_item.item_type != FarmerContractItemType.VOUCHER.value:
+                raise HTTPException(status_code=400, detail="Обрана позиція не є талоном")
+            remaining = voucher_item.quantity_kg - voucher_item.delivered_kg
+            if remaining < 0.01:
+                raise HTTPException(status_code=400, detail="Цей талон вже виписано")
+            # Талон виписується цілком
+            payload.quantity_kg = remaining
+        else:
+            if not payload.quantity_kg or payload.quantity_kg <= 0:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Вкажіть кількість")
+            voucher_item = session.exec(
+                select(FarmerContractItem).where(
+                    FarmerContractItem.contract_id == contract_id,
+                    FarmerContractItem.item_type == FarmerContractItemType.VOUCHER.value,
+                    FarmerContractItem.direction == FarmerContractItemDirection.FROM_COMPANY.value,
+                    FarmerContractItem.culture_id == payload.culture_id
+                )
+            ).first()
+
+        qty = payload.quantity_kg
+        # Використовуємо ціну з позиції контракту, а не поточну ціну культури
+        voucher_price = voucher_item.price_per_kg if voucher_item else culture.price_per_kg
+        amount_uah = qty * voucher_price
+
+        # Проверяем баланс фермера
+        available = _get_farmer_balance(session, contract.owner_id, payload.culture_id)
+        if qty > available + 0.01:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Недостатньо зерна на балансі фермера. Доступно: {available:.2f}"
+            )
+
+        # Списываем зерно с баланса фермера → в "наше"
+        stock = _get_or_create_grain_stock(session, payload.culture_id)
+        stock.farmer_quantity_kg -= qty
+        stock.own_quantity_kg += qty
+        session.add(stock)
+
+        if voucher_item:
+            voucher_item.delivered_kg += qty
+            session.add(voucher_item)
+            voucher_contract_item_id = voucher_item.id
+
+        payment = FarmerContractPayment(
+            contract_id=contract_id,
+            contract_item_id=voucher_contract_item_id,
+            payment_type=FarmerContractPaymentType.VOUCHER.value,
+            item_name=f"Талон: {culture.name}",
+            amount=0.0,
+            currency=Currency.UAH,
+            amount_uah=amount_uah,
+            culture_id=payload.culture_id,
+            quantity_kg=qty,
+            created_by_user_id=current_user.id
+        )
+        session.add(payment)
+        session.flush()
+
+        # Создаём талон
+        voucher = GrainVoucher(
+            farmer_contract_id=contract_id,
+            farmer_contract_payment_id=payment.id,
+            owner_id=contract.owner_id,
+            culture_id=payload.culture_id,
+            quantity_kg=qty,
+            price_per_kg=voucher_price,
+            total_value_uah=amount_uah,
+            paid_value_uah=0.0,
+            remaining_value_uah=amount_uah,
+            is_closed=False,
+            created_by_user_id=current_user.id,
+        )
+        session.add(voucher)
+
+        # Списання з балансу фермера
+        session.add(FarmerGrainDeduction(
+            owner_id=contract.owner_id,
+            culture_id=payload.culture_id,
+            quantity_kg=qty,
+            payment_id=payment.id
+        ))
+
+        # Талон НЕ змінює balance_uah контракту.
+        # Борг по талону обліковується та погашається окремо через «Хлібний завод».
+
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Невідомий тип операції")
 
@@ -1409,6 +1547,57 @@ async def cancel_farmer_contract_payment(
 
         # Повертаємо борг
         contract.balance_uah += payment.amount_uah
+        session.add(contract)
+
+    # ─── VOUCHER: талон на зерно → повертаємо зерно фермеру, видаляємо талон ───
+    elif payment.payment_type == FarmerContractPaymentType.VOUCHER.value:
+        qty = payment.quantity_kg or 0.0
+
+        if qty > 0 and payment.culture_id:
+            stock = _get_or_create_grain_stock(session, payment.culture_id)
+            stock.own_quantity_kg = max(0.0, stock.own_quantity_kg - qty)
+            stock.farmer_quantity_kg += qty
+            session.add(stock)
+
+            # Видаляємо списання з балансу фермера
+            deduction = session.exec(
+                select(FarmerGrainDeduction).where(
+                    FarmerGrainDeduction.payment_id == payment.id
+                )
+            ).first()
+            if deduction:
+                session.delete(deduction)
+
+        # Повертаємо delivered_kg у позиції контракту
+        if payment.contract_item_id:
+            voucher_item = session.get(FarmerContractItem, payment.contract_item_id)
+            if voucher_item:
+                voucher_item.delivered_kg = max(0.0, voucher_item.delivered_kg - qty)
+                session.add(voucher_item)
+
+        # Видаляємо або закриваємо пов'язаний талон
+        voucher = session.exec(
+            select(GrainVoucher).where(
+                GrainVoucher.farmer_contract_payment_id == payment.id
+            )
+        ).first()
+        if voucher:
+            # Если по талону уже были выплаты — нельзя отменить
+            from backend.models import GrainVoucherPayment
+            active_vp = session.exec(
+                select(GrainVoucherPayment).where(
+                    GrainVoucherPayment.voucher_id == voucher.id,
+                    GrainVoucherPayment.is_cancelled == False
+                )
+            ).all()
+            if active_vp:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Неможливо скасувати: по талону вже є активні виплати. Спершу скасуйте виплати по талону."
+                )
+            session.delete(voucher)
+
+        # Талон не змінював balance_uah, тому не повертаємо
         session.add(contract)
 
     # ─── SETTLEMENT: авторозрахунок (контракт виплати) ───

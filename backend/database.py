@@ -186,8 +186,27 @@ def init_db():
                 select(GrainCulture).where(GrainCulture.name == culture_name)
             ).first()
             if not exists:
-                session.add(GrainCulture(name=culture_name, price_per_kg=0.0))
+                session.add(GrainCulture(name=culture_name, price_per_kg=1.0))
         session.commit()
+
+        # Мінімальна ціна 1 для всіх позицій на складі
+        from backend.models import PurchaseStock
+        zero_cultures = session.exec(
+            select(GrainCulture).where(GrainCulture.price_per_kg < 1.0)
+        ).all()
+        for c in zero_cultures:
+            c.price_per_kg = 1.0
+            session.add(c)
+
+        zero_stocks = session.exec(
+            select(PurchaseStock).where(PurchaseStock.sale_price_per_kg < 1.0)
+        ).all()
+        for s in zero_stocks:
+            s.sale_price_per_kg = 1.0
+            session.add(s)
+        if zero_cultures or zero_stocks:
+            session.commit()
+            print(f"✅ Оновлено ціни: {len(zero_cultures)} культур, {len(zero_stocks)} товарів (мін. 1 грн/кг)")
 
         # Инициализация типов транспорта
         default_vehicle_types = [

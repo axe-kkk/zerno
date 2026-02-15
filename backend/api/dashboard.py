@@ -5,7 +5,9 @@ from backend.database import get_session
 from backend.models import (
     CashRegister, GrainStock, GrainCulture, GrainIntake, GrainShipment,
     FarmerContract, FarmerContractStatus, GrainOwner, Transaction,
-    PurchaseStock, PurchaseCategory
+    PurchaseStock, PurchaseCategory, FarmerContractItem, FarmerContractPayment,
+    FarmerContractItemDirection, FarmerContractPaymentType,
+    GrainVoucher
 )
 from backend.auth import get_current_user, User
 from datetime import datetime, timedelta
@@ -24,8 +26,6 @@ class DashboardStatsResponse(BaseModel):
     total_stock_kg: float  # Общее количество зерна на складе
     stock_by_culture: list[dict]  # [{"name": "Пшениця", "quantity_kg": 1000.0}, ...]
     top_cultures: list[dict]  # Топ-5 культур по количеству
-    total_own_kg: float  # Выкупленное зерно
-    total_farmer_kg: float  # Невыкупленное зерно
     
     # Контракти фермерів
     contracts_total: int
@@ -33,7 +33,6 @@ class DashboardStatsResponse(BaseModel):
     contracts_closed: int
     contracts_total_value: float  # Общая сумма всех контрактов
     contracts_balance: float  # Общий остаток по контрактам
-    avg_contract_value: float  # Средняя сумма контракта
     
     # Фермери
     farmers_total: int
@@ -43,10 +42,6 @@ class DashboardStatsResponse(BaseModel):
     intakes_today: int
     intakes_pending: int  # Ожидают подтверждения
     shipments_today: int
-    total_intakes: int  # Всего приёмов
-    total_shipments: int  # Всего отправок
-    total_intake_kg: float  # Всего принято зерна, кг
-    total_shipment_kg: float  # Всего отправлено зерна, кг
     
     # Последние транзакции кассы
     recent_transactions: list[dict]
@@ -54,6 +49,24 @@ class DashboardStatsResponse(BaseModel):
     # Закупки
     purchases_stock_total: float  # Общее количество закупок на складе
     purchases_by_category: list[dict]  # По категориям
+    
+    # Зерно у фермерів
+    grain_purchased_from_farmers_kg: float  # Выкуплено у фермеров
+    grain_not_purchased_from_farmers_kg: float  # Не выкуплено у фермеров
+
+    # Тоннаж за сегодня
+    intakes_today_kg: float
+    shipments_today_kg: float
+
+    # Доля собственного/фермерского зерна
+    own_stock_kg: float
+    farmer_stock_kg: float
+
+    # Талони (хлібний завод)
+    vouchers_total_value_uah: float
+    vouchers_remaining_uah: float
+    vouchers_count: int
+    vouchers_open_count: int
 
 
 def get_or_create_cash_register(session: Session) -> CashRegister:
@@ -89,41 +102,34 @@ async def get_dashboard_stats(
     # ── Склад ──
     stocks = session.exec(select(GrainStock)).all()
     total_stock_kg = sum(s.quantity_kg for s in stocks)
-    total_own_kg = sum(s.own_quantity_kg for s in stocks)  # Выкупленное зерно
-    total_farmer_kg = sum(s.farmer_quantity_kg for s in stocks)  # Невыкупленное зерно
+    
+    # Создаем словарь для быстрого поиска по culture_id
+    stock_dict = {s.culture_id: s for s in stocks}
+    
+    # Получаем все культуры
+    all_cultures = session.exec(select(GrainCulture)).all()
     
     stock_by_culture = []
-    for stock in stocks:
-        culture = session.get(GrainCulture, stock.culture_id)
-        if culture and stock.quantity_kg > 0:
+    for culture in all_cultures:
+        stock = stock_dict.get(culture.id)
+        if stock:
             stock_by_culture.append({
                 "name": culture.name,
                 "quantity_kg": round(stock.quantity_kg, 2),
                 "own_quantity_kg": round(stock.own_quantity_kg, 2),
                 "farmer_quantity_kg": round(stock.farmer_quantity_kg, 2)
             })
+        else:
+            # Если нет записи в GrainStock, добавляем с нулевыми значениями
+            stock_by_culture.append({
+                "name": culture.name,
+                "quantity_kg": 0.0,
+                "own_quantity_kg": 0.0,
+                "farmer_quantity_kg": 0.0
+            })
     
     # Сортируем по количеству и берем топ-5
     top_cultures = sorted(stock_by_culture, key=lambda x: x["quantity_kg"], reverse=True)[:5]
-    
-    # ── Общая статистика по приёмам и отправкам ──
-    total_intakes = session.exec(select(func.count(GrainIntake.id))).one() or 0
-    total_shipments = session.exec(select(func.count(GrainShipment.id))).one() or 0
-    
-    # Общее количество принятого зерна
-    total_intake_kg = session.exec(
-        select(func.sum(GrainIntake.accepted_weight_kg))
-    ).one() or 0.0
-    total_intake_kg = round(total_intake_kg, 2) if total_intake_kg else 0.0
-    
-    # Общее количество отправленного зерна
-    total_shipment_kg = session.exec(
-        select(func.sum(GrainShipment.quantity_kg))
-    ).one() or 0.0
-    total_shipment_kg = round(total_shipment_kg, 2) if total_shipment_kg else 0.0
-    
-    # Средняя сумма контракта
-    avg_contract_value = round(contracts_total_value / contracts_total, 2) if contracts_total > 0 else 0.0
     
     # ── Контракти фермерів ──
     all_contracts = session.exec(select(FarmerContract)).all()
@@ -201,6 +207,58 @@ async def get_dashboard_stats(
         for k, v in sorted(purchases_by_category.items(), key=lambda x: x[1], reverse=True)
     ]
     
+    # ── Зерно у фермерів ──
+    # Выкупленное зерно: сумма quantity_kg из платежей типа goods_receive (не отмененных)
+    purchased_payments = session.exec(
+        select(FarmerContractPayment)
+        .where(and_(
+            FarmerContractPayment.payment_type == FarmerContractPaymentType.GOODS_RECEIVE.value,
+            FarmerContractPayment.is_cancelled == False,
+            FarmerContractPayment.quantity_kg.isnot(None)
+        ))
+    ).all()
+    grain_purchased_from_farmers_kg = sum(p.quantity_kg for p in purchased_payments if p.quantity_kg)
+    
+    # Невыкупленное зерно: сумма (quantity_kg - delivered_kg) из позиций контрактов типа FROM_FARMER
+    farmer_items = session.exec(
+        select(FarmerContractItem)
+        .where(FarmerContractItem.direction == FarmerContractItemDirection.FROM_FARMER.value)
+    ).all()
+    grain_not_purchased_from_farmers_kg = sum(
+        max(0.0, item.quantity_kg - item.delivered_kg)
+        for item in farmer_items
+    )
+    
+    # ── Тоннаж за сегодня ──
+    today_intakes = session.exec(
+        select(GrainIntake)
+        .where(and_(
+            GrainIntake.created_at >= today_start,
+            GrainIntake.created_at < today_end
+        ))
+    ).all()
+    intakes_today_kg = sum(i.net_weight_kg for i in today_intakes if i.net_weight_kg)
+    
+    today_shipments = session.exec(
+        select(GrainShipment)
+        .where(and_(
+            GrainShipment.created_at >= today_start,
+            GrainShipment.created_at < today_end
+        ))
+    ).all()
+    shipments_today_kg = sum(s.quantity_kg for s in today_shipments if s.quantity_kg)
+    
+    # ── Доля собственного/фермерского ──
+    own_stock_kg = sum(s.own_quantity_kg for s in stocks)
+    farmer_stock_kg = sum(s.farmer_quantity_kg for s in stocks)
+
+    # ── Талони (хлібний завод) ──
+    vouchers = session.exec(select(GrainVoucher)).all()
+    vouchers_total_value_uah = sum(v.total_value_uah for v in vouchers)
+    vouchers_remaining_uah = sum(v.remaining_value_uah for v in vouchers)
+    vouchers_count = len(vouchers)
+    vouchers_open_count = sum(1 for v in vouchers if not v.is_closed)
+    
     return DashboardStatsResponse(
         cash_balances=cash_balances,
         total_stock_kg=round(total_stock_kg, 2),
@@ -219,12 +277,15 @@ async def get_dashboard_stats(
         recent_transactions=recent_transactions,
         purchases_stock_total=round(purchases_stock_total, 2),
         purchases_by_category=purchases_by_category_list,
-        total_own_kg=round(total_own_kg, 2),
-        total_farmer_kg=round(total_farmer_kg, 2),
-        total_intakes=total_intakes,
-        total_shipments=total_shipments,
-        total_intake_kg=total_intake_kg,
-        total_shipment_kg=total_shipment_kg,
-        avg_contract_value=avg_contract_value
+        grain_purchased_from_farmers_kg=round(grain_purchased_from_farmers_kg, 2),
+        grain_not_purchased_from_farmers_kg=round(grain_not_purchased_from_farmers_kg, 2),
+        intakes_today_kg=round(intakes_today_kg, 2),
+        shipments_today_kg=round(shipments_today_kg, 2),
+        own_stock_kg=round(own_stock_kg, 2),
+        farmer_stock_kg=round(farmer_stock_kg, 2),
+        vouchers_total_value_uah=round(vouchers_total_value_uah, 2),
+        vouchers_remaining_uah=round(vouchers_remaining_uah, 2),
+        vouchers_count=vouchers_count,
+        vouchers_open_count=vouchers_open_count
     )
 

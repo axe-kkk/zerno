@@ -3,6 +3,27 @@
 // При локальной разработке можно использовать 'http://localhost:8000/api'
 const API_BASE_URL = '/api';
 
+// ── SVG Icons for table action buttons ──
+const ICONS = {
+    view: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+    edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>',
+    delete: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
+    cancel: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>',
+    operation: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+    activate: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+    close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+    balance: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
+    adjust: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>',
+    price: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
+    reserve: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>',
+    pay: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>',
+    voucher: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h4M6 14h8"/><circle cx="18" cy="12" r="2"/></svg>',
+};
+
+function iconBtn(iconName, tooltip, cls = 'btn-icon-secondary') {
+    return `<button class="btn-icon ${cls}" title="${tooltip}">${ICONS[iconName]}</button>`;
+}
+
 let currentUser = null;
 let isSuperAdmin = false;
 let culturesCache = [];
@@ -81,6 +102,7 @@ async function initializeDashboard() {
     initLandlords();
     initContracts();
     initPayments();
+    initVouchers();
 
     await Promise.all([
         loadCashBalance(),
@@ -181,73 +203,140 @@ function updateAdminVisibility() {
 async function loadDashboardStats() {
     try {
         const response = await apiFetch('/dashboard/stats');
-        if (!response.ok) {
-            throw new Error('Помилка завантаження статистики');
-        }
+        if (!response.ok) throw new Error('Помилка завантаження статистики');
 
         const stats = await response.json();
 
-        // Каса
+        // ── Top strip: Cash ──
         document.getElementById('dashboard-cash-uah').textContent = formatAmount(stats.cash_balances.uah);
         document.getElementById('dashboard-cash-usd').textContent = formatAmount(stats.cash_balances.usd);
         document.getElementById('dashboard-cash-eur').textContent = formatAmount(stats.cash_balances.eur);
 
-        // Загальна статистика
-        document.getElementById('dashboard-total-stock').textContent = formatAmount(stats.total_stock_kg);
-        document.getElementById('dashboard-total-own').textContent = formatAmount(stats.total_own_kg || 0);
-        document.getElementById('dashboard-total-farmer').textContent = formatAmount(stats.total_farmer_kg || 0);
-        document.getElementById('dashboard-contracts-total').textContent = stats.contracts_total;
-        document.getElementById('dashboard-contracts-open').textContent = stats.contracts_open;
-        document.getElementById('dashboard-farmers-total').textContent = stats.farmers_total;
-        document.getElementById('dashboard-farmers-active').textContent = stats.farmers_active;
-        document.getElementById('dashboard-ops-today').textContent = stats.intakes_today + stats.shipments_today;
+
+        // ── Panel 1: Today ──
         document.getElementById('dashboard-intakes-today').textContent = stats.intakes_today;
         document.getElementById('dashboard-shipments-today').textContent = stats.shipments_today;
-        
-        // Додаткова статистика
-        document.getElementById('dashboard-total-intakes').textContent = stats.total_intakes || 0;
-        document.getElementById('dashboard-total-intake-kg').textContent = formatAmount(stats.total_intake_kg || 0) + ' кг';
-        document.getElementById('dashboard-total-shipments').textContent = stats.total_shipments || 0;
-        document.getElementById('dashboard-total-shipment-kg').textContent = formatAmount(stats.total_shipment_kg || 0) + ' кг';
-        document.getElementById('dashboard-avg-contract').textContent = formatAmount(stats.avg_contract_value || 0);
-        document.getElementById('dashboard-contracts-total-value-card').textContent = formatAmount(stats.contracts_total_value);
+        document.getElementById('dashboard-intakes-today-kg').textContent = formatAmount(stats.intakes_today_kg || 0) + ' кг';
+        document.getElementById('dashboard-shipments-today-kg').textContent = formatAmount(stats.shipments_today_kg || 0) + ' кг';
+        document.getElementById('dashboard-intakes-pending').textContent = stats.intakes_pending || 0;
 
-        // Контракти
+        // ── Panel 1: Grain ownership ──
+        const ownKg = stats.own_stock_kg || 0;
+        const farmerKg = stats.farmer_stock_kg || 0;
+        document.getElementById('dashboard-own-stock').textContent = formatAmount(ownKg);
+        document.getElementById('dashboard-farmer-stock').textContent = formatAmount(farmerKg);
+        const ownershipTotal = ownKg + farmerKg;
+        const ownPctBar = ownershipTotal > 0 ? (ownKg / ownershipTotal * 100) : 50;
+        const farmerPctBar = ownershipTotal > 0 ? (farmerKg / ownershipTotal * 100) : 50;
+        document.getElementById('dashboard-own-bar').style.width = ownPctBar + '%';
+        document.getElementById('dashboard-farmer-bar').style.width = farmerPctBar + '%';
+
+        // ── Left panel: Stock by culture (horizontal bars) ──
+        const stockContainer = document.getElementById('dashboard-stock-cultures');
+        document.getElementById('dashboard-total-stock').textContent = formatAmount(stats.total_stock_kg) + ' кг';
+
+        if (stats.stock_by_culture && stats.stock_by_culture.length > 0) {
+            // Сортируем: сначала по количеству (убывание), затем по алфавиту
+            const sorted = [...stats.stock_by_culture].sort((a, b) => {
+                if (b.quantity_kg !== a.quantity_kg) {
+                    return b.quantity_kg - a.quantity_kg;
+                }
+                return a.name.localeCompare(b.name);
+            });
+            
+            const maxQty = Math.max(...sorted.map(c => c.quantity_kg), 0);
+            
+            stockContainer.innerHTML = sorted.map(c => {
+                const ownPct = maxQty > 0 ? ((c.own_quantity_kg || 0) / maxQty * 100) : 0;
+                const farmerPct = maxQty > 0 ? ((c.farmer_quantity_kg || 0) / maxQty * 100) : 0;
+                return `
+                    <div class="db-stock-item">
+                        <div class="db-stock-row">
+                            <span class="db-stock-name">${escapeHtml(c.name)}</span>
+                            <div class="db-stock-bar-wrap">
+                                <div class="db-stock-bar-own" style="width:${ownPct}%"></div>
+                                <div class="db-stock-bar-farmer" style="width:${farmerPct}%"></div>
+                            </div>
+                            <span class="db-stock-qty">${formatAmount(c.quantity_kg)}</span>
+                        </div>
+                        <div class="db-stock-sub">
+                            <span><span class="dot-own">${formatAmount(c.own_quantity_kg || 0)}</span> власне</span>
+                            <span><span class="dot-farmer">${formatAmount(c.farmer_quantity_kg || 0)}</span> фермер.</span>
+                        </div>
+                    </div>`;
+            }).join('');
+        } else {
+            stockContainer.innerHTML = '<div class="db-empty">Немає культур</div>';
+        }
+
+        // ── Panel 1: Contracts ──
         document.getElementById('dashboard-contracts-open-value').textContent = stats.contracts_open;
         document.getElementById('dashboard-contracts-closed-value').textContent = stats.contracts_closed;
         document.getElementById('dashboard-contracts-total-value').textContent = formatAmount(stats.contracts_total_value);
         document.getElementById('dashboard-contracts-balance-value').textContent = formatAmount(stats.contracts_balance);
 
+        // ── Panel 1: Vouchers ──
+        const vCountEl = document.getElementById('dashboard-vouchers-count');
+        const vOpenEl = document.getElementById('dashboard-vouchers-open');
+        const vTotalEl = document.getElementById('dashboard-vouchers-total');
+        const vRemainingEl = document.getElementById('dashboard-vouchers-remaining');
+        if (vCountEl) vCountEl.textContent = stats.vouchers_count || 0;
+        if (vOpenEl) vOpenEl.textContent = stats.vouchers_open_count || 0;
+        if (vTotalEl) vTotalEl.textContent = formatAmount(stats.vouchers_total_value_uah || 0);
+        if (vRemainingEl) vRemainingEl.textContent = formatAmount(stats.vouchers_remaining_uah || 0);
 
-        // Останні транзакції
-        const transactionsContainer = document.getElementById('dashboard-recent-transactions');
+        // ── Panel 2: Grain from farmers ──
+        const purchased = stats.grain_purchased_from_farmers_kg || 0;
+        const notPurchased = stats.grain_not_purchased_from_farmers_kg || 0;
+        document.getElementById('dashboard-grain-purchased').textContent = formatAmount(purchased);
+        document.getElementById('dashboard-grain-not-purchased').textContent = formatAmount(notPurchased);
+        const grainTotal = purchased + notPurchased;
+        const grainPct = grainTotal > 0 ? Math.round((purchased / grainTotal) * 100) : 0;
+        document.getElementById('dashboard-purchase-pct').textContent = grainPct + '%';
+        document.getElementById('dashboard-purchase-bar').style.width = grainPct + '%';
+
+        // ── Panel 2: Purchases by category ──
+        const purTotalEl = document.getElementById('dashboard-purchases-total');
+        const purContainer = document.getElementById('dashboard-purchases-by-cat');
+        if (purTotalEl) purTotalEl.textContent = formatAmount(stats.purchases_stock_total || 0) + ' кг';
+        if (purContainer) {
+            const cats = stats.purchases_by_category || [];
+            const catColors = ['#8b5cf6', '#6366f1', '#ec4899', '#f59e0b', '#14b8a6', '#f97316', '#06b6d4'];
+            if (cats.length > 0) {
+                purContainer.innerHTML = cats.map((c, i) => `
+                    <div class="db-gf-cat-row">
+                        <span class="db-gf-cat-dot" style="background:${catColors[i % catColors.length]}"></span>
+                        <span class="db-gf-cat-name">${escapeHtml(c.category)}</span>
+                        <span class="db-gf-cat-val">${formatAmount(c.quantity_kg)} кг</span>
+                    </div>`).join('');
+            } else {
+                purContainer.innerHTML = '<div class="db-empty">Немає закупок</div>';
+            }
+        }
+
+        // ── Right: Recent transactions ──
+        const txContainer = document.getElementById('dashboard-recent-transactions');
         if (stats.recent_transactions && stats.recent_transactions.length > 0) {
-            transactionsContainer.innerHTML = stats.recent_transactions.map(t => {
+            txContainer.innerHTML = '<div class="db-tx-list">' + stats.recent_transactions.map(t => {
                 const isAdd = t.type === 'add';
-                const sign = isAdd ? '+' : '-';
-                const amountClass = isAdd ? 'positive' : 'negative';
-                const itemClass = isAdd ? 'transaction-add' : 'transaction-subtract';
+                const sign = isAdd ? '+' : '−';
+                const cls = isAdd ? 'tx-add' : 'tx-sub';
+                const amtCls = isAdd ? 'tx-positive' : 'tx-negative';
                 const date = t.created_at ? new Date(t.created_at).toLocaleString('uk-UA', {
-                    day: '2-digit',
-                    month: '2-digit',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                }) : '-';
+                    day: '2-digit', month: '2-digit',
+                    hour: '2-digit', minute: '2-digit'
+                }) : '—';
                 return `
-                    <div class="dashboard-transaction-item ${itemClass}">
-                        <div class="dashboard-transaction-info">
-                            <div style="font-weight: 600; color: var(--text-primary); font-size: 12px; margin-bottom: 2px;">
-                                ${escapeHtml(t.currency)} ${sign}${formatAmount(t.amount)}
-                            </div>
-                            <div style="font-size: 11px; color: var(--text-muted);">
-                                ${escapeHtml(t.description || '—')} • ${date}
-                            </div>
+                    <div class="db-tx-item ${cls}">
+                        <div class="db-tx-amount ${amtCls}">${sign}${formatAmount(t.amount)} ${escapeHtml(t.currency)}</div>
+                        <div class="db-tx-details">
+                            <div class="db-tx-desc">${escapeHtml(t.description || '—')}</div>
+                            <div class="db-tx-date">${date}</div>
                         </div>
-                    </div>
-                `;
-            }).join('');
+                    </div>`;
+            }).join('') + '</div>';
         } else {
-            transactionsContainer.innerHTML = '<div class="dashboard-empty">Немає транзакцій</div>';
+            txContainer.innerHTML = '<div class="db-empty">Немає транзакцій</div>';
         }
     } catch (error) {
         console.error('Помилка завантаження статистики дашборда:', error);
@@ -276,6 +365,27 @@ async function loadCashBalance() {
             formatCurrency(balance.usd_balance, 'USD');
         document.getElementById('cash-eur').textContent =
             formatCurrency(balance.eur_balance, 'EUR');
+
+        // Load voucher debt for cash section
+        try {
+            const vResp = await apiFetch('/vouchers/summary');
+            if (vResp.ok) {
+                const vSummary = await vResp.json();
+                const debtBlock = document.getElementById('cash-voucher-debt');
+                const debtValue = document.getElementById('cash-voucher-debt-value');
+                if (debtBlock && debtValue) {
+                    const remaining = vSummary.total_remaining_uah || 0;
+                    if (remaining > 0) {
+                        debtBlock.style.display = 'block';
+                        debtValue.textContent = formatAmount(remaining) + ' грн';
+                    } else {
+                        debtBlock.style.display = 'none';
+                    }
+                }
+            }
+        } catch (e) {
+            console.error('Помилка завантаження боргу по талонах:', e);
+        }
     } catch (error) {
         console.error('Помилка завантаження балансу:', error);
     }
@@ -290,15 +400,22 @@ async function loadCashTransactions() {
     const transactions = await response.json();
     const tableBody = document.querySelector('#cash-transactions-table tbody');
     tableBody.innerHTML = '';
+    if (!transactions.length) {
+        tableBody.innerHTML = '<tr><td colspan="6" class="table-empty-message">Операцій ще немає</td></tr>';
+        return;
+    }
+    const currSymbols = { UAH: '₴', USD: '$', EUR: '€' };
     transactions.forEach(item => {
         const row = document.createElement('tr');
+        const isAdd = item.transaction_type === 'add';
+        const currSymbol = currSymbols[item.currency] || item.currency;
         row.innerHTML = `
             <td>${formatDate(item.created_at)}</td>
-            <td>${item.user_full_name || '-'}</td>
-            <td>${item.currency}</td>
-            <td>${formatCurrency(item.amount, item.currency)}</td>
-            <td>${item.transaction_type === 'add' ? 'Додано' : 'Віднято'}</td>
-            <td>${item.description || '-'}</td>
+            <td>${item.user_full_name || '—'}</td>
+            <td><strong>${currSymbol} ${item.currency}</strong></td>
+            <td><span class="${isAdd ? 'td-delta-add' : 'td-delta-sub'}">${isAdd ? '+' : '-'}${formatAmount(Math.abs(item.amount))} ${currSymbol}</span></td>
+            <td><span class="inline-badge ${isAdd ? 'issue' : 'receive'}">${isAdd ? 'Додано' : 'Віднято'}</span></td>
+            <td>${item.description || '<span class="td-secondary">—</span>'}</td>
         `;
         tableBody.appendChild(row);
     });
@@ -339,15 +456,16 @@ async function loadCultures() {
     culturesCache.forEach(culture => {
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td>${culture.name}</td>
-            <td>${culture.price_per_kg.toFixed(2)}</td>
+            <td><span class="inline-badge grain">${culture.name}</span></td>
+            <td class="td-mono">${formatAmount(culture.price_per_kg)} ₴/кг</td>
             <td class="actions-cell"></td>
         `;
         if (isSuperAdmin) {
             const actionsCell = row.querySelector('.actions-cell');
             const priceBtn = document.createElement('button');
-            priceBtn.className = 'btn btn-secondary btn-small';
-            priceBtn.textContent = 'Ціна';
+            priceBtn.className = 'btn-icon btn-icon-secondary';
+            priceBtn.innerHTML = ICONS.price;
+            priceBtn.title = 'Змінити ціну';
             priceBtn.addEventListener('click', () => {
                 openCulturePriceModal({
                     id: culture.id,
@@ -358,7 +476,7 @@ async function loadCultures() {
 
             actionsCell.appendChild(priceBtn);
         } else {
-            row.querySelector('.actions-cell').innerHTML = '<span class="muted">Лише перегляд</span>';
+            row.querySelector('.actions-cell').innerHTML = '<span class="td-secondary">Лише перегляд</span>';
         }
         tableBody.appendChild(row);
     });
@@ -447,8 +565,9 @@ async function loadDrivers() {
                 `;
                 const actionsCell = row.querySelector('.actions-cell');
                 const filterBtn = document.createElement('button');
-                filterBtn.className = 'btn btn-secondary btn-small';
-                filterBtn.textContent = 'Фільтр';
+                filterBtn.className = 'btn-icon btn-icon-secondary';
+                filterBtn.innerHTML = ICONS.view;
+                filterBtn.title = 'Показати доставки';
                 filterBtn.addEventListener('click', () => {
                     const filterSelect = document.getElementById('driver-delivery-filter-driver');
                     if (filterSelect) {
@@ -461,8 +580,9 @@ async function loadDrivers() {
 
                 if (canEdit) {
                     const deleteBtn = document.createElement('button');
-                    deleteBtn.className = 'btn btn-danger btn-small';
-                    deleteBtn.textContent = 'Видалити';
+                    deleteBtn.className = 'btn-icon btn-icon-danger';
+                    deleteBtn.innerHTML = ICONS.delete;
+                    deleteBtn.title = 'Видалити водія';
                     deleteBtn.addEventListener('click', () => {
                         openDriverDeleteModal(driver.id);
                     });
@@ -589,8 +709,9 @@ function renderShipmentsTable(items) {
     tableBody.innerHTML = '';
     if (items.length === 0) {
         if (hint) {
-            hint.textContent = 'Поки що відправок немає.';
+            hint.textContent = '';
         }
+        tableBody.innerHTML = '<tr><td colspan="6" class="table-empty-message">Поки що відправок немає</td></tr>';
         return;
     }
     if (hint) {
@@ -600,16 +721,17 @@ function renderShipmentsTable(items) {
         const row = document.createElement('tr');
         row.innerHTML = `
             <td>${formatDate(item.created_at)}</td>
-            <td>${item.destination}</td>
-            <td>${getCultureName(item.culture_id)}</td>
-            <td>${formatWeight(item.quantity_kg)}</td>
+            <td><strong>${item.destination}</strong></td>
+            <td><span class="inline-badge grain">${getCultureName(item.culture_id)}</span></td>
+            <td class="td-weight">${formatWeight(item.quantity_kg)} кг</td>
             <td>${getUserName(item.created_by_user_id)}</td>
             <td class="actions-cell"></td>
         `;
         const actionsCell = row.querySelector('.actions-cell');
         const editBtn = document.createElement('button');
-        editBtn.className = 'btn btn-secondary btn-small';
-        editBtn.textContent = 'Редагувати';
+        editBtn.className = 'btn-icon btn-icon-secondary';
+        editBtn.title = 'Редагувати';
+        editBtn.innerHTML = ICONS.edit;
         editBtn.addEventListener('click', () => {
             openShipmentEditModal(item);
         });
@@ -786,14 +908,20 @@ async function loadUsers() {
     usersCache = users;
     const tableBody = document.querySelector('#users-table tbody');
     tableBody.innerHTML = '';
+    if (!users.length) {
+        tableBody.innerHTML = '<tr><td colspan="5" class="table-empty-message">Користувачів ще немає</td></tr>';
+    }
     users.forEach(user => {
         const canEdit = isSuperAdmin && user.role !== 'super_admin';
         const row = document.createElement('tr');
         const isAdmin = user.role === 'super_admin';
+        const roleBadge = isAdmin
+            ? '<span class="status-badge danger">Супер адмін</span>'
+            : '<span class="status-badge info">Користувач</span>';
         row.innerHTML = `
-            <td>${escapeHtml(user.full_name || '')}</td>
-            <td>${escapeHtml(user.username)}</td>
-            <td>${isAdmin ? 'Супер адмін' : 'Користувач'}</td>
+            <td><strong>${escapeHtml(user.full_name || '')}</strong></td>
+            <td class="td-mono">${escapeHtml(user.username)}</td>
+            <td>${roleBadge}</td>
             <td>
                 <label class="switch">
                     <input type="checkbox" ${user.is_active ? 'checked' : ''} ${canEdit ? '' : 'disabled'}>
@@ -806,15 +934,17 @@ async function loadUsers() {
         const actionsCell = row.querySelector('.actions-cell');
         if (canEdit) {
             const editButton = document.createElement('button');
-            editButton.className = 'btn btn-secondary btn-small';
-            editButton.textContent = 'Редагувати';
+            editButton.className = 'btn-icon btn-icon-secondary';
+            editButton.innerHTML = ICONS.edit;
+            editButton.title = 'Редагувати';
             editButton.addEventListener('click', () => {
                 openUserEditModal(user);
             });
 
             const deleteButton = document.createElement('button');
-            deleteButton.className = 'btn btn-danger btn-small';
-            deleteButton.textContent = 'Видалити';
+            deleteButton.className = 'btn-icon btn-icon-danger';
+            deleteButton.innerHTML = ICONS.delete;
+            deleteButton.title = 'Видалити';
             deleteButton.addEventListener('click', () => {
                 openUserDeleteModal(user.id);
             });
@@ -822,7 +952,7 @@ async function loadUsers() {
             actionsCell.appendChild(editButton);
             actionsCell.appendChild(deleteButton);
         } else {
-            actionsCell.innerHTML = '<span class="muted">Лише перегляд</span>';
+            actionsCell.innerHTML = '<span class="td-secondary">Лише перегляд</span>';
         }
 
         const activeToggle = row.querySelector('input[type="checkbox"]');
@@ -1053,13 +1183,17 @@ function renderOwnersTable(owners) {
         return;
     }
     tableBody.innerHTML = '';
+    if (!owners.length) {
+        tableBody.innerHTML = '<tr><td colspan="3" class="table-empty-message">Фермерів ще немає</td></tr>';
+        return;
+    }
     owners.forEach(owner => {
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td>${owner.full_name}</td>
-            <td>${owner.phone || '-'}</td>
+            <td><strong>${owner.full_name}</strong></td>
+            <td>${owner.phone || '<span class="td-secondary">—</span>'}</td>
             <td class="actions-cell">
-                <button class="btn btn-secondary btn-small" data-balance="${owner.id}">Баланс</button>
+                <button class="btn-icon btn-icon-secondary" data-balance="${owner.id}" title="Баланс">${ICONS.balance}</button>
             </td>
         `;
         row.querySelector('[data-balance]').addEventListener('click', () => {
@@ -1693,18 +1827,25 @@ function renderFarmerContractsTable(contracts) {
         'pending': { label: 'Очікує', cls: 'info' }
     };
     tableBody.innerHTML = '';
+    if (!contracts.length) {
+        tableBody.innerHTML = '<tr><td colspan="7" class="table-empty-message">Контрактів ще немає</td></tr>';
+        return;
+    }
     contracts.forEach(contract => {
         const row = document.createElement('tr');
+        if (contract.status === 'closed') row.classList.add('row-muted');
+        if (contract.status === 'cancelled') row.classList.add('row-cancelled');
         const ownerName = ownersMap.get(contract.owner_id) || `#${contract.owner_id}`;
         const st = statusMap[contract.status] || { label: contract.status, cls: 'warning' };
         let typeLabel = typeLabels[contract.contract_type] || contract.contract_type;
         if (contract.was_reserve) typeLabel += ' (резерв)';
+        const balanceColor = contract.balance_uah > 0.01 ? '#dc2626' : '#16a34a';
         row.innerHTML = `
-            <td>#${contract.id}</td>
-            <td>${ownerName}</td>
+            <td class="td-mono">#${contract.id}</td>
+            <td><strong>${ownerName}</strong></td>
             <td>${typeLabel}</td>
-            <td>${formatAmount(contract.total_value_uah)}</td>
-            <td>${formatAmount(contract.balance_uah)}</td>
+            <td class="td-weight">${formatAmount(contract.total_value_uah)} ₴</td>
+            <td><strong style="color:${balanceColor}">${formatAmount(contract.balance_uah)} ₴</strong></td>
             <td><span class="status-badge ${st.cls}">${st.label}</span></td>
             <td class="actions-cell"></td>
         `;
@@ -1712,16 +1853,18 @@ function renderFarmerContractsTable(contracts) {
 
         // Detail button
         const detailBtn = document.createElement('button');
-        detailBtn.className = 'btn btn-secondary btn-small';
-        detailBtn.textContent = 'Детально';
+        detailBtn.className = 'btn-icon btn-icon-secondary';
+        detailBtn.title = 'Детально';
+        detailBtn.innerHTML = ICONS.view;
         detailBtn.addEventListener('click', () => openFcContractDetailModal(contract.id));
         actionsCell.appendChild(detailBtn);
 
         // Open contracts: pay/issue button
         if (contract.status === 'open') {
             const payBtn = document.createElement('button');
-            payBtn.className = 'btn btn-secondary btn-small';
-            payBtn.textContent = 'Операція';
+            payBtn.className = 'btn-icon btn-icon-primary';
+            payBtn.title = 'Операція';
+            payBtn.innerHTML = ICONS.operation;
             payBtn.addEventListener('click', () => openFarmerContractPaymentModal(contract));
             actionsCell.appendChild(payBtn);
         }
@@ -1729,8 +1872,9 @@ function renderFarmerContractsTable(contracts) {
         // Pending reserve: activate button
         if (contract.status === 'pending' && contract.contract_type === 'reserve') {
             const activateBtn = document.createElement('button');
-            activateBtn.className = 'btn btn-primary btn-small';
-            activateBtn.textContent = 'Активувати';
+            activateBtn.className = 'btn-icon btn-icon-primary';
+            activateBtn.title = 'Активувати';
+            activateBtn.innerHTML = ICONS.activate;
             activateBtn.addEventListener('click', () => {
                 openReserveActivateModal(contract.id);
             });
@@ -1740,9 +1884,9 @@ function renderFarmerContractsTable(contracts) {
         // Open or pending: close button
         if (contract.status === 'open' || contract.status === 'pending') {
             const closeBtn = document.createElement('button');
-            closeBtn.className = 'btn btn-danger btn-small';
-            closeBtn.textContent = 'Закрити';
-            closeBtn.style.marginLeft = '4px';
+            closeBtn.className = 'btn-icon btn-icon-danger';
+            closeBtn.title = 'Закрити контракт';
+            closeBtn.innerHTML = ICONS.close;
             closeBtn.addEventListener('click', () => {
                 openContractCloseModal(contract.id);
             });
@@ -1777,54 +1921,59 @@ function renderFarmerContractPaymentsTable(payments) {
     const contractsMap = new Map(farmerContractsCache.map(c => [c.id, c]));
     tableBody.innerHTML = '';
     if (!payments.length) {
-        hint.textContent = 'Поки що виплат немає.';
+        hint.textContent = '';
+        tableBody.innerHTML = '<tr><td colspan="6" class="table-empty-message">Поки що виплат немає</td></tr>';
         return;
     }
     hint.textContent = '';
     const typeLabels = {
-        'goods_issue': 'Видача',
-        'goods_receive': 'Прийом',
-        'cash': 'Гроші',
-        'grain': 'Зерно',
-        'settlement': 'Розрахунок'
+        'goods_issue': { text: 'Видача', cls: 'issue' },
+        'goods_receive': { text: 'Прийом', cls: 'receive' },
+        'cash': { text: 'Гроші', cls: 'cash' },
+        'grain': { text: 'Зерно', cls: 'grain' },
+        'settlement': { text: 'Розрахунок', cls: 'settlement' },
+        'voucher': { text: 'Талон', cls: 'voucher' }
     };
     payments.forEach(payment => {
         const row = document.createElement('tr');
+        if (payment.is_cancelled) row.classList.add('row-cancelled');
         const contract = contractsMap.get(payment.contract_id);
-        const ownerName = contract ? (ownersMap.get(contract.owner_id) || `#${contract.owner_id}`) : '-';
-        const typeLabel = typeLabels[payment.payment_type] || payment.payment_type;
+        const ownerName = contract ? (ownersMap.get(contract.owner_id) || `#${contract.owner_id}`) : '—';
+        const typeInfo = typeLabels[payment.payment_type] || { text: payment.payment_type, cls: '' };
         let amountLabel = '';
         if (payment.payment_type === 'goods_issue' || payment.payment_type === 'goods_receive') {
             const itemName = payment.item_name || '—';
-            amountLabel = `${itemName}: ${formatWeight(payment.quantity_kg || 0)} ${payment.item_name === 'Готівка' ? 'грн' : 'кг'} (${formatAmount(payment.amount_uah)} грн)`;
-        } else if (payment.payment_type === 'grain') {
-            amountLabel = `${payment.item_name || 'Зерно'}: ${formatWeight(payment.quantity_kg || 0)} кг (${formatAmount(payment.amount_uah)} грн)`;
+            amountLabel = `<strong>${itemName}</strong>: ${formatWeight(payment.quantity_kg || 0)} ${payment.item_name === 'Готівка' ? 'грн' : 'кг'} <span class="td-secondary">(${formatAmount(payment.amount_uah)} ₴)</span>`;
+        } else if (payment.payment_type === 'grain' || payment.payment_type === 'voucher') {
+            amountLabel = `<strong>${payment.item_name || 'Зерно'}</strong>: ${formatWeight(payment.quantity_kg || 0)} кг <span class="td-secondary">(${formatAmount(payment.amount_uah)} ₴)</span>`;
         } else {
-            amountLabel = `${formatCurrency(payment.amount, payment.currency)} (≈${formatAmount(payment.amount_uah)} грн)`;
+            amountLabel = `<strong>${formatCurrency(payment.amount, payment.currency)}</strong> <span class="td-secondary">(≈${formatAmount(payment.amount_uah)} ₴)</span>`;
         }
         if (payment.is_cancelled) {
             amountLabel = `<s>${amountLabel}</s> <span class="status-badge danger">Скасовано</span>`;
         }
         row.innerHTML = `
             <td>${formatDate(payment.payment_date)}</td>
-            <td>${ownerName}</td>
-            <td>#${payment.contract_id}</td>
-            <td>${typeLabel}</td>
+            <td><strong>${ownerName}</strong></td>
+            <td class="td-mono">#${payment.contract_id}</td>
+            <td><span class="inline-badge ${typeInfo.cls}">${typeInfo.text}</span></td>
             <td>${amountLabel}</td>
             <td class="actions-cell"></td>
         `;
         {
             const actionsCell = row.querySelector('.actions-cell');
             const detailBtn = document.createElement('button');
-            detailBtn.className = 'btn btn-secondary btn-small';
-            detailBtn.textContent = 'Детально';
+            detailBtn.className = 'btn-icon btn-icon-secondary';
+            detailBtn.title = 'Детально';
+            detailBtn.innerHTML = ICONS.view;
             detailBtn.addEventListener('click', () => openFcPaymentDetailModal(payment));
             actionsCell.appendChild(detailBtn);
 
             if (!payment.is_cancelled && payment.payment_type !== 'settlement') {
                 const cancelBtn = document.createElement('button');
-                cancelBtn.className = 'btn btn-danger btn-small';
-                cancelBtn.textContent = 'Скасувати';
+                cancelBtn.className = 'btn-icon btn-icon-danger';
+                cancelBtn.title = 'Скасувати';
+                cancelBtn.innerHTML = ICONS.cancel;
                 cancelBtn.addEventListener('click', () => {
                     openFcPaymentCancelModal(payment);
                 });
@@ -2151,7 +2300,8 @@ function initFarmerContractModal() {
             } else if (direction === 'company') {
                 typeOptions = `<option value="grain">Зерно</option>
                            <option value="purchase">Товар</option>
-                           <option value="cash">Гроші</option>`;
+                           <option value="cash">Гроші</option>
+                           <option value="voucher">Талон</option>`;
             } else {
                 typeOptions = `<option value="grain">Зерно</option>
                            <option value="cash">Гроші</option>`;
@@ -2243,6 +2393,17 @@ function initFarmerContractModal() {
                     priceInput.value = '';
                     priceInput.readOnly = true;
                 }
+            } else if (type === 'voucher') {
+                // Талон — тільки пшениця
+                const wheat = culturesCache.find(c => c.name === 'Пшениця');
+                if (wheat) {
+                    itemSel.innerHTML = `<option value="${wheat.id}" data-price="${wheat.price_per_kg}" selected>Пшениця</option>`;
+                    priceInput.value = parseFloat(wheat.price_per_kg).toFixed(2);
+                } else {
+                    itemSel.innerHTML = '<option value="">Пшениця не знайдена</option>';
+                    priceInput.value = '';
+                }
+                priceInput.readOnly = true;
             } else {
                 // Гроші — ціна вводиться вручну (курс)
                 itemSel.innerHTML = '<option value="cash">Готівка</option>';
@@ -2413,7 +2574,7 @@ function initFarmerContractModal() {
                 // If no id — backend will create new purchase stock by name
             } else {
                 const itemSelect = card.querySelector('.farmer-contract-item-select');
-                if (type === 'grain') {
+                if (type === 'grain' || type === 'voucher') {
                     const cultureId = itemSelect?.value ? parseInt(itemSelect.value, 10) : null;
                     if (!cultureId) return;
                     entry.culture_id = cultureId;
@@ -2481,6 +2642,9 @@ function initFarmerContractPaymentModal() {
     const grainQtyInput = document.getElementById('fcp-grain-qty');
     const grainEquiv = document.getElementById('fcp-grain-equiv');
 
+    // Voucher confirm (inside issue section)
+    const voucherConfirmEl = document.getElementById('fcp-voucher-confirm');
+
     if (!modal || !saveBtn) return;
 
     let currentPaymentType = 'goods_issue';
@@ -2530,9 +2694,10 @@ function initFarmerContractPaymentModal() {
         refreshCustomSelect(grainCultureSelect);
         issueItemsContainer.innerHTML = '<div class="fcp-grain-empty">Завантаження...</div>';
         receiveItemsContainer.innerHTML = '<div class="fcp-grain-empty">Завантаження...</div>';
+        if (voucherConfirmEl) { voucherConfirmEl.classList.add('hidden'); voucherConfirmEl.innerHTML = ''; }
     };
 
-    // ── Render contract item cards ──
+    // ── Render contract item cards (all types including vouchers) ──
     const renderContractItems = (items, container, direction) => {
         const filtered = items.filter(i => i.direction === direction);
         if (!filtered.length) {
@@ -2540,42 +2705,135 @@ function initFarmerContractPaymentModal() {
             return;
         }
         container.innerHTML = '';
+        const typeLabels = { grain: 'Зерно', purchase: 'Товар', cash: 'Гроші', voucher: 'Талон' };
         filtered.forEach(item => {
+            const isVoucher = item.item_type === 'voucher';
             const remaining = Math.max(0, item.quantity_kg - (item.delivered_kg || 0));
             const pct = item.quantity_kg > 0 ? ((item.delivered_kg || 0) / item.quantity_kg * 100) : 0;
             const done = remaining < 0.01;
+            const unit = item.item_type === 'cash' ? 'грн' : 'кг';
 
-            const card = document.createElement('div');
-            card.className = 'fcp-ci-card' + (done ? ' fcp-ci-card--done' : '');
-            card.dataset.itemId = item.id;
-            card.innerHTML = `
-                <div class="fcp-ci-info">
-                    <span class="fcp-ci-name">${item.item_name || '—'}</span>
-                    <span class="fcp-ci-meta">${item.item_type === 'grain' ? 'Зерно' : item.item_type === 'purchase' ? 'Товар' : 'Гроші'} • ${formatWeight(item.quantity_kg)} ${item.item_type === 'cash' ? 'грн' : 'кг'} × ${formatAmount(item.price_per_kg)} грн</span>
-                </div>
-                <div class="fcp-ci-progress">
-                    <span class="fcp-ci-remaining">${done ? '✓ Видано' : `${formatWeight(remaining)} ${item.item_type === 'cash' ? 'грн' : 'кг'}`}</span>
-                    <div class="fcp-ci-bar"><div class="fcp-ci-bar__fill" style="width:${Math.min(100, pct)}%"></div></div>
-                </div>
-            `;
-            if (!done) {
-                card.addEventListener('click', () => {
-                    container.querySelectorAll('.fcp-ci-card').forEach(c => c.classList.remove('selected'));
-                    card.classList.add('selected');
-                    if (direction === 'from_company') {
-                        selectedIssueItemId = item.id;
-                        issueSelectedEl.textContent = `${item.item_name} (залишок: ${formatWeight(remaining)} ${item.item_type === 'cash' ? 'грн' : 'кг'})`;
-                        issueQtyInput.max = remaining;
-                        issueQtyInput.focus();
-                    } else {
-                        selectedReceiveItemId = item.id;
-                        receiveSelectedEl.textContent = `${item.item_name} (залишок: ${formatWeight(remaining)} ${item.item_type === 'cash' ? 'грн' : 'кг'})`;
-                        receiveQtyInput.max = remaining;
-                        receiveQtyInput.focus();
+            if (isVoucher) {
+                // ── Voucher card: special layout with direct "Видати талон" button ──
+                const totalVal = remaining * item.price_per_kg;
+                const card = document.createElement('div');
+                card.className = 'fcp-voucher-card' + (done ? ' fcp-voucher-card--done' : '');
+                card.innerHTML = `
+                    <div class="fcp-voucher-card__info">
+                        <div class="fcp-voucher-card__name">${item.item_name || 'Талон: Пшениця'}</div>
+                        <div class="fcp-voucher-card__details">
+                            <span>${formatWeight(item.quantity_kg)} кг</span>
+                            <span>×</span>
+                            <span>${formatAmount(item.price_per_kg)} грн/кг</span>
+                            <span>=</span>
+                            <span class="fcp-voucher-card__total">${formatAmount(item.quantity_kg * item.price_per_kg)} грн</span>
+                        </div>
+                    </div>
+                    ${done
+                        ? '<span class="fcp-voucher-card__status-done">✓ Виписано</span>'
+                        : `<button class="btn btn-primary btn-small fcp-voucher-card__btn" data-item-id="${item.id}" data-culture-id="${item.culture_id}" data-qty="${remaining}">Видати талон</button>`
                     }
-                });
+                `;
+                container.appendChild(card);
+            } else {
+                // ── Regular item card: clickable to select ──
+                const card = document.createElement('div');
+                card.className = 'fcp-ci-card' + (done ? ' fcp-ci-card--done' : '');
+                card.dataset.itemId = item.id;
+                card.innerHTML = `
+                    <div class="fcp-ci-info">
+                        <span class="fcp-ci-name">${item.item_name || '—'}</span>
+                        <span class="fcp-ci-meta">${typeLabels[item.item_type] || item.item_type} • ${formatWeight(item.quantity_kg)} ${unit} × ${formatAmount(item.price_per_kg)} грн</span>
+                    </div>
+                    <div class="fcp-ci-progress">
+                        <span class="fcp-ci-remaining">${done ? '✓ Видано' : `${formatWeight(remaining)} ${unit}`}</span>
+                        <div class="fcp-ci-bar"><div class="fcp-ci-bar__fill" style="width:${Math.min(100, pct)}%"></div></div>
+                    </div>
+                `;
+                if (!done) {
+                    card.addEventListener('click', () => {
+                        container.querySelectorAll('.fcp-ci-card').forEach(c => c.classList.remove('selected'));
+                        card.classList.add('selected');
+                        if (direction === 'from_company') {
+                            selectedIssueItemId = item.id;
+                            issueSelectedEl.textContent = `${item.item_name} (залишок: ${formatWeight(remaining)} ${unit})`;
+                            issueQtyInput.max = remaining;
+                            issueQtyInput.focus();
+                        } else {
+                            selectedReceiveItemId = item.id;
+                            receiveSelectedEl.textContent = `${item.item_name} (залишок: ${formatWeight(remaining)} ${unit})`;
+                            receiveQtyInput.max = remaining;
+                            receiveQtyInput.focus();
+                        }
+                    });
+                }
+                container.appendChild(card);
             }
-            container.appendChild(card);
+        });
+
+        // ── Bind "Видати талон" buttons for voucher items ──
+        container.querySelectorAll('.fcp-voucher-card__btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const itemId = parseInt(btn.dataset.itemId);
+                const cultureId = parseInt(btn.dataset.cultureId);
+                const qty = parseFloat(btn.dataset.qty);
+                const pricePerKg = (contractDetail?.items?.find(i => i.id === itemId))?.price_per_kg || 0;
+
+                if (voucherConfirmEl) {
+                    voucherConfirmEl.innerHTML = `
+                        <div class="fcp-voucher-confirm__text">
+                            Видати талон на <strong>${formatWeight(qty)} кг</strong> Пшениці (≈ ${formatAmount(qty * pricePerKg)} грн)?
+                        </div>
+                        <div class="fcp-voucher-confirm__actions">
+                            <button class="btn btn-secondary btn-small fcp-voucher-confirm__no">Скасувати</button>
+                            <button class="btn btn-primary btn-small fcp-voucher-confirm__yes">Так, видати</button>
+                        </div>
+                    `;
+                    voucherConfirmEl.classList.remove('hidden');
+
+                    voucherConfirmEl.querySelector('.fcp-voucher-confirm__no')?.addEventListener('click', () => {
+                        voucherConfirmEl.classList.add('hidden');
+                    });
+
+                    voucherConfirmEl.querySelector('.fcp-voucher-confirm__yes')?.addEventListener('click', async () => {
+                        voucherConfirmEl.classList.add('hidden');
+                        btn.disabled = true;
+                        btn.textContent = 'Видача...';
+                        try {
+                            const response = await apiFetch(`/farmer-contracts/${currentFarmerContractId}/payments`, {
+                                method: 'POST',
+                                body: JSON.stringify({
+                                    payment_type: 'voucher',
+                                    contract_item_id: itemId,
+                                    culture_id: cultureId,
+                                    quantity_kg: qty
+                                })
+                            });
+                            if (!response.ok) {
+                                const error = await response.json().catch(() => null);
+                                showToast(error?.detail || 'Помилка видачі талону', 'error');
+                                return;
+                            }
+                            showToast('Талон виписано!', 'success');
+                            // Reload contract data to refresh the cards
+                            const cResp = await apiFetch(`/farmer-contracts/${currentFarmerContractId}`);
+                            if (cResp.ok) {
+                                contractDetail = await cResp.json();
+                            }
+                            loadContractData({ id: currentFarmerContractId, owner_id: contractDetail?.owner_id });
+                            await loadFarmerContracts();
+                            await loadFarmerContractPayments();
+                            await loadStock();
+                        } catch (err) {
+                            showToast(err.message || 'Помилка', 'error');
+                        } finally {
+                            btn.disabled = false;
+                            btn.textContent = 'Видати талон';
+                        }
+                    });
+                }
+            });
         });
     };
 
@@ -2628,6 +2886,8 @@ function initFarmerContractPaymentModal() {
                 }).join('');
             refreshCustomSelect(grainCultureSelect);
         }
+
+        // Voucher items are now rendered as part of renderContractItems in the Issue tab
     };
 
     // ── Open modal ──
@@ -2677,7 +2937,7 @@ function initFarmerContractPaymentModal() {
         if (item && qty) {
             const remaining = item.quantity_kg - (item.delivered_kg || 0);
             let text = `= ${formatAmount(qty * item.price_per_kg)} грн`;
-            if (qty > remaining) text += ` ⚠ макс: ${formatWeight(remaining)}`;
+            if (qty > remaining) text += ` (макс: ${formatWeight(remaining)})`;
             issueEquiv.textContent = text;
         } else { issueEquiv.textContent = ''; }
     });
@@ -2690,7 +2950,7 @@ function initFarmerContractPaymentModal() {
         if (item && qty) {
             const remaining = item.quantity_kg - (item.delivered_kg || 0);
             let text = `= ${formatAmount(qty * item.price_per_kg)} грн`;
-            if (qty > remaining) text += ` ⚠ макс: ${formatWeight(remaining)}`;
+            if (qty > remaining) text += ` (макс: ${formatWeight(remaining)})`;
             receiveEquiv.textContent = text;
         } else { receiveEquiv.textContent = ''; }
     });
@@ -2735,7 +2995,7 @@ function initFarmerContractPaymentModal() {
         const maxQty = parseFloat(sel?.dataset?.max || '0');
         if (qty && price) {
             let text = `= ${formatAmount(qty * price)} грн`;
-            if (maxQty && qty > maxQty) text += ` ⚠ макс: ${formatWeight(maxQty)} кг`;
+            if (maxQty && qty > maxQty) text += ` (макс: ${formatWeight(maxQty)} кг)`;
             grainEquiv.textContent = text;
         } else { grainEquiv.textContent = ''; }
     }
@@ -2950,7 +3210,8 @@ function renderDriverDeliveriesTable(intakes) {
 
     tableBody.innerHTML = '';
     if (!rows.length) {
-        hint.textContent = 'Поки що доставок немає.';
+        hint.textContent = '';
+        tableBody.innerHTML = '<tr><td colspan="9" class="table-empty-message">Поки що доставок немає</td></tr>';
         return;
     }
     hint.textContent = '';
@@ -2959,14 +3220,14 @@ function renderDriverDeliveriesTable(intakes) {
         const driver = driversCache.find(item => item.id === intake.driver_id);
         row.innerHTML = `
             <td>${formatDate(intake.created_at)}</td>
-            <td>${getDriverName(intake.driver_id)}</td>
-            <td>${driver?.phone || '-'}</td>
+            <td><strong>${getDriverName(intake.driver_id)}</strong></td>
+            <td>${driver?.phone || '<span class="td-secondary">—</span>'}</td>
             <td>${getVehicleName(intake.vehicle_type_id)}</td>
-            <td>${intake.has_trailer ? 'Так' : 'Ні'}</td>
-            <td>${getCultureName(intake.culture_id)}</td>
-            <td>${formatWeight(intake.gross_weight_kg)}</td>
-            <td>${formatWeight(intake.net_weight_kg)}</td>
-            <td>${intake.pending_quality ? '-' : formatWeight(intake.accepted_weight_kg)}</td>
+            <td>${intake.has_trailer ? '<span class="status-badge success">Так</span>' : '<span class="td-secondary">Ні</span>'}</td>
+            <td><span class="inline-badge grain">${getCultureName(intake.culture_id)}</span></td>
+            <td class="td-weight">${formatWeight(intake.gross_weight_kg)} кг</td>
+            <td class="td-weight">${formatWeight(intake.net_weight_kg)} кг</td>
+            <td class="td-weight">${intake.pending_quality ? '<span class="status-badge warning">Очікує</span>' : formatWeight(intake.accepted_weight_kg) + ' кг'}</td>
         `;
         tableBody.appendChild(row);
     });
@@ -3056,22 +3317,23 @@ function renderFarmerIntakesTable(intakes) {
 
     tableBody.innerHTML = '';
     if (!rows.length) {
-        hint.textContent = 'Поки що приходів немає.';
+        hint.textContent = '';
+        tableBody.innerHTML = '<tr><td colspan="7" class="table-empty-message">Поки що приходів від фермерів немає</td></tr>';
         return;
     }
     hint.textContent = '';
     rows.forEach(intake => {
         const row = document.createElement('tr');
-        const ownerName = intake.owner_full_name || '-';
-        const ownerPhone = intake.owner_phone || '-';
+        const ownerName = intake.owner_full_name || '—';
+        const ownerPhone = intake.owner_phone || '<span class="td-secondary">—</span>';
         row.innerHTML = `
             <td>${formatDate(intake.created_at)}</td>
-            <td>${ownerName}</td>
+            <td><strong>${ownerName}</strong></td>
             <td>${ownerPhone}</td>
-            <td>${getCultureName(intake.culture_id)}</td>
-            <td>${formatWeight(intake.gross_weight_kg)}</td>
-            <td>${formatWeight(intake.net_weight_kg)}</td>
-            <td>${intake.pending_quality ? '-' : formatWeight(intake.accepted_weight_kg)}</td>
+            <td><span class="inline-badge grain">${getCultureName(intake.culture_id)}</span></td>
+            <td class="td-weight">${formatWeight(intake.gross_weight_kg)} кг</td>
+            <td class="td-weight">${formatWeight(intake.net_weight_kg)} кг</td>
+            <td class="td-weight">${intake.pending_quality ? '<span class="status-badge warning">Очікує</span>' : formatWeight(intake.accepted_weight_kg) + ' кг'}</td>
         `;
         tableBody.appendChild(row);
     });
@@ -3084,24 +3346,28 @@ function renderIntakeTable(intakes) {
         return;
     }
     tableBody.innerHTML = '';
+    if (!intakes.length) {
+        tableBody.innerHTML = '<tr><td colspan="7" class="table-empty-message">Поки що приходів немає</td></tr>';
+        return;
+    }
     intakes.forEach(intake => {
         const row = document.createElement('tr');
         if (intake.pending_quality) {
             row.classList.add('row-pending');
         }
         const cultureName = getCultureName(intake.culture_id);
-        const ownerName = intake.is_own_grain ? 'Підприємство' : (intake.owner_full_name || '-');
+        const ownerName = intake.is_own_grain ? 'Підприємство' : (intake.owner_full_name || '—');
         const statusLabel = intake.pending_quality ? 'Очікує %' : 'Підтверджено';
         row.innerHTML = `
             <td>${formatDate(intake.created_at)}</td>
-            <td>${cultureName}</td>
-            <td>${formatWeight(intake.net_weight_kg)}</td>
-            <td>${intake.pending_quality ? '-' : formatWeight(intake.accepted_weight_kg)}</td>
-            <td>${ownerName}</td>
+            <td><span class="inline-badge grain">${cultureName}</span></td>
+            <td class="td-weight">${formatWeight(intake.net_weight_kg)} кг</td>
+            <td class="td-weight">${intake.pending_quality ? '<span class="td-secondary">—</span>' : formatWeight(intake.accepted_weight_kg) + ' кг'}</td>
+            <td><strong>${ownerName}</strong></td>
             <td><span class="status-badge ${intake.pending_quality ? 'warning' : 'success'}">${statusLabel}</span></td>
             <td class="actions-cell">
-                <button class="btn btn-secondary btn-small" data-view="${intake.id}">Переглянути</button>
-                <button class="btn btn-secondary btn-small" data-edit="${intake.id}">Редагувати</button>
+                <button class="btn-icon btn-icon-secondary" data-view="${intake.id}" title="Переглянути">${ICONS.view}</button>
+                <button class="btn-icon btn-icon-secondary" data-edit="${intake.id}" title="Редагувати">${ICONS.edit}</button>
             </td>
         `;
         row.querySelector('[data-view]').addEventListener('click', () => {
@@ -3930,23 +4196,28 @@ async function loadStock() {
         : stock;
     const tableBody = document.querySelector('#stock-table tbody');
     tableBody.innerHTML = '';
+    if (!mergedStock.length) {
+        tableBody.innerHTML = '<tr><td colspan="6" class="table-empty-message">Склад порожній</td></tr>';
+    }
     mergedStock.forEach(item => {
         const row = document.createElement('tr');
         const farmerQty = item.farmer_quantity_kg || 0;
         const reservedQty = item.reserved_kg || 0;
+        const qtyColor = item.quantity_kg > 0 ? '#16a34a' : 'var(--text-muted)';
         row.innerHTML = `
-            <td>${item.culture_name}</td>
-            <td>${formatWeight(item.quantity_kg)}</td>
-            <td>${formatWeight(farmerQty)}</td>
-            <td>${formatWeight(reservedQty)}</td>
-            <td>${item.price_per_kg.toFixed(2)}</td>
+            <td><span class="inline-badge grain">${item.culture_name}</span></td>
+            <td class="td-weight"><strong style="color:${qtyColor}">${formatWeight(item.quantity_kg)} кг</strong></td>
+            <td class="td-weight">${farmerQty > 0 ? formatWeight(farmerQty) + ' кг' : '<span class="td-secondary">0</span>'}</td>
+            <td class="td-weight">${reservedQty > 0 ? `<span style="color:#b45309">${formatWeight(reservedQty)} кг</span>` : '<span class="td-secondary">0</span>'}</td>
+            <td class="td-mono">${formatAmount(item.price_per_kg)} ₴/кг</td>
             <td class="actions-cell"></td>
         `;
         const actionsCell = row.querySelector('.actions-cell');
         if (isSuperAdmin) {
             const button = document.createElement('button');
-            button.className = 'btn btn-secondary btn-small';
-            button.textContent = 'Змінити';
+            button.className = 'btn-icon btn-icon-secondary';
+            button.innerHTML = ICONS.adjust;
+            button.title = 'Змінити кількість';
             button.addEventListener('click', () => {
                 openStockAdjustModal({
                     type: 'grain',
@@ -3955,8 +4226,9 @@ async function loadStock() {
                 });
             });
             const priceBtn = document.createElement('button');
-            priceBtn.className = 'btn btn-secondary btn-small';
-            priceBtn.textContent = 'Ціна';
+            priceBtn.className = 'btn-icon btn-icon-secondary';
+            priceBtn.innerHTML = ICONS.price;
+            priceBtn.title = 'Змінити ціну';
             priceBtn.addEventListener('click', () => {
                 openCulturePriceModal({
                     id: item.culture_id,
@@ -3965,8 +4237,9 @@ async function loadStock() {
                 });
             });
             const reserveBtn = document.createElement('button');
-            reserveBtn.className = 'btn btn-secondary btn-small';
-            reserveBtn.textContent = 'Бронь';
+            reserveBtn.className = 'btn-icon btn-icon-warning';
+            reserveBtn.innerHTML = ICONS.reserve;
+            reserveBtn.title = 'Бронювання';
             reserveBtn.addEventListener('click', () => {
                 openStockReserveModal({
                     id: item.culture_id,
@@ -3978,7 +4251,7 @@ async function loadStock() {
             actionsCell.appendChild(priceBtn);
             actionsCell.appendChild(reserveBtn);
         } else {
-            actionsCell.innerHTML = '<span class="muted">Лише перегляд</span>';
+            actionsCell.innerHTML = '<span class="td-secondary">Лише перегляд</span>';
         }
         tableBody.appendChild(row);
     });
@@ -4043,17 +4316,18 @@ async function loadStockAdjustments() {
                 ? 'Посівне'
                 : 'Закупівлі';
         const typeLabel = isPurchase ? categoryLabel : 'Зерно';
-        const deltaLabel = `${item.transaction_type === 'add' ? '+' : '-'}${formatWeight(item.amount)}`;
+        const isAdd = item.transaction_type === 'add';
+        const deltaLabel = `<span class="${isAdd ? 'td-delta-add' : 'td-delta-sub'}">${isAdd ? '+' : '-'}${formatWeight(item.amount)} кг</span>`;
         const noteLabel = item.source === 'shipment'
-            ? `Відправка: ${item.destination || '-'}`
+            ? `Відправка: ${item.destination || '—'}`
             : 'Ручне';
 
         row.innerHTML = `
             <td>${formatDate(item.created_at)}</td>
             <td>${typeLabel}</td>
-            <td>${item.item_name}</td>
+            <td><strong>${item.item_name}</strong></td>
             <td>${deltaLabel}</td>
-            <td>${formatWeight(item.quantity_after)}</td>
+            <td class="td-weight">${formatWeight(item.quantity_after)} кг</td>
             <td>${item.user_full_name}</td>
             <td>${noteLabel}</td>
         `;
@@ -4067,25 +4341,30 @@ function renderPurchaseStockTable(tableId, category) {
         return;
     }
     tableBody.innerHTML = '';
-    purchaseStockCache
-        .filter(item => item.category === category)
-        .forEach(item => {
+    const items = purchaseStockCache.filter(item => item.category === category);
+    if (!items.length) {
+        tableBody.innerHTML = '<tr><td colspan="6" class="table-empty-message">Товарів ще немає</td></tr>';
+        return;
+    }
+    items.forEach(item => {
             const row = document.createElement('tr');
             const reserved = item.reserved_kg || 0;
             const available = item.quantity_kg - reserved;
+            const availColor = available > 0 ? '#16a34a' : (available < 0 ? '#dc2626' : 'var(--text-muted)');
             row.innerHTML = `
-                <td>${item.name}</td>
-                <td>${formatWeight(item.quantity_kg)}</td>
-                <td>${formatWeight(reserved)}</td>
-                <td>${formatWeight(available)}</td>
-                <td>${(item.sale_price_per_kg ?? 0).toFixed(2)}</td>
+                <td><strong>${item.name}</strong></td>
+                <td class="td-weight">${formatWeight(item.quantity_kg)} кг</td>
+                <td class="td-weight">${reserved > 0 ? `<span style="color:#b45309">${formatWeight(reserved)} кг</span>` : '<span class="td-secondary">0</span>'}</td>
+                <td class="td-weight"><strong style="color:${availColor}">${formatWeight(available)} кг</strong></td>
+                <td class="td-mono">${formatAmount(item.sale_price_per_kg ?? 0)} ₴/кг</td>
                 <td class="actions-cell"></td>
             `;
             const actionsCell = row.querySelector('.actions-cell');
             if (isSuperAdmin) {
                 const adjustBtn = document.createElement('button');
-                adjustBtn.className = 'btn btn-secondary btn-small';
-                adjustBtn.textContent = 'Змінити';
+                adjustBtn.className = 'btn-icon btn-icon-secondary';
+                adjustBtn.innerHTML = ICONS.adjust;
+                adjustBtn.title = 'Змінити кількість';
                 adjustBtn.addEventListener('click', () => {
                     openStockAdjustModal({
                         type: 'purchase',
@@ -4095,8 +4374,9 @@ function renderPurchaseStockTable(tableId, category) {
                 });
 
                 const priceBtn = document.createElement('button');
-                priceBtn.className = 'btn btn-secondary btn-small';
-                priceBtn.textContent = 'Ціна';
+                priceBtn.className = 'btn-icon btn-icon-secondary';
+                priceBtn.innerHTML = ICONS.price;
+                priceBtn.title = 'Змінити ціну';
                 priceBtn.addEventListener('click', () => {
                     openStockPriceModal({
                         id: item.id,
@@ -4108,7 +4388,7 @@ function renderPurchaseStockTable(tableId, category) {
                 actionsCell.appendChild(adjustBtn);
                 actionsCell.appendChild(priceBtn);
             } else {
-                actionsCell.innerHTML = '<span class="muted">Лише перегляд</span>';
+                actionsCell.innerHTML = '<span class="td-secondary">Лише перегляд</span>';
             }
             tableBody.appendChild(row);
         });
@@ -4417,6 +4697,7 @@ function initNavigation() {
         'drivers': 'Водії',
         'owners': 'Фермери',
         'farmer-contracts': 'Контракти фермерів',
+        'vouchers': 'Хлібний завод',
         'shipments': 'Відправки',
         'users': 'Користувачі',
         'landlords': 'Орендодавці'
@@ -4449,31 +4730,12 @@ function initNavigation() {
             if (page === 'dashboard') {
                 loadDashboardStats();
             }
+            if (page === 'vouchers') {
+                loadVouchersData();
+            }
         });
     });
 
-    // Кнопка обновления дашборда
-    const refreshBtn = document.getElementById('dashboard-refresh-btn');
-    if (refreshBtn) {
-        refreshBtn.addEventListener('click', async () => {
-            refreshBtn.disabled = true;
-            const svg = refreshBtn.querySelector('svg');
-            if (svg) {
-                svg.style.animation = 'spin 1s linear infinite';
-            }
-            try {
-                await loadDashboardStats();
-                showToast('Дані оновлено', 'success');
-            } catch (error) {
-                console.error('Помилка оновлення дашборда:', error);
-            } finally {
-                refreshBtn.disabled = false;
-                if (svg) {
-                    svg.style.animation = '';
-                }
-            }
-        });
-    }
 }
 
 function initLogout() {
@@ -5761,14 +6023,18 @@ function renderLandlordsTable() {
         if (searchVal && !l.full_name.toLowerCase().includes(searchVal)) return false;
         return true;
     });
+    if (!filtered.length) {
+        tableBody.innerHTML = '<tr><td colspan="3" class="table-empty-message">Орендодавців не знайдено</td></tr>';
+        return;
+    }
     filtered.forEach(landlord => {
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td>${landlord.full_name}</td>
-            <td>${landlord.phone || '-'}</td>
+            <td><strong>${landlord.full_name}</strong></td>
+            <td>${landlord.phone || '<span class="td-secondary">—</span>'}</td>
             <td class="actions-cell">
-                <button class="btn btn-secondary btn-small" data-edit="${landlord.id}">Редагувати</button>
-                <button class="btn btn-danger btn-small" data-delete="${landlord.id}">Видалити</button>
+                <button class="btn-icon btn-icon-secondary" data-edit="${landlord.id}" title="Редагувати">${ICONS.edit}</button>
+                <button class="btn-icon btn-icon-danger" data-delete="${landlord.id}" title="Видалити">${ICONS.delete}</button>
             </td>
         `;
         row.querySelector(`[data-edit="${landlord.id}"]`).addEventListener('click', () => {
@@ -5936,21 +6202,26 @@ function renderContractsTable() {
         if (filterStatus === 'inactive' && c.is_active) return false;
         return true;
     });
+    if (!filtered.length) {
+        tableBody.innerHTML = '<tr><td colspan="5" class="table-empty-message">Контрактів не знайдено</td></tr>';
+        return;
+    }
     filtered.forEach(contract => {
         const row = document.createElement('tr');
+        if (!contract.is_active) row.classList.add('row-muted');
         const statusBadge = contract.is_active 
             ? '<span class="status-badge success">Активний</span>'
             : '<span class="status-badge muted">Неактивний</span>';
         
         row.innerHTML = `
-            <td>${contract.landlord_full_name}</td>
+            <td><strong>${contract.landlord_full_name}</strong></td>
             <td>${contract.field_name}</td>
             <td>${formatDate(contract.contract_date)}</td>
             <td>${statusBadge}</td>
             <td class="actions-cell">
-                <button class="btn btn-secondary btn-small" data-view="${contract.id}">Переглянути</button>
-                <button class="btn btn-secondary btn-small" data-edit="${contract.id}">Редагувати</button>
-                <button class="btn btn-danger btn-small" data-delete="${contract.id}">Видалити</button>
+                <button class="btn-icon btn-icon-secondary" data-view="${contract.id}" title="Переглянути">${ICONS.view}</button>
+                <button class="btn-icon btn-icon-secondary" data-edit="${contract.id}" title="Редагувати">${ICONS.edit}</button>
+                <button class="btn-icon btn-icon-danger" data-delete="${contract.id}" title="Видалити">${ICONS.delete}</button>
             </td>
         `;
         row.querySelector(`[data-view="${contract.id}"]`).addEventListener('click', () => {
@@ -6654,38 +6925,46 @@ function renderPaymentsTable() {
         if (!showCancelled && p.is_cancelled) return false;
         return true;
     });
+    if (!filtered.length) {
+        tableBody.innerHTML = '<tr><td colspan="6" class="table-empty-message">Виплат не знайдено</td></tr>';
+        return;
+    }
     filtered.forEach(payment => {
         const row = document.createElement('tr');
         if (payment.is_cancelled) {
-            row.classList.add('payment-cancelled');
+            row.classList.add('row-cancelled');
         }
-        let sumText = '-';
+        let sumText = '<span class="td-secondary">—</span>';
         if (payment.grain_items && payment.grain_items.length > 0) {
             const grainParts = payment.grain_items.map(item =>
-                `${formatWeight(item.quantity_kg)} ${item.culture_name || ''}`
-            ).join(', ');
+                `<span class="inline-badge grain">${formatWeight(item.quantity_kg)} ${item.culture_name || ''}</span>`
+            ).join(' ');
             if (payment.payment_type === 'cash') {
-                sumText = `${payment.amount?.toFixed(2) || 0} ${payment.currency || 'грн'} (${grainParts})`;
+                sumText = `<strong>${formatAmount(payment.amount || 0)} ${payment.currency || '₴'}</strong> ${grainParts}`;
             } else {
                 sumText = grainParts;
             }
         } else if (payment.payment_type === 'cash') {
-            sumText = `${payment.amount?.toFixed(2) || 0} ${payment.currency || 'грн'}`;
+            sumText = `<strong>${formatAmount(payment.amount || 0)} ${payment.currency || '₴'}</strong>`;
         }
 
+        const typeBadge = payment.payment_type === 'grain'
+            ? '<span class="inline-badge grain">Зерном</span>'
+            : '<span class="inline-badge cash">Грошима</span>';
+
         const statusBadge = payment.is_cancelled
-            ? '<span class="payment-status-badge cancelled">Скасовано</span>'
+            ? ' <span class="status-badge danger">Скасовано</span>'
             : '';
 
         const cancelBtn = payment.is_cancelled
             ? ''
-            : `<button class="btn btn-sm btn-danger" onclick="cancelPayment(${payment.id})" title="Скасувати виплату">Скасувати</button>`;
+            : `<button class="btn-icon btn-icon-danger" onclick="cancelPayment(${payment.id})" title="Скасувати виплату">${ICONS.cancel}</button>`;
 
         row.innerHTML = `
             <td>${formatDate(payment.payment_date)}</td>
-            <td>${payment.landlord_full_name || '-'}</td>
-            <td>${payment.contract_field_name || '-'}</td>
-            <td>${payment.payment_type === 'grain' ? 'Зерном' : 'Грошима'} ${statusBadge}</td>
+            <td><strong>${payment.landlord_full_name || '—'}</strong></td>
+            <td>${payment.contract_field_name || '—'}</td>
+            <td>${typeBadge}${statusBadge}</td>
             <td>${sumText}</td>
             <td class="actions-cell">${cancelBtn}</td>
         `;
@@ -7481,4 +7760,261 @@ function initPaymentsReportModal() {
         showToast('Звіт сформовано', 'success');
         closeModal();
     });
+}
+
+// ═══════════════════════════════════════════════════════════
+// ═════ Хлібний завод (Талони на зерно) ═════
+// ═══════════════════════════════════════════════════════════
+
+let vouchersCache = [];
+let voucherPaymentsCache = [];
+let currentVoucherPaymentId = null;
+
+async function loadVouchersData() {
+    try {
+        const [vResp, pResp, sResp] = await Promise.all([
+            apiFetch('/vouchers'),
+            apiFetch('/vouchers/payments'),
+            apiFetch('/vouchers/summary')
+        ]);
+        vouchersCache = vResp.ok ? await vResp.json() : [];
+        voucherPaymentsCache = pResp.ok ? await pResp.json() : [];
+        const summary = sResp.ok ? await sResp.json() : null;
+        renderVoucherStats(summary);
+        renderVouchersTable();
+        renderVoucherPaymentsTable();
+    } catch (e) {
+        console.error('Помилка завантаження талонів:', e);
+    }
+}
+
+function renderVoucherStats(s) {
+    if (!s) return;
+    const el = (id, val) => {
+        const e = document.getElementById(id);
+        if (e) e.textContent = val;
+    };
+    el('v-stat-count', s.vouchers_count);
+    el('v-stat-qty', formatAmount(s.total_quantity_kg));
+    el('v-stat-remaining', formatAmount(s.total_remaining_uah));
+    el('v-stat-paid', formatAmount(s.total_paid_uah));
+
+    // Disable pay button if nothing to pay
+    const payBtn = document.getElementById('voucher-pay-total-btn');
+    if (payBtn) {
+        payBtn.disabled = s.total_remaining_uah <= 0.01;
+    }
+}
+
+function renderVouchersTable() {
+    const tbody = document.querySelector('#vouchers-table tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    if (!vouchersCache.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="table-empty-message">Талонів ще немає</td></tr>';
+        return;
+    }
+    vouchersCache.forEach(v => {
+        const tr = document.createElement('tr');
+        const dateStr = v.created_at ? new Date(v.created_at).toLocaleDateString('uk-UA') : '—';
+        tr.innerHTML = `
+            <td class="td-mono">${v.id}</td>
+            <td><a href="#" class="td-link link-contract" data-contract-id="${v.farmer_contract_id}">#${v.farmer_contract_id}</a></td>
+            <td><strong>${v.owner_name}</strong></td>
+            <td class="td-weight">${formatAmount(v.quantity_kg)} кг</td>
+            <td class="td-mono">${formatAmount(v.price_per_kg)} ₴/кг</td>
+            <td class="td-weight">${formatAmount(v.total_value_uah)} ₴</td>
+            <td>${dateStr}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function renderVoucherPaymentsTable() {
+    const tbody = document.querySelector('#voucher-payments-table tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    if (!voucherPaymentsCache.length) {
+        tbody.innerHTML = '<tr><td colspan="9" class="table-empty-message">Виплат ще немає</td></tr>';
+        return;
+    }
+    voucherPaymentsCache.forEach(p => {
+        const tr = document.createElement('tr');
+        if (p.is_cancelled) tr.classList.add('row-cancelled');
+        const dateStr = p.created_at ? new Date(p.created_at).toLocaleDateString('uk-UA') : '—';
+        const currSymbols = { UAH: '₴', USD: '$', EUR: '€' };
+        const currSymbol = currSymbols[p.currency] || p.currency;
+        tr.innerHTML = `
+            <td class="td-mono">${p.id}</td>
+            <td><strong>${p.currency}</strong></td>
+            <td class="td-weight">${formatAmount(p.amount)} ${currSymbol}</td>
+            <td class="td-mono">${p.exchange_rate != 1 ? formatAmount(p.exchange_rate) : '—'}</td>
+            <td class="td-weight">${formatAmount(p.amount_uah)} ₴</td>
+            <td>${p.description || '<span class="td-secondary">—</span>'}</td>
+            <td>${p.created_by}</td>
+            <td>${dateStr}</td>
+            <td class="actions-cell">
+                ${!p.is_cancelled
+                    ? `<button class="btn-icon btn-icon-danger vp-cancel-btn" data-payment-id="${p.id}" title="Скасувати">${ICONS.cancel}</button>`
+                    : '<span class="status-badge danger">Скасовано</span>'}
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    // Bind cancel buttons
+    tbody.querySelectorAll('.vp-cancel-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            currentVoucherPaymentId = parseInt(btn.dataset.paymentId);
+            document.getElementById('voucher-cancel-modal')?.classList.remove('hidden');
+        });
+    });
+}
+
+async function openVoucherPaymentModal() {
+    // Fetch current total remaining
+    try {
+        const resp = await apiFetch('/vouchers/summary');
+        if (resp.ok) {
+            const s = await resp.json();
+            const remainEl = document.getElementById('vp-total-remaining');
+            if (remainEl) remainEl.textContent = formatAmount(s.total_remaining_uah) + ' грн';
+        }
+    } catch (e) { /* ignore */ }
+
+    document.getElementById('vp-currency').value = 'UAH';
+    document.getElementById('vp-exchange-rate').value = '1';
+    document.getElementById('vp-exchange-rate').readOnly = true;
+    document.getElementById('vp-amount').value = '';
+    document.getElementById('vp-amount-uah').value = '';
+    document.getElementById('vp-description').value = '';
+
+    document.getElementById('voucher-payment-modal')?.classList.remove('hidden');
+}
+
+function initVouchers() {
+    // Open payment modal from the main button
+    const payTotalBtn = document.getElementById('voucher-pay-total-btn');
+    if (payTotalBtn) {
+        payTotalBtn.addEventListener('click', () => openVoucherPaymentModal());
+    }
+
+    // Payment modal — auto-calculate UAH amount
+    const amountInput = document.getElementById('vp-amount');
+    const rateInput = document.getElementById('vp-exchange-rate');
+    const currencySelect = document.getElementById('vp-currency');
+    const amountUahDisplay = document.getElementById('vp-amount-uah');
+
+    function updateAmountUah() {
+        const amount = parseFloat(amountInput?.value) || 0;
+        const rate = parseFloat(rateInput?.value) || 1;
+        if (amountUahDisplay) {
+            amountUahDisplay.value = formatAmount(amount * rate) + ' грн';
+        }
+    }
+
+    if (amountInput) amountInput.addEventListener('input', updateAmountUah);
+    if (rateInput) rateInput.addEventListener('input', updateAmountUah);
+    if (currencySelect) {
+        currencySelect.addEventListener('change', () => {
+            if (currencySelect.value === 'UAH') {
+                rateInput.value = '1';
+                rateInput.readOnly = true;
+            } else {
+                rateInput.readOnly = false;
+            }
+            updateAmountUah();
+        });
+    }
+
+    const hidePaymentModal = () => document.getElementById('voucher-payment-modal')?.classList.add('hidden');
+    const hideCancelModal = () => document.getElementById('voucher-cancel-modal')?.classList.add('hidden');
+
+    // Payment modal — close & overlay
+    const closeBtn = document.getElementById('voucher-payment-close');
+    const cancelBtn = document.getElementById('voucher-payment-cancel-btn');
+    const payOverlay = document.querySelector('#voucher-payment-modal .modal-overlay');
+    if (closeBtn) closeBtn.addEventListener('click', hidePaymentModal);
+    if (cancelBtn) cancelBtn.addEventListener('click', hidePaymentModal);
+    if (payOverlay) payOverlay.addEventListener('click', hidePaymentModal);
+
+    const cancelOverlay = document.querySelector('#voucher-cancel-modal .modal-overlay');
+    if (cancelOverlay) cancelOverlay.addEventListener('click', hideCancelModal);
+
+    // Payment modal — confirm (pays from total debt, not specific voucher)
+    const confirmBtn = document.getElementById('voucher-payment-confirm-btn');
+    if (confirmBtn) {
+        confirmBtn.addEventListener('click', async () => {
+            const currency = document.getElementById('vp-currency').value;
+            const amount = parseFloat(document.getElementById('vp-amount').value);
+            const exchangeRate = parseFloat(document.getElementById('vp-exchange-rate').value) || 1;
+            const description = document.getElementById('vp-description').value;
+
+            if (!amount || amount <= 0) {
+                showToast('Вкажіть суму', 'error');
+                return;
+            }
+
+            confirmBtn.disabled = true;
+            try {
+                const resp = await apiFetch('/vouchers/payments', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        currency,
+                        amount,
+                        exchange_rate: exchangeRate,
+                        description: description || null
+                    })
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => null);
+                    showToast(err?.detail || 'Помилка створення виплати', 'error');
+                    return;
+                }
+                const result = await resp.json();
+                showToast(result.message || 'Виплату створено', 'success');
+                hidePaymentModal();
+                await loadVouchersData();
+                await loadCashBalance();
+            } catch (e) {
+                showToast(e.message || 'Помилка', 'error');
+            } finally {
+                confirmBtn.disabled = false;
+            }
+        });
+    }
+
+    // Cancel payment modal
+    const cancelCloseBtn = document.getElementById('voucher-cancel-close');
+    const cancelNoBtn = document.getElementById('voucher-cancel-no-btn');
+    const cancelYesBtn = document.getElementById('voucher-cancel-yes-btn');
+
+    if (cancelCloseBtn) cancelCloseBtn.addEventListener('click', hideCancelModal);
+    if (cancelNoBtn) cancelNoBtn.addEventListener('click', hideCancelModal);
+    if (cancelYesBtn) {
+        cancelYesBtn.addEventListener('click', async () => {
+            if (!currentVoucherPaymentId) return;
+            cancelYesBtn.disabled = true;
+            try {
+                const resp = await apiFetch(`/vouchers/payments/${currentVoucherPaymentId}/cancel`, {
+                    method: 'POST'
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => null);
+                    showToast(err?.detail || 'Помилка скасування', 'error');
+                    return;
+                }
+                const result = await resp.json();
+                showToast(result.message || 'Виплату скасовано', 'success');
+                hideCancelModal();
+                await loadVouchersData();
+                await loadCashBalance();
+            } catch (e) {
+                showToast(e.message || 'Помилка', 'error');
+            } finally {
+                cancelYesBtn.disabled = false;
+                currentVoucherPaymentId = null;
+            }
+        });
+    }
 }

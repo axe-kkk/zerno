@@ -79,7 +79,7 @@ class GrainCulture(BaseModel, table=True):
     __tablename__ = "grain_cultures"
 
     name: str = Field(unique=True, index=True, description="Назва культури")
-    price_per_kg: float = Field(default=0.0, description="Ціна за кг")
+    price_per_kg: float = Field(default=1.0, description="Ціна за кг")
     is_active: bool = Field(default=True)
 
 
@@ -199,7 +199,7 @@ class PurchaseStock(BaseModel, table=True):
     category: PurchaseCategory = Field(description="Категорія")
     quantity_kg: float = Field(default=0.0, description="Кількість в кг")
     reserved_kg: float = Field(default=0.0, description="Забронировано, кг")
-    sale_price_per_kg: float = Field(default=0.0, description="Ціна продажу за кг")
+    sale_price_per_kg: float = Field(default=1.0, description="Ціна продажу за кг")
 
 
 class FarmerContractType(str, Enum):
@@ -223,6 +223,7 @@ class FarmerContractItemType(str, Enum):
     GRAIN = "grain"
     PURCHASE = "purchase"
     CASH = "cash"
+    VOUCHER = "voucher"
 
 
 class FarmerContractItemDirection(str, Enum):
@@ -238,6 +239,7 @@ class FarmerContractPaymentType(str, Enum):
     GOODS_ISSUE = "goods_issue"        # Видача товару фермеру
     GOODS_RECEIVE = "goods_receive"    # Прийом товару від фермера
     SETTLEMENT = "settlement"          # Авторозрахунок (контракт виплати)
+    VOUCHER = "voucher"                # Талон на зерно (хлібний завод)
 
 
 class FarmerContract(BaseModel, table=True):
@@ -388,4 +390,36 @@ class LeasePaymentGrainItem(BaseModel, table=True):
     payment_id: int = Field(foreign_key="lease_payments.id", description="ID виплати")
     culture_id: int = Field(foreign_key="grain_cultures.id", description="Культура")
     quantity_kg: float = Field(description="Кількість зерна, кг")
+
+
+class GrainVoucher(BaseModel, table=True):
+    """Талон на зерно (хлібний завод)"""
+    __tablename__ = "grain_vouchers"
+
+    farmer_contract_id: int = Field(foreign_key="farmer_contracts.id", description="Контракт фермера")
+    farmer_contract_payment_id: Optional[int] = Field(default=None, foreign_key="farmer_contract_payments.id", description="Оплата контракту")
+    owner_id: int = Field(foreign_key="grain_owners.id", description="Фермер")
+    culture_id: int = Field(foreign_key="grain_cultures.id", description="Культура (пшениця)")
+    quantity_kg: float = Field(description="Кількість зерна по талону, кг")
+    price_per_kg: float = Field(default=0.0, description="Ціна за кг на момент створення")
+    total_value_uah: float = Field(default=0.0, description="Загальна сума талону, грн")
+    paid_value_uah: float = Field(default=0.0, description="Вже сплачено, грн")
+    remaining_value_uah: float = Field(default=0.0, description="Залишок до сплати, грн")
+    is_closed: bool = Field(default=False, description="Талон повністю сплачено")
+    note: Optional[str] = Field(default=None, description="Примітка")
+    created_by_user_id: Optional[int] = Field(default=None, foreign_key="users.id")
+
+
+class GrainVoucherPayment(BaseModel, table=True):
+    """Виплата по талону на зерно"""
+    __tablename__ = "grain_voucher_payments"
+
+    voucher_id: int = Field(foreign_key="grain_vouchers.id", description="ID талону")
+    currency: Currency = Field(default=Currency.UAH, description="Валюта виплати")
+    amount: float = Field(description="Сума у валюті виплати")
+    exchange_rate: float = Field(default=1.0, description="Курс до гривні")
+    amount_uah: float = Field(description="Сума в гривнях")
+    description: Optional[str] = Field(default=None, description="Примітка")
+    is_cancelled: bool = Field(default=False, description="Скасовано")
+    created_by_user_id: Optional[int] = Field(default=None, foreign_key="users.id")
 

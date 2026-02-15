@@ -98,6 +98,14 @@
                     </svg>
                     <span class="nav-text">Контракти фермерів</span>
                 </a>
+                <a href="#" class="nav-item" data-page="vouchers">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="2" y="6" width="20" height="12" rx="2" stroke="currentColor" stroke-width="2"/>
+                        <path d="M6 10h4M6 14h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        <circle cx="18" cy="12" r="2" stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                    <span class="nav-text">Хлібний завод</span>
+                </a>
                 <a href="#" class="nav-item" data-page="users" data-admin-only>
                     <svg class="nav-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <circle cx="8" cy="8" r="3.5" stroke="currentColor" stroke-width="2"/>
@@ -149,257 +157,165 @@
             <div class="content-area" id="content-area">
                 <!-- Dashboard Section -->
                 <section class="page-section" id="section-dashboard">
-                    <div class="dashboard-header">
-                        <button class="btn btn-secondary btn-icon" id="dashboard-refresh-btn" title="Оновити дані">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <polyline points="23 4 23 10 17 10"></polyline>
-                                <polyline points="1 20 1 14 7 14"></polyline>
-                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-                            </svg>
-                        </button>
-                    </div>
-
-                    <!-- Cash Balances -->
-                    <div class="dashboard-section">
-                        <h3 class="dashboard-section-title">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <rect x="3" y="6" width="18" height="12" rx="2"></rect>
-                                <circle cx="12" cy="12" r="2.5"></circle>
-                                <path d="M3 10h18"></path>
-                            </svg>
-                            Каса
-                        </h3>
-                        <div class="dashboard-stats-grid">
-                            <div class="dashboard-stat-card stat-cash-uah">
-                                <div class="stat-card-icon">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <circle cx="12" cy="12" r="10"></circle>
-                                        <path d="M12 6v12M15 9H9"></path>
-                                    </svg>
-                                </div>
-                                <div class="stat-card-content">
-                                    <div class="stat-card-label">UAH</div>
-                                    <div class="stat-card-value" id="dashboard-cash-uah">0.00</div>
-                                    <div class="stat-card-unit">₴ Гривня</div>
-                                </div>
-                            </div>
-                            <div class="dashboard-stat-card stat-cash-usd">
-                                <div class="stat-card-icon">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <circle cx="12" cy="12" r="10"></circle>
-                                        <path d="M12 6v12M15 9H9"></path>
-                                    </svg>
-                                </div>
-                                <div class="stat-card-content">
-                                    <div class="stat-card-label">USD</div>
-                                    <div class="stat-card-value" id="dashboard-cash-usd">0.00</div>
-                                    <div class="stat-card-unit">$ Долар США</div>
-                                </div>
-                            </div>
-                            <div class="dashboard-stat-card stat-cash-eur">
-                                <div class="stat-card-icon">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <circle cx="12" cy="12" r="10"></circle>
-                                        <path d="M12 6v12M15 9H9"></path>
-                                    </svg>
-                                </div>
-                                <div class="stat-card-content">
-                                    <div class="stat-card-label">EUR</div>
-                                    <div class="stat-card-value" id="dashboard-cash-eur">0.00</div>
-                                    <div class="stat-card-unit">€ Євро</div>
-                                </div>
-                            </div>
+                    <div class="db">
+                        <!-- Top strip: cash + mini stats -->
+                        <div class="db-top">
+                            <div class="db-cash db-cash-uah"><span class="db-cash-cur">₴</span><span class="db-cash-val" id="dashboard-cash-uah">0.00</span></div>
+                            <div class="db-cash db-cash-usd"><span class="db-cash-cur">$</span><span class="db-cash-val" id="dashboard-cash-usd">0.00</span></div>
+                            <div class="db-cash db-cash-eur"><span class="db-cash-cur">€</span><span class="db-cash-val" id="dashboard-cash-eur">0.00</span></div>
                         </div>
-                    </div>
 
-                    <!-- Main Stats -->
-                    <div class="dashboard-section">
-                        <div class="dashboard-stats-grid dashboard-stats-grid-6">
-                            <div class="dashboard-stat-card stat-primary">
-                                <div class="stat-card-icon">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M3 9l9-5 9 5v10H3V9z"></path>
-                                        <path d="M9 19v-6h6v6"></path>
-                                    </svg>
+                        <!-- Main area: 2 columns -->
+                        <div class="db-main">
+                            <!-- LEFT: stock by culture + recent cash ops -->
+                            <div class="db-col-left">
+                                <div class="db-card db-card-stock db-card-half">
+                                    <div class="db-card-head">
+                                        <span class="db-card-title">Склад по культурах</span>
+                                        <span class="db-card-badge" id="dashboard-total-stock">0 кг</span>
+                                    </div>
+                                    <div class="db-card-body db-stock-list" id="dashboard-stock-cultures">
+                                        <div class="db-empty">Завантаження…</div>
+                                    </div>
+                                    <div class="db-stock-legend">
+                                        <span class="db-leg"><span class="db-leg-dot" style="background:#22c55e"></span>Власне</span>
+                                        <span class="db-leg"><span class="db-leg-dot" style="background:#3b82f6"></span>Фермерське</span>
+                                    </div>
                                 </div>
-                                <div class="stat-card-content">
-                                    <div class="stat-card-label">Зерно на складі</div>
-                                    <div class="stat-card-value" id="dashboard-total-stock">0</div>
-                                    <div class="stat-card-unit">кг</div>
-                                </div>
-                            </div>
-                            <div class="dashboard-stat-card stat-success">
-                                <div class="stat-card-icon">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M20 7h-4M4 7h4m0 0V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m-8 0v10a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V7"></path>
-                                    </svg>
-                                </div>
-                                <div class="stat-card-content">
-                                    <div class="stat-card-label">Викуплено</div>
-                                    <div class="stat-card-value" id="dashboard-total-own">0</div>
-                                    <div class="stat-card-unit">кг</div>
-                                </div>
-                            </div>
-                            <div class="dashboard-stat-card stat-warning">
-                                <div class="stat-card-icon">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M20 7h-4M4 7h4m0 0V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m-8 0v10a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V7"></path>
-                                    </svg>
-                                </div>
-                                <div class="stat-card-content">
-                                    <div class="stat-card-label">Не викуплено</div>
-                                    <div class="stat-card-value" id="dashboard-total-farmer">0</div>
-                                    <div class="stat-card-unit">кг</div>
-                                </div>
-                            </div>
-                            <div class="dashboard-stat-card stat-info">
-                                <div class="stat-card-icon">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <rect x="3" y="4" width="18" height="16" rx="2"></rect>
-                                        <path d="M7 8h10M7 12h10M7 16h6"></path>
-                                    </svg>
-                                </div>
-                                <div class="stat-card-content">
-                                    <div class="stat-card-label">Контракти</div>
-                                    <div class="stat-card-value" id="dashboard-contracts-total">0</div>
-                                    <div class="stat-card-unit">
-                                        <span id="dashboard-contracts-open">0</span> відкритих
+                                <div class="db-card db-card-half">
+                                    <div class="db-card-head"><span class="db-card-title">Останні операції каси</span></div>
+                                    <div class="db-card-body db-card-scroll" id="dashboard-recent-transactions">
+                                        <div class="db-empty">Завантаження…</div>
                                     </div>
                                 </div>
                             </div>
-                            <div class="dashboard-stat-card stat-purple">
-                                <div class="stat-card-icon">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <circle cx="12" cy="11" r="3"></circle>
-                                        <path d="M4 20a8 8 0 0 1 16 0"></path>
-                                    </svg>
+
+                            <!-- RIGHT: two panels 50/50 -->
+                            <div class="db-col-right">
+                                <!-- Panel 1: Key metrics grid -->
+                                <div class="db-card db-card-half">
+                                    <div class="db-card-head"><span class="db-card-title">Ключові показники</span></div>
+                                    <div class="db-card-body db-metrics-body">
+                                        <!-- Row: Today -->
+                                        <div class="db-m-section">
+                                            <div class="db-m-label">Сьогодні</div>
+                                            <div class="db-m-row3">
+                                                <div class="db-m-cell">
+                                                    <span class="db-m-val db-m-green" id="dashboard-intakes-today">0</span>
+                                                    <span class="db-m-sub" id="dashboard-intakes-today-kg">0 кг</span>
+                                                    <span class="db-m-lbl">Прийомка</span>
+                                                </div>
+                                                <div class="db-m-cell">
+                                                    <span class="db-m-val db-m-blue" id="dashboard-shipments-today">0</span>
+                                                    <span class="db-m-sub" id="dashboard-shipments-today-kg">0 кг</span>
+                                                    <span class="db-m-lbl">Відвантаження</span>
+                                                </div>
+                                                <div class="db-m-cell">
+                                                    <span class="db-m-val db-m-orange" id="dashboard-intakes-pending">0</span>
+                                                    <span class="db-m-sub">&nbsp;</span>
+                                                    <span class="db-m-lbl">Очікують</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <!-- Row: Grain ownership -->
+                                        <div class="db-m-section">
+                                            <div class="db-m-label">Зерно на складі</div>
+                                            <div class="db-m-row2">
+                                                <div class="db-m-cell">
+                                                    <span class="db-m-val db-m-green" id="dashboard-own-stock">0</span>
+                                                    <span class="db-m-lbl">Власне, кг</span>
+                                                </div>
+                                                <div class="db-m-cell">
+                                                    <span class="db-m-val db-m-blue" id="dashboard-farmer-stock">0</span>
+                                                    <span class="db-m-lbl">Фермерське, кг</span>
+                                                </div>
+                                            </div>
+                                            <div class="db-m-bar">
+                                                <div class="db-m-bar-a" id="dashboard-own-bar"></div>
+                                                <div class="db-m-bar-b" id="dashboard-farmer-bar"></div>
+                                            </div>
+                                        </div>
+                                        <!-- Row: Contracts -->
+                                        <div class="db-m-section">
+                                            <div class="db-m-label">Контракти</div>
+                                            <div class="db-m-row4">
+                                                <div class="db-m-cell">
+                                                    <span class="db-m-val db-m-green" id="dashboard-contracts-open-value">0</span>
+                                                    <span class="db-m-lbl">Відкриті</span>
+                                                </div>
+                                                <div class="db-m-cell">
+                                                    <span class="db-m-val" id="dashboard-contracts-closed-value">0</span>
+                                                    <span class="db-m-lbl">Закриті</span>
+                                                </div>
+                                                <div class="db-m-cell">
+                                                    <span class="db-m-val" id="dashboard-contracts-total-value">0</span>
+                                                    <span class="db-m-lbl">Сума, ₴</span>
+                                                </div>
+                                                <div class="db-m-cell">
+                                                    <span class="db-m-val db-m-orange" id="dashboard-contracts-balance-value">0</span>
+                                                    <span class="db-m-lbl">Залишок, ₴</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <!-- Row: Vouchers -->
+                                        <div class="db-m-section">
+                                            <div class="db-m-label">Хлібний завод</div>
+                                            <div class="db-m-row4">
+                                                <div class="db-m-cell">
+                                                    <span class="db-m-val" id="dashboard-vouchers-count">0</span>
+                                                    <span class="db-m-lbl">Талонів</span>
+                                                </div>
+                                                <div class="db-m-cell">
+                                                    <span class="db-m-val db-m-orange" id="dashboard-vouchers-open">0</span>
+                                                    <span class="db-m-lbl">Відкритих</span>
+                                                </div>
+                                                <div class="db-m-cell">
+                                                    <span class="db-m-val" id="dashboard-vouchers-total">0</span>
+                                                    <span class="db-m-lbl">Сума, ₴</span>
+                                                </div>
+                                                <div class="db-m-cell">
+                                                    <span class="db-m-val db-m-red" id="dashboard-vouchers-remaining">0</span>
+                                                    <span class="db-m-lbl">Борг, ₴</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
-                                <div class="stat-card-content">
-                                    <div class="stat-card-label">Фермери</div>
-                                    <div class="stat-card-value" id="dashboard-farmers-total">0</div>
-                                    <div class="stat-card-unit">
-                                        <span id="dashboard-farmers-active">0</span> активних
+
+                                <!-- Panel 2: Grain & Farmers -->
+                                <div class="db-card db-card-half">
+                                    <div class="db-card-head"><span class="db-card-title">Зерно та фермери</span></div>
+                                    <div class="db-card-body db-gf-body">
+                                        <!-- Grain purchase -->
+                                        <div class="db-gf-section">
+                                            <div class="db-gf-header">Викуп зерна від фермерів</div>
+                                            <div class="db-gf-pair">
+                                                <div class="db-gf-item db-gf-yes">
+                                                    <span class="db-gf-num" id="dashboard-grain-purchased">0</span>
+                                                    <span class="db-gf-lbl">Викуплено, кг</span>
+                                                </div>
+                                                <div class="db-gf-item db-gf-no">
+                                                    <span class="db-gf-num" id="dashboard-grain-not-purchased">0</span>
+                                                    <span class="db-gf-lbl">Не викуплено, кг</span>
+                                                </div>
+                                            </div>
+                                            <div class="db-gf-bar-wrap">
+                                                <div class="db-gf-bar-fill" id="dashboard-purchase-bar"></div>
+                                            </div>
+                                            <div class="db-gf-pct" id="dashboard-purchase-pct">0%</div>
+                                        </div>
+                                        <!-- Purchases -->
+                                        <div class="db-gf-section db-gf-grow">
+                                            <div class="db-gf-header">Закупки на складі <span class="db-gf-total" id="dashboard-purchases-total">0 кг</span></div>
+                                            <div class="db-gf-cats" id="dashboard-purchases-by-cat">
+                                                <div class="db-empty">Завантаження…</div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
-                            <div class="dashboard-stat-card stat-orange">
-                                <div class="stat-card-icon">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M3 10h12l2-4h4v8H3v-4z"></path>
-                                        <circle cx="7" cy="18" r="2"></circle>
-                                        <circle cx="17" cy="18" r="2"></circle>
-                                    </svg>
-                                </div>
-                                <div class="stat-card-content">
-                                    <div class="stat-card-label">Операції сьогодні</div>
-                                    <div class="stat-card-value" id="dashboard-ops-today">0</div>
-                                    <div class="stat-card-unit">
-                                        <span id="dashboard-intakes-today">0</span> прийомів, <span id="dashboard-shipments-today">0</span> відправок
-                                    </div>
-                                </div>
-                            </div>
                         </div>
                     </div>
-
-                    <!-- Additional Stats -->
-                    <div class="dashboard-section">
-                        <div class="dashboard-stats-grid dashboard-stats-grid-4">
-                            <div class="dashboard-stat-card stat-teal">
-                                <div class="stat-card-icon">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M3 10h12l2-4h4v8H3v-4z"></path>
-                                        <circle cx="7" cy="18" r="2"></circle>
-                                        <circle cx="17" cy="18" r="2"></circle>
-                                    </svg>
-                                </div>
-                                <div class="stat-card-content">
-                                    <div class="stat-card-label">Всього прийомів</div>
-                                    <div class="stat-card-value" id="dashboard-total-intakes">0</div>
-                                    <div class="stat-card-unit" id="dashboard-total-intake-kg">0 кг</div>
-                                </div>
-                            </div>
-                            <div class="dashboard-stat-card stat-cyan">
-                                <div class="stat-card-icon">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M3 12h12l2-4h4v8H3v-4z"></path>
-                                        <circle cx="7" cy="18" r="2"></circle>
-                                        <circle cx="17" cy="18" r="2"></circle>
-                                    </svg>
-                                </div>
-                                <div class="stat-card-content">
-                                    <div class="stat-card-label">Всього відправок</div>
-                                    <div class="stat-card-value" id="dashboard-total-shipments">0</div>
-                                    <div class="stat-card-unit" id="dashboard-total-shipment-kg">0 кг</div>
-                                </div>
-                            </div>
-                            <div class="dashboard-stat-card stat-pink">
-                                <div class="stat-card-icon">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <rect x="3" y="4" width="18" height="16" rx="2"></rect>
-                                        <path d="M7 8h10M7 12h10M7 16h6"></path>
-                                    </svg>
-                                </div>
-                                <div class="stat-card-content">
-                                    <div class="stat-card-label">Середня сума контракту</div>
-                                    <div class="stat-card-value" id="dashboard-avg-contract">0</div>
-                                    <div class="stat-card-unit">грн</div>
-                                </div>
-                            </div>
-                            <div class="dashboard-stat-card stat-indigo">
-                                <div class="stat-card-icon">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
-                                    </svg>
-                                </div>
-                                <div class="stat-card-content">
-                                    <div class="stat-card-label">Загальна сума контрактів</div>
-                                    <div class="stat-card-value" id="dashboard-contracts-total-value-card">0</div>
-                                    <div class="stat-card-unit">грн</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Contracts & Finance -->
-                    <div class="dashboard-grid-2">
-                        <div class="card dashboard-card">
-                            <div class="card-header">
-                                <h4 class="card-title">Контракти фермерів</h4>
-                            </div>
-                            <div class="dashboard-card-content">
-                                <div class="dashboard-metric-row">
-                                    <span class="metric-label">Відкритих</span>
-                                    <span class="metric-value" id="dashboard-contracts-open-value">0</span>
-                                </div>
-                                <div class="dashboard-metric-row">
-                                    <span class="metric-label">Закритих</span>
-                                    <span class="metric-value" id="dashboard-contracts-closed-value">0</span>
-                                </div>
-                                <div class="dashboard-metric-row">
-                                    <span class="metric-label">Загальна сума</span>
-                                    <span class="metric-value" id="dashboard-contracts-total-value">0.00</span>
-                                    <span class="metric-unit">грн</span>
-                                </div>
-                                <div class="dashboard-metric-row">
-                                    <span class="metric-label">Залишок</span>
-                                    <span class="metric-value" id="dashboard-contracts-balance-value">0.00</span>
-                                    <span class="metric-unit">грн</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="card dashboard-card">
-                            <div class="card-header">
-                                <h4 class="card-title">Останні операції каси</h4>
-                            </div>
-                            <div class="dashboard-card-content">
-                                <div class="dashboard-transactions" id="dashboard-recent-transactions">
-                                    <div class="dashboard-empty">Завантаження...</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
                 </section>
 
                 <!-- Cash Section -->
@@ -437,6 +353,10 @@
                                     <span class="cash-dot"></span>
                                     Редагування доступне лише супер адміну
                                 </div>
+                            </div>
+                            <div class="cash-voucher-debt" id="cash-voucher-debt" style="margin-top:12px;padding:10px 14px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;display:none;">
+                                <div style="font-size:12px;color:#9a3412;font-weight:600;margin-bottom:4px;">Борг по талонах (Хлібний завод)</div>
+                                <div style="font-size:18px;font-weight:700;color:#dc2626;" id="cash-voucher-debt-value">0.00 грн</div>
                             </div>
                         </div>
                         <div class="card" data-admin-only>
@@ -1206,10 +1126,161 @@
                         </div>
                     </div>
                 </section>
+
+                <!-- ═══ Хлібний завод (Талони) ═══ -->
+                <section class="page-section hidden" id="section-vouchers">
+                    <div class="section-header">
+                        <div class="section-actions">
+                            <button class="btn btn-primary" id="voucher-pay-total-btn">Виплатити з боргу</button>
+                        </div>
+                    </div>
+
+                    <!-- Summary cards -->
+                    <div class="voucher-stats" id="voucher-stats">
+                        <div class="stat-card-mini">
+                            <div class="stat-mini-label">Всього талонів</div>
+                            <div class="stat-mini-value" id="v-stat-count">0</div>
+                        </div>
+                        <div class="stat-card-mini">
+                            <div class="stat-mini-label">Зерно, кг</div>
+                            <div class="stat-mini-value" id="v-stat-qty">0</div>
+                        </div>
+                        <div class="stat-card-mini stat-danger-bg">
+                            <div class="stat-mini-label">Залишок боргу (грн)</div>
+                            <div class="stat-mini-value" id="v-stat-remaining">0</div>
+                        </div>
+                        <div class="stat-card-mini stat-success-bg">
+                            <div class="stat-mini-label">Сплачено (грн)</div>
+                            <div class="stat-mini-value" id="v-stat-paid">0</div>
+                        </div>
+                    </div>
+
+                    <div class="vouchers-grid">
+                        <!-- Vouchers table -->
+                        <div class="card table-card">
+                            <div class="card-header">
+                                <div class="card-title">Талони на зерно</div>
+                            </div>
+                            <div class="table-wrapper">
+                                <table class="data-table" id="vouchers-table">
+                                    <thead>
+                                        <tr>
+                                            <th>#</th>
+                                            <th>Контракт</th>
+                                            <th>Фермер</th>
+                                            <th>Кількість, кг</th>
+                                            <th>Ціна/кг</th>
+                                            <th>Сума, грн</th>
+                                            <th>Дата</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Voucher payments table -->
+                        <div class="card table-card">
+                            <div class="card-header">
+                                <div class="card-title">Виплати по талонах</div>
+                            </div>
+                            <div class="table-wrapper">
+                                <table class="data-table" id="voucher-payments-table">
+                                    <thead>
+                                        <tr>
+                                            <th>#</th>
+                                            <th>Валюта</th>
+                                            <th>Сума</th>
+                                            <th>Курс</th>
+                                            <th>Еквівалент (грн)</th>
+                                            <th>Примітка</th>
+                                            <th>Хто</th>
+                                            <th>Дата</th>
+                                            <th>Дії</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
             </div>
         </main>
     </div>
     <div class="toast-container" id="toast-container"></div>
+
+    <!-- Modal: Voucher Payment (from total debt) -->
+    <div class="modal hidden" id="voucher-payment-modal">
+        <div class="modal-overlay"></div>
+        <div class="modal-content stock-adjust-modal">
+            <div class="modal-header">
+                <h3>Виплата по талонах</h3>
+                <button class="modal-close" id="voucher-payment-close" aria-label="Закрити">×</button>
+            </div>
+            <div class="modal-body">
+                <div style="display:flex;gap:12px;margin-bottom:16px;padding:12px 16px;background:#fef3c7;border-radius:10px;align-items:center;">
+                    <div style="flex:1;">
+                        <div style="font-size:13px;color:#a16207;margin-bottom:4px;">Загальний залишок боргу по талонах:</div>
+                        <div style="font-weight:700;font-size:18px;color:#dc2626;" id="vp-total-remaining">0 грн</div>
+                    </div>
+                </div>
+
+                <div class="form-grid">
+                    <div class="form-field">
+                        <label>Валюта</label>
+                        <select id="vp-currency">
+                            <option value="UAH">UAH</option>
+                            <option value="USD">USD</option>
+                            <option value="EUR">EUR</option>
+                        </select>
+                    </div>
+                    <div class="form-field">
+                        <label>Курс до грн</label>
+                        <input type="number" id="vp-exchange-rate" value="1" step="0.01" min="0.01">
+                    </div>
+                    <div class="form-field">
+                        <label>Сума виплати</label>
+                        <input type="number" id="vp-amount" step="0.01" min="0.01" placeholder="0.00">
+                    </div>
+                    <div class="form-field">
+                        <label>Еквівалент (грн)</label>
+                        <input type="text" id="vp-amount-uah" readonly style="font-weight:600;color:var(--primary-dark);">
+                    </div>
+                    <div class="form-field" style="grid-column: 1/-1;">
+                        <label>Примітка</label>
+                        <input type="text" id="vp-description" placeholder="Необов'язково">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="voucher-payment-cancel-btn">Скасувати</button>
+                <button class="btn btn-primary" id="voucher-payment-confirm-btn">Сплатити</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Cancel Voucher Payment -->
+    <div class="modal hidden" id="voucher-cancel-modal">
+        <div class="modal-overlay"></div>
+        <div class="modal-content stock-adjust-modal">
+            <div class="modal-header">
+                <h3>Скасування виплати</h3>
+                <button class="modal-close" id="voucher-cancel-close" aria-label="Закрити">×</button>
+            </div>
+            <div class="modal-body">
+                <div style="text-align:center;padding:8px 0;">
+                    <p style="font-size:14px;color:var(--text-primary);">Ви впевнені, що хочете скасувати цю виплату?</p>
+                    <p style="font-size:13px;color:var(--text-secondary);margin-top:4px;">Кошти будуть повернуті до каси, борг по талонах збільшиться.</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="voucher-cancel-no-btn">Ні, залишити</button>
+                <button class="btn btn-danger" id="voucher-cancel-yes-btn">Так, скасувати</button>
+            </div>
+        </div>
+    </div>
 
     <div class="modal hidden" id="cash-report-modal">
         <div class="modal-overlay"></div>
@@ -2315,12 +2386,13 @@
                     </button>
                 </div>
 
-                <!-- GOODS_ISSUE: ми видаємо товар фермеру -->
+                <!-- GOODS_ISSUE: ми видаємо товар/талон фермеру -->
                 <div class="fcp-section" id="fcp-section-issue">
                     <div class="fcp-items-title">Позиції контракту (від нас)</div>
                     <div class="fcp-contract-items" id="fcp-issue-items">
                         <div class="fcp-grain-empty">Завантаження...</div>
                     </div>
+                    <div class="fcp-voucher-confirm hidden" id="fcp-voucher-confirm"></div>
                     <div class="form-grid report-grid" style="margin-top:12px;" id="fcp-issue-form" class="hidden">
                         <div class="form-field">
                             <label>Обрана позиція</label>
@@ -2402,6 +2474,7 @@
                     </div>
                     <div class="fcp-equiv" id="fcp-grain-equiv"></div>
                 </div>
+
             </div>
             <div class="modal-actions">
                 <button class="btn btn-secondary" id="farmer-contract-payment-cancel">Скасувати</button>

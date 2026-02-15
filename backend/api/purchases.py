@@ -66,7 +66,7 @@ async def update_purchase_stock_price(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Позицію складу не знайдено"
         )
-    stock.sale_price_per_kg = payload.sale_price_per_kg
+    stock.sale_price_per_kg = max(1.0, payload.sale_price_per_kg)
     session.add(stock)
     session.commit()
     session.refresh(stock)

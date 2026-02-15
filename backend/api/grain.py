@@ -167,7 +167,7 @@ async def create_culture(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Така культура вже існує"
         )
-    culture = GrainCulture(name=payload.name, price_per_kg=payload.price_per_kg)
+    culture = GrainCulture(name=payload.name, price_per_kg=max(1.0, payload.price_per_kg))
     session.add(culture)
     session.commit()
     session.refresh(culture)
@@ -188,7 +188,7 @@ async def update_culture_price(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Культуру не знайдено"
         )
-    culture.price_per_kg = payload.price_per_kg
+    culture.price_per_kg = max(1.0, payload.price_per_kg)
     session.add(culture)
     session.commit()
     session.refresh(culture)
