@@ -24,10 +24,9 @@ wheels/
 *.egg
 
 # Environment
-.env
+
 .venv
-# Но .env.example должен быть в репозитории
-!.env.example
+
 
 # IDE
 .vscode/
