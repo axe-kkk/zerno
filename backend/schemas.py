@@ -181,6 +181,38 @@ class FarmerBalanceItem(BaseModel):
     quantity_kg: float
 
 
+class FarmerGrainDeductRequest(BaseModel):
+    """Списання зерна з балансу фермера"""
+    owner_id: int
+    culture_id: int
+    quantity_kg: float = Field(..., gt=0)
+    note: Optional[str] = None
+
+
+class FarmerGrainTransferRequest(BaseModel):
+    """Переміщення зерна від одного фермера до іншого"""
+    from_owner_id: int
+    to_owner_id: int
+    culture_id: int
+    quantity_kg: float = Field(..., gt=0)
+    note: Optional[str] = None
+
+
+class FarmerGrainMovementResponse(BaseModel):
+    id: int
+    movement_type: str
+    from_owner_id: int
+    to_owner_id: Optional[int]
+    culture_id: int
+    quantity_kg: float
+    note: Optional[str]
+    created_by_user_id: Optional[int]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class FarmerContractItemCreate(BaseModel):
     direction: FarmerContractItemDirection
     item_type: FarmerContractItemType
@@ -301,6 +333,9 @@ class GrainShipmentCreate(BaseModel):
     culture_id: int = Field(..., description="Культура")
     destination: str = Field(..., description="Куди відправляємо")
     quantity_kg: float = Field(..., gt=0, description="Кількість, кг")
+    payment_format: str = Field(default="none", description="Формат оплати: none / cash / cashless")
+    driver_id: Optional[int] = Field(None, description="Водій")
+    vehicle_type_id: Optional[int] = Field(None, description="Тип транспорту")
 
 
 class GrainShipmentUpdate(BaseModel):
@@ -308,6 +343,9 @@ class GrainShipmentUpdate(BaseModel):
     culture_id: Optional[int] = Field(None, description="Культура")
     destination: Optional[str] = Field(None, description="Куди відправляємо")
     quantity_kg: Optional[float] = Field(None, gt=0, description="Кількість, кг")
+    payment_format: Optional[str] = Field(None, description="Формат оплати")
+    driver_id: Optional[int] = Field(None, description="Водій")
+    vehicle_type_id: Optional[int] = Field(None, description="Тип транспорту")
 
 
 class GrainShipmentResponse(BaseModel):
@@ -316,6 +354,9 @@ class GrainShipmentResponse(BaseModel):
     culture_id: int
     destination: str
     quantity_kg: float
+    payment_format: str
+    driver_id: Optional[int]
+    vehicle_type_id: Optional[int]
     created_by_user_id: Optional[int]
     created_at: datetime
 
@@ -401,9 +442,10 @@ class PurchaseCreate(BaseModel):
     """Схема створення закупівлі"""
     item_name: str = Field(..., description="Назва позиції")
     category: PurchaseCategory = Field(..., description="Категорія")
-    price_per_kg: float = Field(..., gt=0, description="Ціна за кг")
-    currency: Currency = Field(..., description="Валюта")
+    price_per_kg: float = Field(default=0, description="Ціна за кг")
+    currency: Currency = Field(default=Currency.UAH, description="Валюта")
     quantity_kg: float = Field(..., gt=0, description="Кількість, кг")
+    is_free: bool = Field(default=False, description="Безкоштовний прихід")
 
 
 class PurchaseResponse(BaseModel):
@@ -415,6 +457,7 @@ class PurchaseResponse(BaseModel):
     currency: Currency
     quantity_kg: float
     total_amount: float
+    is_free: bool
     created_at: datetime
 
     class Config:

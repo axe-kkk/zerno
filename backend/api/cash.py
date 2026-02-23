@@ -163,11 +163,11 @@ async def get_transactions(
 @router.get("/transactions/export")
 async def export_transactions(
     session: Session = Depends(get_session),
-    current_admin: User = Depends(get_current_super_admin),
+    current_user: User = Depends(get_current_user),
     start_date: str | None = None,
     end_date: str | None = None
 ):
-    """Експорт транзакцій у Excel (тільки для супер адміна)"""
+    """Експорт транзакцій у Excel"""
     query = select(Transaction).order_by(Transaction.created_at.desc())
 
     if start_date:

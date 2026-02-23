@@ -155,6 +155,9 @@ class GrainShipment(BaseModel, table=True):
     culture_id: int = Field(foreign_key="grain_cultures.id")
     destination: str = Field(description="Куди відправляємо")
     quantity_kg: float = Field(description="Кількість, кг")
+    payment_format: str = Field(default="none", description="Формат оплати: none / cash / cashless")
+    driver_id: Optional[int] = Field(default=None, foreign_key="drivers.id")
+    vehicle_type_id: Optional[int] = Field(default=None, foreign_key="vehicle_types.id")
     created_by_user_id: Optional[int] = Field(default=None, foreign_key="users.id")
 
 
@@ -303,6 +306,25 @@ class FarmerGrainDeduction(BaseModel, table=True):
     payment_id: Optional[int] = Field(default=None, foreign_key="farmer_contract_payments.id")
 
 
+class FarmerGrainMovementType(str, Enum):
+    """Тип переміщення зерна фермера"""
+    DEDUCT = "deduct"
+    TRANSFER = "transfer"
+
+
+class FarmerGrainMovement(BaseModel, table=True):
+    """Переміщення зерна фермерів (списання / трансфер)"""
+    __tablename__ = "farmer_grain_movements"
+
+    movement_type: str = Field(description="deduct / transfer")
+    from_owner_id: int = Field(foreign_key="grain_owners.id")
+    to_owner_id: Optional[int] = Field(default=None, foreign_key="grain_owners.id")
+    culture_id: int = Field(foreign_key="grain_cultures.id")
+    quantity_kg: float = Field(description="Кількість, кг")
+    note: Optional[str] = Field(default=None, description="Примітка")
+    created_by_user_id: Optional[int] = Field(default=None, foreign_key="users.id")
+
+
 class PurchaseRecord(BaseModel, table=True):
     """Закупівля (історія)"""
     __tablename__ = "purchase_records"
@@ -315,6 +337,7 @@ class PurchaseRecord(BaseModel, table=True):
     currency: Currency = Field(description="Валюта закупівлі")
     quantity_kg: float = Field(description="Кількість, кг")
     total_amount: float = Field(description="Сума")
+    is_free: bool = Field(default=False, description="Безкоштовний прихід на склад")
     created_by_user_id: Optional[int] = Field(default=None, foreign_key="users.id")
 
 

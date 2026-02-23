@@ -135,6 +135,29 @@ def init_db():
             print("✅ Додано колонку was_reserve до farmer_contracts")
         except Exception:
             conn.rollback()
+
+        for col_def in [
+            ("payment_format", "VARCHAR(32) DEFAULT 'none'"),
+            ("driver_id", "INTEGER"),
+            ("vehicle_type_id", "INTEGER"),
+        ]:
+            try:
+                conn.execute(text(
+                    f"ALTER TABLE grain_shipments ADD COLUMN {col_def[0]} {col_def[1]}"
+                ))
+                conn.commit()
+                print(f"✅ Додано колонку {col_def[0]} до grain_shipments")
+            except Exception:
+                conn.rollback()
+
+        try:
+            conn.execute(text(
+                "ALTER TABLE purchase_records ADD COLUMN is_free BOOLEAN DEFAULT FALSE"
+            ))
+            conn.commit()
+            print("✅ Додано колонку is_free до purchase_records")
+        except Exception:
+            conn.rollback()
     
     with Session(engine) as session:
         # Создание супер админа, если его еще нет

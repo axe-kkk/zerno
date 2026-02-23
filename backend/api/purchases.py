@@ -182,6 +182,7 @@ async def export_purchases(
 
     headers = [
         "Дата",
+        "Тип",
         "Назва",
         "Категорія",
         "Ціна/кг",
@@ -212,12 +213,14 @@ async def export_purchases(
 
     for record in records:
         category_label = "Добрива" if record.category.value == "fertilizer" else "Посівне зерно"
+        type_label = "Безкоштовно" if record.is_free else "Закупка"
         sheet.append([
             record.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            type_label,
             record.item_name,
             category_label,
-            record.price_per_kg,
-            record.currency.value,
+            record.price_per_kg if not record.is_free else 0,
+            record.currency.value if not record.is_free else "—",
             record.quantity_kg,
             record.total_amount
         ])
@@ -229,13 +232,13 @@ async def export_purchases(
             if row_fill:
                 cell.fill = row_fill
             cell.border = thin_border
-            if col in (4, 6, 7):
+            if col in (5, 7, 8):
                 cell.number_format = "#,##0.00"
 
     sheet.freeze_panes = "A2"
-    sheet.auto_filter.ref = f"A1:G{sheet.max_row}"
+    sheet.auto_filter.ref = f"A1:H{sheet.max_row}"
 
-    column_widths = [20, 28, 18, 12, 10, 14, 14]
+    column_widths = [20, 16, 28, 18, 12, 10, 14, 14]
     for idx, width in enumerate(column_widths, start=1):
         sheet.column_dimensions[chr(64 + idx)].width = width
 
@@ -351,7 +354,7 @@ async def create_purchase(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
-    """Створення закупівлі та списання з каси"""
+    """Створення закупівлі або безкоштовного приходу на склад"""
     cleaned_name = " ".join(payload.item_name.split()).strip()
     if not cleaned_name:
         raise HTTPException(
@@ -376,43 +379,53 @@ async def create_purchase(
         session.add(stock)
         session.flush()
 
-    total_amount = payload.price_per_kg * payload.quantity_kg
+    if payload.is_free:
+        total_amount = 0.0
+        price_per_kg = 0.0
+    else:
+        if payload.price_per_kg <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Вкажіть коректну ціну"
+            )
+        price_per_kg = payload.price_per_kg
+        total_amount = price_per_kg * payload.quantity_kg
 
-    cash_register: CashRegister = get_or_create_cash_register(session)
-    balance_field_map = {
-        Currency.UAH: "uah_balance",
-        Currency.USD: "usd_balance",
-        Currency.EUR: "eur_balance"
-    }
-    currency_label_map = {
-        Currency.UAH: "UAH (гривня)",
-        Currency.USD: "USD (долар США)",
-        Currency.EUR: "EUR (євро)"
-    }
-    balance_field = balance_field_map[payload.currency]
-    current_balance = getattr(cash_register, balance_field)
-    new_balance = current_balance - total_amount
-    if new_balance < 0:
-        currency_label = currency_label_map[payload.currency]
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Недостатньо коштів. Поточний баланс {currency_label}: {current_balance}"
+        cash_register: CashRegister = get_or_create_cash_register(session)
+        balance_field_map = {
+            Currency.UAH: "uah_balance",
+            Currency.USD: "usd_balance",
+            Currency.EUR: "eur_balance"
+        }
+        currency_label_map = {
+            Currency.UAH: "UAH (гривня)",
+            Currency.USD: "USD (долар США)",
+            Currency.EUR: "EUR (євро)"
+        }
+        balance_field = balance_field_map[payload.currency]
+        current_balance = getattr(cash_register, balance_field)
+        new_balance = current_balance - total_amount
+        if new_balance < 0:
+            currency_label = currency_label_map[payload.currency]
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Недостатньо коштів. Поточний баланс {currency_label}: {current_balance}"
+            )
+
+        setattr(cash_register, balance_field, new_balance)
+        session.add(cash_register)
+
+        transaction = Transaction(
+            currency=payload.currency,
+            amount=total_amount,
+            transaction_type=TransactionType.SUBTRACT,
+            user_id=current_user.id,
+            description=f"Закупівля: {stock.name}",
+            uah_balance_after=cash_register.uah_balance,
+            usd_balance_after=cash_register.usd_balance,
+            eur_balance_after=cash_register.eur_balance
         )
-
-    setattr(cash_register, balance_field, new_balance)
-    session.add(cash_register)
-
-    transaction = Transaction(
-        currency=payload.currency,
-        amount=total_amount,
-        transaction_type=TransactionType.SUBTRACT,
-        user_id=current_user.id,
-        description=f"Закупівля: {stock.name}",
-        uah_balance_after=cash_register.uah_balance,
-        usd_balance_after=cash_register.usd_balance,
-        eur_balance_after=cash_register.eur_balance
-    )
-    session.add(transaction)
+        session.add(transaction)
 
     stock.quantity_kg += payload.quantity_kg
     if stock.quantity_kg <= 0:
@@ -425,10 +438,11 @@ async def create_purchase(
         item_name=stock.name,
         normalized_name=normalized,
         category=payload.category,
-        price_per_kg=payload.price_per_kg,
+        price_per_kg=price_per_kg,
         currency=payload.currency,
         quantity_kg=payload.quantity_kg,
         total_amount=total_amount,
+        is_free=payload.is_free,
         created_by_user_id=current_user.id
     )
     session.add(record)

@@ -1,4 +1,4 @@
-﻿* {
+* {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
@@ -2050,7 +2050,7 @@ body {
 #contract-modal .modal-body {
     padding: 0;
     margin-bottom: 0;
-    max-height: calc(90vh - 180px);
+    overflow: visible;
 }
 
 #contract-modal #contract-form {
@@ -2561,7 +2561,11 @@ body {
 #section-drivers .table-wrapper,
 #section-shipments .table-wrapper,
 #section-owners .table-wrapper,
-#section-users .table-wrapper {
+#section-users .table-wrapper,
+#section-stock .table-wrapper,
+#section-farmer-contracts .table-wrapper,
+#section-vouchers .table-wrapper,
+#section-landlords .table-wrapper {
     max-height: clamp(260px, 45vh, 560px);
     overflow-y: auto;
 }
@@ -2736,13 +2740,18 @@ body {
     gap: 20px;
     align-items: stretch;
     min-height: 0;
-    flex: 1;
 }
 
 #section-owners {
     height: 100%;
     display: flex;
     flex-direction: column;
+    min-height: 0;
+}
+
+#section-owners > .farmers-grid,
+#section-owners > .farmer-movements-card {
+    flex: 1;
     min-height: 0;
 }
 
@@ -3113,7 +3122,7 @@ body {
     background: #f1f7f3;
     position: sticky;
     top: 0;
-    z-index: 1;
+    z-index: 2;
     border-bottom: 1px solid var(--border-light);
 }
 
@@ -3141,7 +3150,6 @@ body {
     background: transparent;
     box-shadow: none;
     padding: 0;
-    overflow: hidden;
 }
 
 .table-wrapper:focus-within {
@@ -3152,7 +3160,14 @@ body {
 .table-wrapper .data-table {
     border-radius: 12px;
     border: 1px solid var(--border-light);
-    overflow: hidden;
+}
+
+.data-table thead th:first-child {
+    border-top-left-radius: 12px;
+}
+
+.data-table thead th:last-child {
+    border-top-right-radius: 12px;
 }
 
 .data-table tbody tr.row-pending {
@@ -3661,8 +3676,7 @@ body {
 /* ===== Farmer Contract Modal ===== */
 
 #farmer-contract-modal .modal-body {
-    overflow-y: auto;
-    max-height: calc(88vh - 140px);
+    overflow: visible;
 }
 
 #farmer-contract-modal .form-grid {
@@ -4278,12 +4292,6 @@ body {
 .intake-report-modal {
     max-width: 820px;
     max-height: 94vh;
-    overflow: visible;
-}
-
-.intake-report-modal .modal-body {
-    overflow: visible;
-    max-height: none;
 }
 
 .intake-report-modal .custom-options {
@@ -4292,26 +4300,94 @@ body {
 
 .driver-deliveries-report-modal {
     max-height: 90vh;
-    overflow: visible;
-}
-
-.driver-deliveries-report-modal .modal-body {
-    overflow: visible;
-    max-height: none;
 }
 
 .driver-deliveries-report-modal .custom-options {
     z-index: 200;
 }
 
-.stock-adjust-modal {
-    overflow: visible;
-    max-height: 90vh;
+
+.farmer-transfer-balance {
+    margin: 12px 0;
+    padding: 12px 16px;
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 10px;
 }
 
-.stock-adjust-modal .modal-body {
-    overflow: visible;
-    max-height: none;
+.farmer-transfer-balance__title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+.farmer-transfer-balance__cards {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.farmer-transfer-balance__card {
+    display: flex;
+    flex-direction: column;
+    padding: 8px 14px;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    min-width: 120px;
+}
+
+.farmer-transfer-balance__card:hover {
+    border-color: var(--primary);
+}
+
+.farmer-transfer-balance__card.selected {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.farmer-transfer-balance__card-name {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+.farmer-transfer-balance__card-qty {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.farmer-movements-card {
+    margin-top: 20px;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+}
+
+.farmer-movements-card .card-header {
+    padding: 20px 20px 12px 20px;
+}
+
+.farmer-movements-card .table-filters {
+    margin-left: 20px;
+    margin-right: 20px;
+}
+
+.farmer-movements-card .table-wrapper {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 20px 20px 20px;
+}
+
+.stock-adjust-modal {
+    max-height: 90vh;
 }
 
 .modal-header {
@@ -4340,29 +4416,17 @@ body {
 
 .modal-body {
     margin-bottom: 20px;
-    overflow-y: auto;
-    max-height: calc(80vh - 140px);
-}
-
-/* Report modals: no scrollbar when dropdown opens */
-#fc-contracts-report-modal .modal-body,
-#fc-payments-report-modal .modal-body {
     overflow: visible;
 }
 
+
 .stock-adjust-modal {
-    overflow: visible !important;
     max-height: 90vh !important;
     height: auto;
     width: 100%;
     max-width: 520px;
 }
 
-.stock-adjust-modal .modal-body {
-    overflow: visible !important;
-    overflow-y: visible !important;
-    max-height: none !important;
-}
 
 .form-section {
     border: 1px solid var(--border);
@@ -5011,9 +5075,7 @@ body {
 #payment-modal .modal-body {
     padding: 0;
     margin-bottom: 0;
-    overflow-y: auto;
-    overflow-x: visible;
-    max-height: calc(90vh - 140px);
+    overflow: visible;
 }
 
 #payment-modal #payment-form {
@@ -5459,15 +5521,6 @@ body {
     background-color: var(--bg-primary) !important;
 }
 
-/* Стили для модального окна контрактов, чтобы выпадающее меню не обрезалось */
-#contract-modal .modal-content {
-    overflow: visible !important;
-}
-
-#contract-modal .modal-body {
-    overflow-y: auto !important;
-    overflow-x: visible !important;
-}
 
 #contract-modal #contract-items-table {
     position: relative;

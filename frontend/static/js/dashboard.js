@@ -1,4 +1,4 @@
-﻿// Конфигурация API
+// Конфигурация API
 // При работе через Docker используем относительный путь (nginx проксирует /api/)
 // При локальной разработке можно использовать 'http://localhost:8000/api'
 const API_BASE_URL = '/api';
@@ -77,10 +77,13 @@ async function initializeDashboard() {
     initPurchaseForm();
     initDriverForm();
     initDriverAddModal();
+    initDriversListExport();
+    initDriverEditModal();
     initDriverDeliveriesFilters();
     initDriverDeliveriesReportModal();
     initDriverDeleteModal();
     initShipmentsForm();
+    initShipmentCreateModal();
     initShipmentsEditModal();
     initShipmentsReportModal();
     initUserAddModal();
@@ -89,6 +92,7 @@ async function initializeDashboard() {
     initCashForm();
     initCashReportModal();
     initIntakeReportModal();
+    initIntakeSummaryReport();
     initPurchasesReportModal();
     initStockAdjustmentsReportModal();
     initStockReserveModal();
@@ -97,6 +101,11 @@ async function initializeDashboard() {
     initFarmersReportModal();
     initFarmerIntakesReportModal();
     initFarmerBalanceModal();
+    initFarmerEditModal();
+    initFarmerDeductModal();
+    initFarmerTransferModal();
+    initFarmerMovementFilters();
+    initFarmerMovementsReportModal();
     initFarmerContractsSection();
     initWeightCalculations();
     initLandlords();
@@ -123,6 +132,7 @@ async function initializeDashboard() {
     await loadStock();
     await loadAllIntakes();
     await loadOwnersList('');
+    await loadFarmerMovements();
     await loadUsers();
     await loadCashTransactions();
     await loadPurchaseStock();
@@ -149,7 +159,8 @@ function apiFetch(path, options = {}) {
 
     return fetch(`${API_BASE_URL}${path}`, {
         ...options,
-        headers
+        headers,
+        cache: 'no-store'
     });
 }
 
@@ -158,7 +169,8 @@ function apiFetchBlob(path) {
     return fetch(`${API_BASE_URL}${path}`, {
         headers: {
             'Authorization': `Bearer ${token}`
-        }
+        },
+        cache: 'no-store'
     });
 }
 
@@ -444,6 +456,7 @@ async function loadCultures() {
     }
 
     updateFarmerIntakeFilterOptions();
+    updateFarmerMovementFilterOptions();
 
     updateIntakeFilterOptions();
     updateIntakeReportOptions();
@@ -573,12 +586,21 @@ async function loadDrivers() {
                     if (filterSelect) {
                         filterSelect.value = String(driver.id);
                         initCustomSelects(filterSelect);
-                        renderDriverDeliveriesTable(applyDriverDeliveryFilters(intakesCache));
+                        renderDriverDeliveriesTable(applyDriverDeliveryFilters());
                     }
                 });
                 actionsCell.appendChild(filterBtn);
 
                 if (canEdit) {
+                    const editBtn = document.createElement('button');
+                    editBtn.className = 'btn-icon btn-icon-secondary';
+                    editBtn.innerHTML = ICONS.edit;
+                    editBtn.title = 'Редагувати водія';
+                    editBtn.addEventListener('click', () => {
+                        openDriverEditModal(driver);
+                    });
+                    actionsCell.appendChild(editBtn);
+
                     const deleteBtn = document.createElement('button');
                     deleteBtn.className = 'btn-icon btn-icon-danger';
                     deleteBtn.innerHTML = ICONS.delete;
@@ -586,7 +608,6 @@ async function loadDrivers() {
                     deleteBtn.addEventListener('click', () => {
                         openDriverDeleteModal(driver.id);
                     });
-
                     actionsCell.appendChild(deleteBtn);
                 }
         tableBody.appendChild(row);
@@ -647,40 +668,76 @@ function initShipmentsForm() {
         const destination = document.getElementById('shipment-destination').value.trim();
         const cultureId = parseInt(cultureSelect.value, 10);
         const quantity = parseFloat(document.getElementById('shipment-quantity').value);
+        const paymentFormat = document.getElementById('shipment-payment-format')?.value || 'none';
+        const driverVal = document.getElementById('shipment-driver')?.value;
+        const vehicleVal = document.getElementById('shipment-vehicle')?.value;
         if (!destination) {
-            setFormMessage('shipment-message', '', false);
             showToast('Вкажіть куди відправляємо', 'error');
             return;
         }
         if (!cultureId || Number.isNaN(quantity) || quantity <= 0) {
-            setFormMessage('shipment-message', '', false);
             showToast('Вкажіть коректну кількість', 'error');
             return;
         }
+        const payload = {
+            destination,
+            culture_id: cultureId,
+            quantity_kg: quantity,
+            payment_format: paymentFormat
+        };
+        if (driverVal) payload.driver_id = parseInt(driverVal, 10);
+        if (vehicleVal) payload.vehicle_type_id = parseInt(vehicleVal, 10);
+
         const response = await apiFetch('/grain/shipments', {
             method: 'POST',
-            body: JSON.stringify({
-                destination,
-                culture_id: cultureId,
-                quantity_kg: quantity
-            })
+            body: JSON.stringify(payload)
         });
         if (response.ok) {
-            const created = await response.json();
-            shipmentsCache = [created, ...shipmentsCache.filter(item => item.id !== created.id)];
-            renderShipmentsTable(shipmentsCache);
-            setFormMessage('shipment-message', '', false);
             showToast('Відправку збережено', 'success');
             form.reset();
+            closeShipmentCreateModal();
             await loadShipments();
             await loadStock();
             await loadStockAdjustments();
         } else {
             const error = await response.json().catch(() => null);
-            setFormMessage('shipment-message', '', false);
             showToast(error?.detail || 'Помилка збереження', 'error');
         }
     });
+}
+
+function initShipmentCreateModal() {
+    const modal = document.getElementById('shipment-create-modal');
+    const openBtn = document.getElementById('shipment-open-modal');
+    const closeBtn = document.getElementById('shipment-create-close');
+    const overlay = modal?.querySelector('.modal-overlay');
+    if (!modal || !openBtn || !closeBtn || !overlay) return;
+
+    openBtn.addEventListener('click', () => {
+        populateShipmentSelects();
+        modal.classList.remove('hidden');
+        initCustomSelects();
+    });
+    closeBtn.addEventListener('click', closeShipmentCreateModal);
+    overlay.addEventListener('click', closeShipmentCreateModal);
+}
+
+function closeShipmentCreateModal() {
+    const modal = document.getElementById('shipment-create-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function populateShipmentSelects() {
+    const driverSelect = document.getElementById('shipment-driver');
+    const vehicleSelect = document.getElementById('shipment-vehicle');
+    if (driverSelect) {
+        driverSelect.innerHTML = '<option value="">— не обрано —</option>' +
+            driversCache.map(d => `<option value="${d.id}">${d.full_name}</option>`).join('');
+    }
+    if (vehicleSelect) {
+        vehicleSelect.innerHTML = '<option value="">— не обрано —</option>' +
+            vehicleTypesCache.map(v => `<option value="${v.id}">${v.name}</option>`).join('');
+    }
 }
 
 function updateShipmentCultureOptions() {
@@ -700,6 +757,12 @@ function updateShipmentCultureOptions() {
     }
 }
 
+function getPaymentFormatLabel(val) {
+    if (val === 'cash') return 'Готівка';
+    if (val === 'cashless') return 'Безготівковий';
+    return '—';
+}
+
 function renderShipmentsTable(items) {
     const tableBody = document.querySelector('#shipments-table tbody');
     const hint = document.getElementById('shipments-hint');
@@ -711,7 +774,7 @@ function renderShipmentsTable(items) {
         if (hint) {
             hint.textContent = '';
         }
-        tableBody.innerHTML = '<tr><td colspan="6" class="table-empty-message">Поки що відправок немає</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="9" class="table-empty-message">Поки що відправок немає</td></tr>';
         return;
     }
     if (hint) {
@@ -724,6 +787,9 @@ function renderShipmentsTable(items) {
             <td><strong>${item.destination}</strong></td>
             <td><span class="inline-badge grain">${getCultureName(item.culture_id)}</span></td>
             <td class="td-weight">${formatWeight(item.quantity_kg)} кг</td>
+            <td>${getPaymentFormatLabel(item.payment_format)}</td>
+            <td>${item.driver_id ? getDriverName(item.driver_id) : '—'}</td>
+            <td>${item.vehicle_type_id ? getVehicleName(item.vehicle_type_id) : '—'}</td>
             <td>${getUserName(item.created_by_user_id)}</td>
             <td class="actions-cell"></td>
         `;
@@ -763,33 +829,38 @@ function initShipmentsEditModal() {
         const destination = document.getElementById('shipment-edit-destination').value.trim();
         const cultureId = parseInt(document.getElementById('shipment-edit-culture').value, 10);
         const quantity = parseFloat(document.getElementById('shipment-edit-quantity').value);
+        const paymentFormat = document.getElementById('shipment-edit-payment-format')?.value || 'none';
+        const driverVal = document.getElementById('shipment-edit-driver')?.value;
+        const vehicleVal = document.getElementById('shipment-edit-vehicle')?.value;
         if (!destination) {
-            setFormMessage('shipment-edit-message', '', false);
             showToast('Вкажіть куди відправляємо', 'error');
             return;
         }
         if (!cultureId || Number.isNaN(quantity) || quantity <= 0) {
-            setFormMessage('shipment-edit-message', '', false);
             showToast('Вкажіть коректну кількість', 'error');
             return;
         }
+        const payload = {
+            destination,
+            culture_id: cultureId,
+            quantity_kg: quantity,
+            payment_format: paymentFormat
+        };
+        if (driverVal) payload.driver_id = parseInt(driverVal, 10);
+        if (vehicleVal) payload.vehicle_type_id = parseInt(vehicleVal, 10);
+
         const response = await apiFetch(`/grain/shipments/${editingShipmentId}`, {
             method: 'PATCH',
-            body: JSON.stringify({
-                destination,
-                culture_id: cultureId,
-                quantity_kg: quantity
-            })
+            body: JSON.stringify(payload)
         });
         if (response.ok) {
-            setFormMessage('shipment-edit-message', '', false);
             showToast('Відправку оновлено', 'success');
             await loadShipments();
             await loadStock();
+            await loadStockAdjustments();
             closeModal();
         } else {
             const error = await response.json().catch(() => null);
-            setFormMessage('shipment-edit-message', '', false);
             showToast(error?.detail || 'Помилка оновлення', 'error');
         }
     });
@@ -797,21 +868,37 @@ function initShipmentsEditModal() {
 
 function openShipmentEditModal(item) {
     const modal = document.getElementById('shipment-edit-modal');
-    const destinationInput = document.getElementById('shipment-edit-destination');
-    const cultureSelect = document.getElementById('shipment-edit-culture');
-    const quantityInput = document.getElementById('shipment-edit-quantity');
-    if (!modal || !destinationInput || !cultureSelect || !quantityInput) {
-        return;
-    }
+    if (!modal) return;
     editingShipmentId = item.id;
-    destinationInput.value = item.destination;
+
+    document.getElementById('shipment-edit-destination').value = item.destination;
+
+    const cultureSelect = document.getElementById('shipment-edit-culture');
     cultureSelect.innerHTML = culturesCache
         .map(culture => `<option value="${culture.id}">${culture.name}</option>`)
         .join('');
     cultureSelect.value = String(item.culture_id);
-    initCustomSelects(cultureSelect);
-    quantityInput.value = item.quantity_kg;
-    setFormMessage('shipment-edit-message', '', false);
+
+    document.getElementById('shipment-edit-quantity').value = item.quantity_kg;
+
+    const pfSelect = document.getElementById('shipment-edit-payment-format');
+    if (pfSelect) pfSelect.value = item.payment_format || 'none';
+
+    const driverSelect = document.getElementById('shipment-edit-driver');
+    if (driverSelect) {
+        driverSelect.innerHTML = '<option value="">— не обрано —</option>' +
+            driversCache.map(d => `<option value="${d.id}">${d.full_name}</option>`).join('');
+        driverSelect.value = item.driver_id ? String(item.driver_id) : '';
+    }
+
+    const vehicleSelect = document.getElementById('shipment-edit-vehicle');
+    if (vehicleSelect) {
+        vehicleSelect.innerHTML = '<option value="">— не обрано —</option>' +
+            vehicleTypesCache.map(v => `<option value="${v.id}">${v.name}</option>`).join('');
+        vehicleSelect.value = item.vehicle_type_id ? String(item.vehicle_type_id) : '';
+    }
+
+    initCustomSelects();
     modal.classList.remove('hidden');
 }
 
@@ -1173,6 +1260,7 @@ async function loadOwnersList(query) {
         ownersCache = owners;
         updateFarmerIntakeFilterOptions();
         updateFarmerContractsFilterOptions();
+        updateFarmerMovementFilterOptions();
     }
     renderOwnersTable(owners);
 }
@@ -1193,9 +1281,13 @@ function renderOwnersTable(owners) {
             <td><strong>${owner.full_name}</strong></td>
             <td>${owner.phone || '<span class="td-secondary">—</span>'}</td>
             <td class="actions-cell">
+                <button class="btn-icon btn-icon-secondary" data-edit-owner="${owner.id}" title="Редагувати">${ICONS.edit}</button>
                 <button class="btn-icon btn-icon-secondary" data-balance="${owner.id}" title="Баланс">${ICONS.balance}</button>
             </td>
         `;
+        row.querySelector('[data-edit-owner]').addEventListener('click', () => {
+            openFarmerEditModal(owner);
+        });
         row.querySelector('[data-balance]').addEventListener('click', () => {
             if (typeof openFarmerBalanceModal === 'function') {
                 openFarmerBalanceModal(owner.id);
@@ -2821,7 +2913,7 @@ function initFarmerContractPaymentModal() {
                             if (cResp.ok) {
                                 contractDetail = await cResp.json();
                             }
-                            loadContractData({ id: currentFarmerContractId, owner_id: contractDetail?.owner_id });
+                            await loadContractData({ id: currentFarmerContractId, owner_id: contractDetail?.owner_id });
                             await loadFarmerContracts();
                             await loadFarmerContractPayments();
                             await loadStock();
@@ -3069,7 +3161,7 @@ async function loadAllIntakes() {
     }
     intakesCache = await response.json();
     renderIntakeTable(applyIntakeFilters(intakesCache));
-    renderDriverDeliveriesTable(applyDriverDeliveryFilters(intakesCache));
+    renderDriverDeliveriesTable(applyDriverDeliveryFilters());
     renderFarmerIntakesTable(applyFarmerIntakeFilters(intakesCache));
 
     updateIntakeMetrics(intakesCache);
@@ -3088,7 +3180,7 @@ function initDriverDeliveriesFilters() {
 
     [driverSelect, cultureSelect, vehicleSelect, periodSelect].forEach(select => {
         select.addEventListener('change', () => {
-            renderDriverDeliveriesTable(applyDriverDeliveryFilters(intakesCache));
+            renderDriverDeliveriesTable(applyDriverDeliveryFilters());
         });
     });
 }
@@ -3160,13 +3252,51 @@ function getPeriodRange(period) {
     return { start, end };
 }
 
-function applyDriverDeliveryFilters(intakes) {
+function buildDriverDeliveriesData() {
+    const items = [];
+    intakesCache.filter(i => i.is_internal_driver).forEach(intake => {
+        items.push({
+            _type: 'intake',
+            created_at: intake.created_at,
+            driver_id: intake.driver_id,
+            culture_id: intake.culture_id,
+            vehicle_type_id: intake.vehicle_type_id,
+            has_trailer: intake.has_trailer,
+            destination: null,
+            quantity_kg: intake.net_weight_kg,
+            gross_weight_kg: intake.gross_weight_kg,
+            accepted_weight_kg: intake.accepted_weight_kg,
+            pending_quality: intake.pending_quality,
+        });
+    });
+    shipmentsCache.filter(s => s.driver_id).forEach(ship => {
+        items.push({
+            _type: 'shipment',
+            created_at: ship.created_at,
+            driver_id: ship.driver_id,
+            culture_id: ship.culture_id,
+            vehicle_type_id: ship.vehicle_type_id,
+            has_trailer: false,
+            destination: ship.destination,
+            quantity_kg: ship.quantity_kg,
+            gross_weight_kg: null,
+            accepted_weight_kg: ship.quantity_kg,
+            pending_quality: false,
+        });
+    });
+    return items;
+}
+
+function applyDriverDeliveryFilters() {
     const driverSelect = document.getElementById('driver-delivery-filter-driver');
     const cultureSelect = document.getElementById('driver-delivery-filter-culture');
     const vehicleSelect = document.getElementById('driver-delivery-filter-vehicle');
     const periodSelect = document.getElementById('driver-delivery-filter-period');
+
+    const all = buildDriverDeliveriesData();
+
     if (!driverSelect || !cultureSelect || !vehicleSelect || !periodSelect) {
-        return intakes;
+        return all;
     }
 
     const driverId = driverSelect.value ? parseInt(driverSelect.value, 10) : null;
@@ -3175,59 +3305,51 @@ function applyDriverDeliveryFilters(intakes) {
     const period = periodSelect.value;
     const range = getPeriodRange(period);
 
-    return intakes.filter(intake => {
-        if (!intake.is_internal_driver) {
-            return false;
-        }
-        if (driverId && intake.driver_id !== driverId) {
-            return false;
-        }
-        if (cultureId && intake.culture_id !== cultureId) {
-            return false;
-        }
-        if (vehicleId && intake.vehicle_type_id !== vehicleId) {
-            return false;
-        }
+    return all.filter(item => {
+        if (driverId && item.driver_id !== driverId) return false;
+        if (cultureId && item.culture_id !== cultureId) return false;
+        if (vehicleId && item.vehicle_type_id !== vehicleId) return false;
         if (range) {
-            const createdAt = new Date(intake.created_at);
-            if (createdAt < range.start || createdAt > range.end) {
-                return false;
-            }
+            const createdAt = new Date(item.created_at);
+            if (createdAt < range.start || createdAt > range.end) return false;
         }
         return true;
     });
 }
 
-function renderDriverDeliveriesTable(intakes) {
+function renderDriverDeliveriesTable(items) {
     const tableBody = document.querySelector('#driver-deliveries-table tbody');
     const hint = document.getElementById('driver-deliveries-hint');
     if (!tableBody || !hint) {
         return;
     }
-    const rows = [...intakes]
-        .filter(intake => intake.is_internal_driver)
-        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const rows = [...items].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
     tableBody.innerHTML = '';
     if (!rows.length) {
         hint.textContent = '';
-        tableBody.innerHTML = '<tr><td colspan="9" class="table-empty-message">Поки що доставок немає</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="10" class="table-empty-message">Поки що рейсів немає</td></tr>';
         return;
     }
     hint.textContent = '';
-    rows.forEach(intake => {
+    rows.forEach(item => {
         const row = document.createElement('tr');
-        const driver = driversCache.find(item => item.id === intake.driver_id);
+        const driver = driversCache.find(d => d.id === item.driver_id);
+        const isIntake = item._type === 'intake';
+        const typeBadge = isIntake
+            ? '<span class="status-badge info">Прийом</span>'
+            : '<span class="status-badge warning">Відправка</span>';
         row.innerHTML = `
-            <td>${formatDate(intake.created_at)}</td>
-            <td><strong>${getDriverName(intake.driver_id)}</strong></td>
+            <td>${formatDate(item.created_at)}</td>
+            <td>${typeBadge}</td>
+            <td><strong>${getDriverName(item.driver_id)}</strong></td>
             <td>${driver?.phone || '<span class="td-secondary">—</span>'}</td>
-            <td>${getVehicleName(intake.vehicle_type_id)}</td>
-            <td>${intake.has_trailer ? '<span class="status-badge success">Так</span>' : '<span class="td-secondary">Ні</span>'}</td>
-            <td><span class="inline-badge grain">${getCultureName(intake.culture_id)}</span></td>
-            <td class="td-weight">${formatWeight(intake.gross_weight_kg)} кг</td>
-            <td class="td-weight">${formatWeight(intake.net_weight_kg)} кг</td>
-            <td class="td-weight">${intake.pending_quality ? '<span class="status-badge warning">Очікує</span>' : formatWeight(intake.accepted_weight_kg) + ' кг'}</td>
+            <td>${item.vehicle_type_id ? getVehicleName(item.vehicle_type_id) : '<span class="td-secondary">—</span>'}</td>
+            <td>${item.has_trailer ? '<span class="status-badge success">Так</span>' : '<span class="td-secondary">Ні</span>'}</td>
+            <td><span class="inline-badge grain">${getCultureName(item.culture_id)}</span></td>
+            <td>${item.destination || '<span class="td-secondary">—</span>'}</td>
+            <td class="td-weight">${formatWeight(item.quantity_kg)} кг</td>
+            <td class="td-weight">${item.pending_quality ? '<span class="status-badge warning">Очікує</span>' : formatWeight(item.accepted_weight_kg) + ' кг'}</td>
         `;
         tableBody.appendChild(row);
     });
@@ -3549,16 +3671,18 @@ function initFarmerIntakesReportModal() {
     });
 }
 
+let farmerBalanceOwnerId = null;
+
 function initFarmerBalanceModal() {
     const modal = document.getElementById('farmer-balance-modal');
     const closeBtn = document.getElementById('farmer-balance-close');
     const cancelBtn = document.getElementById('farmer-balance-cancel');
     const downloadBtn = document.getElementById('farmer-balance-download');
     const overlay = modal?.querySelector('.modal-overlay');
-    const ownerSelect = document.getElementById('farmer-balance-owner');
     const tableBody = document.querySelector('#farmer-balance-table tbody');
     const hint = document.getElementById('farmer-balance-hint');
-    if (!modal || !ownerSelect || !tableBody || !hint || !downloadBtn) return;
+    const titleEl = document.getElementById('farmer-balance-title');
+    if (!modal || !tableBody || !hint || !downloadBtn) return;
 
     const resetTable = (message) => {
         tableBody.innerHTML = '';
@@ -3575,7 +3699,7 @@ function initFarmerBalanceModal() {
         const items = await response.json();
         tableBody.innerHTML = '';
         if (!items.length) {
-            resetTable('Для цього фермера немає невикупленого зерна.');
+            resetTable('Немає невикупленого зерна.');
             return;
         }
         hint.textContent = '';
@@ -3583,47 +3707,39 @@ function initFarmerBalanceModal() {
             const row = document.createElement('tr');
             row.innerHTML = `
                 <td>${item.culture_name}</td>
-                <td>${formatWeight(item.quantity_kg)}</td>
+                <td class="td-weight">${formatWeight(item.quantity_kg)} кг</td>
+                <td class="actions-cell"></td>
             `;
+            const actionsCell = row.querySelector('.actions-cell');
+            const deductBtn = document.createElement('button');
+            deductBtn.className = 'btn btn-secondary btn-small';
+            deductBtn.textContent = 'Списати';
+            deductBtn.addEventListener('click', () => {
+                openFarmerDeductModal(ownerId, item.culture_id, item.culture_name, item.quantity_kg);
+            });
+            actionsCell.appendChild(deductBtn);
             tableBody.appendChild(row);
         });
     };
 
-    const openModal = (ownerId = null) => {
-        ownerSelect.innerHTML = '<option value=\"\">Оберіть фермера</option>' +
-            ownersCache.map(o => `<option value=\"${o.id}\">${o.full_name}</option>`).join('');
-        ownerSelect.value = ownerId ? String(ownerId) : '';
-        refreshCustomSelect(ownerSelect);
-        resetTable('Оберіть фермера для перегляду балансу.');
-        if (ownerId) {
-            loadBalanceForOwner(ownerId);
-        }
+    const openModal = (ownerId) => {
+        if (!ownerId) return;
+        farmerBalanceOwnerId = ownerId;
+        const owner = ownersCache.find(o => o.id === ownerId);
+        if (titleEl) titleEl.textContent = `Баланс: ${owner ? owner.full_name : 'Фермер'}`;
+        resetTable('Завантаження...');
+        loadBalanceForOwner(ownerId);
         modal.classList.remove('hidden');
     };
     const closeModal = () => modal.classList.add('hidden');
 
-    const openBtn = document.getElementById('farmer-balance-btn');
-    openBtn?.addEventListener('click', () => openModal());
     closeBtn?.addEventListener('click', closeModal);
     cancelBtn?.addEventListener('click', closeModal);
     overlay?.addEventListener('click', closeModal);
 
-    ownerSelect.addEventListener('change', async () => {
-        const ownerId = ownerSelect.value;
-        if (!ownerId) {
-            resetTable('Оберіть фермера для перегляду балансу.');
-            return;
-        }
-        await loadBalanceForOwner(ownerId);
-    });
-
     downloadBtn.addEventListener('click', async () => {
-        const ownerId = ownerSelect.value;
-        if (!ownerId) {
-            showToast('Оберіть фермера для експорту', 'warning');
-            return;
-        }
-        const response = await apiFetchBlob(`/grain/owners/${ownerId}/balance/export`);
+        if (!farmerBalanceOwnerId) return;
+        const response = await apiFetchBlob(`/grain/owners/${farmerBalanceOwnerId}/balance/export`);
         if (!response.ok) {
             const error = await response.json().catch(() => null);
             showToast(error?.detail || 'Не вдалося сформувати звіт', 'error');
@@ -3642,6 +3758,464 @@ function initFarmerBalanceModal() {
     });
 
     openFarmerBalanceModal = openModal;
+}
+
+let editingFarmerId = null;
+
+function initFarmerEditModal() {
+    const modal = document.getElementById('farmer-edit-modal');
+    const closeBtn = document.getElementById('farmer-edit-close');
+    const overlay = modal?.querySelector('.modal-overlay');
+    const form = document.getElementById('farmer-edit-form');
+    if (!modal || !closeBtn || !overlay || !form) return;
+
+    const closeModal = () => {
+        editingFarmerId = null;
+        modal.classList.add('hidden');
+    };
+    closeBtn.addEventListener('click', closeModal);
+    overlay.addEventListener('click', closeModal);
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!editingFarmerId) return;
+        const name = document.getElementById('farmer-edit-name').value.trim();
+        const phone = document.getElementById('farmer-edit-phone').value.trim();
+        if (!name) {
+            setFormMessage('farmer-edit-message', 'Вкажіть ПІБ фермера', true);
+            return;
+        }
+        const response = await apiFetch(`/grain/owners/${editingFarmerId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ full_name: name, phone: phone || null })
+        });
+        if (response.ok) {
+            showToast('Фермера оновлено', 'success');
+            closeModal();
+            await loadOwnersList('');
+        } else {
+            const error = await response.json().catch(() => null);
+            setFormMessage('farmer-edit-message', error?.detail || 'Не вдалося оновити', true);
+        }
+    });
+}
+
+function openFarmerEditModal(owner) {
+    const modal = document.getElementById('farmer-edit-modal');
+    if (!modal) return;
+    editingFarmerId = owner.id;
+    document.getElementById('farmer-edit-name').value = owner.full_name;
+    document.getElementById('farmer-edit-phone').value = owner.phone || '';
+    setFormMessage('farmer-edit-message', '', false);
+    modal.classList.remove('hidden');
+}
+
+function openFarmerDeductModal(ownerId, cultureId, cultureName, available) {
+    const modal = document.getElementById('farmer-deduct-modal');
+    if (!modal) return;
+    document.getElementById('farmer-deduct-culture-name').value = cultureName;
+    document.getElementById('farmer-deduct-available').value = formatWeight(available) + ' кг';
+    document.getElementById('farmer-deduct-quantity').value = '';
+    document.getElementById('farmer-deduct-quantity').max = available;
+    document.getElementById('farmer-deduct-note').value = '';
+    const title = document.getElementById('farmer-deduct-title');
+    const owner = ownersCache.find(o => o.id === ownerId);
+    if (title) title.textContent = `Списання: ${owner ? owner.full_name : ''}`;
+    modal.classList.remove('hidden');
+
+    modal._context = { ownerId, cultureId, available };
+}
+
+function initFarmerDeductModal() {
+    const modal = document.getElementById('farmer-deduct-modal');
+    const closeBtn = document.getElementById('farmer-deduct-close');
+    const cancelBtn = document.getElementById('farmer-deduct-cancel');
+    const confirmBtn = document.getElementById('farmer-deduct-confirm');
+    const overlay = modal?.querySelector('.modal-overlay');
+    if (!modal || !confirmBtn) return;
+
+    const closeModal = () => modal.classList.add('hidden');
+    closeBtn?.addEventListener('click', closeModal);
+    cancelBtn?.addEventListener('click', closeModal);
+    overlay?.addEventListener('click', closeModal);
+
+    confirmBtn.addEventListener('click', async () => {
+        const ctx = modal._context;
+        if (!ctx) return;
+        const qty = parseFloat(document.getElementById('farmer-deduct-quantity').value);
+        if (Number.isNaN(qty) || qty <= 0) {
+            showToast('Вкажіть коректну кількість', 'error');
+            return;
+        }
+        if (qty > ctx.available) {
+            showToast(`Максимум: ${formatWeight(ctx.available)} кг`, 'error');
+            return;
+        }
+        const note = document.getElementById('farmer-deduct-note').value.trim();
+        const response = await apiFetch('/grain/farmer-movements/deduct', {
+            method: 'POST',
+            body: JSON.stringify({
+                owner_id: ctx.ownerId,
+                culture_id: ctx.cultureId,
+                quantity_kg: qty,
+                note: note || null
+            })
+        });
+        if (response.ok) {
+            showToast('Зерно списано', 'success');
+            closeModal();
+            if (typeof openFarmerBalanceModal === 'function') {
+                openFarmerBalanceModal(ctx.ownerId);
+            }
+            await loadFarmerMovements();
+        } else {
+            const error = await response.json().catch(() => null);
+            showToast(error?.detail || 'Помилка списання', 'error');
+        }
+    });
+}
+
+let farmerMovementsCache = [];
+
+async function loadFarmerMovements() {
+    const response = await apiFetch('/grain/farmer-movements');
+    if (!response.ok) return;
+    farmerMovementsCache = await response.json();
+    renderFarmerMovementsTable(applyFarmerMovementFilters());
+}
+
+function applyFarmerMovementFilters() {
+    const typeFilter = document.getElementById('farmer-movement-filter-type')?.value || '';
+    const ownerFilter = document.getElementById('farmer-movement-filter-owner')?.value || '';
+    const cultureFilter = document.getElementById('farmer-movement-filter-culture')?.value || '';
+    const periodFilter = document.getElementById('farmer-movement-filter-period')?.value || 'all';
+
+    let filtered = [...farmerMovementsCache];
+
+    if (typeFilter) {
+        filtered = filtered.filter(m => m.movement_type === typeFilter);
+    }
+    if (ownerFilter) {
+        const oid = parseInt(ownerFilter);
+        filtered = filtered.filter(m => m.from_owner_id === oid || m.to_owner_id === oid);
+    }
+    if (cultureFilter) {
+        const cid = parseInt(cultureFilter);
+        filtered = filtered.filter(m => m.culture_id === cid);
+    }
+    if (periodFilter !== 'all') {
+        const now = new Date();
+        let cutoff;
+        if (periodFilter === 'today') {
+            cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        } else if (periodFilter === 'week') {
+            cutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        } else if (periodFilter === 'month') {
+            cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        }
+        if (cutoff) {
+            filtered = filtered.filter(m => new Date(m.created_at) >= cutoff);
+        }
+    }
+    return filtered;
+}
+
+function renderFarmerMovementsTable(data) {
+    const tableBody = document.querySelector('#farmer-movements-table tbody');
+    const hint = document.getElementById('farmer-movements-hint');
+    if (!tableBody) return;
+    const items = data || farmerMovementsCache;
+    tableBody.innerHTML = '';
+    if (!items.length) {
+        if (hint) hint.style.display = '';
+        return;
+    }
+    if (hint) hint.style.display = 'none';
+    items.forEach(m => {
+        const fromOwner = ownersCache.find(o => o.id === m.from_owner_id);
+        const toOwner = m.to_owner_id ? ownersCache.find(o => o.id === m.to_owner_id) : null;
+        const culture = culturesCache.find(c => c.id === m.culture_id);
+        const typeBadge = m.movement_type === 'transfer'
+            ? '<span class="inline-badge cash">Переміщення</span>'
+            : '<span class="inline-badge receive">Списання</span>';
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td>${formatDate(m.created_at)}</td>
+            <td>${typeBadge}</td>
+            <td><strong>${fromOwner ? fromOwner.full_name : '—'}</strong></td>
+            <td>${toOwner ? `<strong>${toOwner.full_name}</strong>` : '<span class="td-secondary">—</span>'}</td>
+            <td>${culture ? culture.name : '—'}</td>
+            <td class="td-weight">${formatWeight(m.quantity_kg)} кг</td>
+            <td>${m.note || '<span class="td-secondary">—</span>'}</td>
+        `;
+        tableBody.appendChild(row);
+    });
+}
+
+function initFarmerMovementFilters() {
+    const typeSelect = document.getElementById('farmer-movement-filter-type');
+    const ownerSelect = document.getElementById('farmer-movement-filter-owner');
+    const cultureSelect = document.getElementById('farmer-movement-filter-culture');
+    const periodSelect = document.getElementById('farmer-movement-filter-period');
+    if (!typeSelect || !ownerSelect || !cultureSelect || !periodSelect) return;
+
+    const update = () => renderFarmerMovementsTable(applyFarmerMovementFilters());
+
+    typeSelect.addEventListener('change', update);
+    ownerSelect.addEventListener('change', update);
+    cultureSelect.addEventListener('change', update);
+    periodSelect.addEventListener('change', update);
+
+    initCustomSelects(typeSelect);
+    initCustomSelects(periodSelect);
+}
+
+function updateFarmerMovementFilterOptions() {
+    const ownerSelect = document.getElementById('farmer-movement-filter-owner');
+    const cultureSelect = document.getElementById('farmer-movement-filter-culture');
+    if (ownerSelect) {
+        const val = ownerSelect.value;
+        ownerSelect.innerHTML = '<option value="">Всі фермери</option>' +
+            ownersCache.map(o => `<option value="${o.id}">${o.full_name}</option>`).join('');
+        ownerSelect.value = val;
+        initCustomSelects(ownerSelect);
+    }
+    if (cultureSelect) {
+        const val = cultureSelect.value;
+        cultureSelect.innerHTML = '<option value="">Всі культури</option>' +
+            culturesCache.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+        cultureSelect.value = val;
+        initCustomSelects(cultureSelect);
+    }
+}
+
+function initFarmerMovementsReportModal() {
+    const modal = document.getElementById('farmer-movements-report-modal');
+    const openBtn = document.getElementById('farmer-movements-report-btn');
+    const closeBtn = document.getElementById('farmer-movements-report-close');
+    const cancelBtn = document.getElementById('farmer-movements-report-cancel');
+    const downloadBtn = document.getElementById('farmer-movements-report-download');
+    const overlay = modal?.querySelector('.modal-overlay');
+
+    const typeSelect = document.getElementById('farmer-movements-report-type');
+    const ownerSelect = document.getElementById('farmer-movements-report-owner');
+    const cultureSelect = document.getElementById('farmer-movements-report-culture');
+    const periodSelect = document.getElementById('farmer-movements-report-period');
+    const startInput = document.getElementById('farmer-movements-report-start');
+    const endInput = document.getElementById('farmer-movements-report-end');
+    const startNative = document.getElementById('farmer-movements-report-start-native');
+    const endNative = document.getElementById('farmer-movements-report-end-native');
+    const startBtn = document.getElementById('farmer-movements-report-start-btn');
+    const endBtn = document.getElementById('farmer-movements-report-end-btn');
+
+    if (!modal || !openBtn || !downloadBtn) return;
+
+    const openModal = () => {
+        if (ownerSelect) {
+            ownerSelect.innerHTML = '<option value="">Всі фермери</option>' +
+                ownersCache.map(o => `<option value="${o.id}">${o.full_name}</option>`).join('');
+            initCustomSelects(ownerSelect);
+        }
+        if (cultureSelect) {
+            cultureSelect.innerHTML = '<option value="">Всі культури</option>' +
+                culturesCache.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+            initCustomSelects(cultureSelect);
+        }
+        if (typeSelect) initCustomSelects(typeSelect);
+        if (periodSelect) initCustomSelects(periodSelect);
+        modal.classList.remove('hidden');
+    };
+    const closeModal = () => modal.classList.add('hidden');
+
+    openBtn.addEventListener('click', openModal);
+    closeBtn?.addEventListener('click', closeModal);
+    cancelBtn?.addEventListener('click', closeModal);
+    overlay?.addEventListener('click', closeModal);
+
+    if (startInput && startNative && startBtn) bindDatePicker(startInput, startNative, startBtn);
+    if (endInput && endNative && endBtn) bindDatePicker(endInput, endNative, endBtn);
+    if (periodSelect && startNative && endNative && startInput && endInput) {
+        periodSelect.addEventListener('change', () => {
+            applyPeriodToDates(periodSelect.value, startNative, endNative, startInput, endInput);
+        });
+    }
+
+    downloadBtn.addEventListener('click', async () => {
+        if (periodSelect && periodSelect.value && periodSelect.value !== '' && startInput && !startInput.value && endInput && !endInput.value) {
+            applyPeriodToDates(periodSelect.value, startNative, endNative, startInput, endInput);
+        }
+        const startIso = startInput ? parseDateInput(startInput.value, 'дата початку') : null;
+        if (startIso === undefined) return;
+        const endIso = endInput ? parseDateInput(endInput.value, 'дата завершення') : null;
+        if (endIso === undefined) return;
+
+        const params = new URLSearchParams();
+        if (startIso) params.append('start_date', startIso);
+        if (endIso) params.append('end_date', endIso);
+        if (typeSelect?.value) params.append('movement_type', typeSelect.value);
+        if (ownerSelect?.value) params.append('owner_id', ownerSelect.value);
+        if (cultureSelect?.value) params.append('culture_id', cultureSelect.value);
+
+        const path = `/grain/farmer-movements/export${params.toString() ? `?${params}` : ''}`;
+        const response = await apiFetchBlob(path);
+        if (!response.ok) {
+            const error = await response.json().catch(() => null);
+            showToast(error?.detail || 'Не вдалося сформувати звіт', 'error');
+            return;
+        }
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'farmer_movements.xlsx';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+        showToast('Звіт сформовано', 'success');
+        closeModal();
+    });
+}
+
+function initFarmerTransferModal() {
+    const modal = document.getElementById('farmer-transfer-modal');
+    const closeBtn = document.getElementById('farmer-transfer-close');
+    const cancelBtn = document.getElementById('farmer-transfer-cancel');
+    const confirmBtn = document.getElementById('farmer-transfer-confirm');
+    const overlay = modal?.querySelector('.modal-overlay');
+    const fromSelect = document.getElementById('farmer-transfer-from');
+    const toSelect = document.getElementById('farmer-transfer-to');
+    const cultureSelect = document.getElementById('farmer-transfer-culture');
+    const quantityInput = document.getElementById('farmer-transfer-quantity');
+    const noteInput = document.getElementById('farmer-transfer-note');
+    const hint = document.getElementById('farmer-transfer-hint');
+    const openBtn = document.getElementById('farmer-transfer-btn');
+    if (!modal || !confirmBtn || !fromSelect || !toSelect || !cultureSelect) return;
+
+    const closeModal = () => modal.classList.add('hidden');
+    closeBtn?.addEventListener('click', closeModal);
+    cancelBtn?.addEventListener('click', closeModal);
+    overlay?.addEventListener('click', closeModal);
+
+    const populateOwners = () => {
+        const opts = '<option value="">Оберіть</option>' +
+            ownersCache.map(o => `<option value="${o.id}">${o.full_name}</option>`).join('');
+        fromSelect.innerHTML = opts;
+        toSelect.innerHTML = opts;
+        initCustomSelects(fromSelect);
+        initCustomSelects(toSelect);
+    };
+
+    const balanceSection = document.getElementById('farmer-transfer-balance');
+    const balanceCards = document.getElementById('farmer-transfer-balance-cards');
+
+    const loadFromBalance = async () => {
+        const fromId = fromSelect.value;
+        cultureSelect.innerHTML = '<option value="">Оберіть</option>';
+        if (hint) hint.textContent = '';
+        if (balanceSection) balanceSection.classList.add('hidden');
+        if (balanceCards) balanceCards.innerHTML = '';
+        if (!fromId) {
+            refreshCustomSelect(cultureSelect);
+            return;
+        }
+        const response = await apiFetch(`/grain/owners/${fromId}/balance`);
+        if (!response.ok) return;
+        const items = await response.json();
+        if (!items.length) {
+            if (hint) hint.textContent = 'У цього фермера немає зерна на балансі.';
+            refreshCustomSelect(cultureSelect);
+            return;
+        }
+
+        if (balanceSection && balanceCards) {
+            balanceSection.classList.remove('hidden');
+            balanceCards.innerHTML = '';
+            items.forEach(item => {
+                const card = document.createElement('div');
+                card.className = 'farmer-transfer-balance__card';
+                card.dataset.cultureId = item.culture_id;
+                card.innerHTML = `
+                    <span class="farmer-transfer-balance__card-name">${item.culture_name}</span>
+                    <span class="farmer-transfer-balance__card-qty">${formatWeight(item.quantity_kg)} кг</span>
+                `;
+                card.addEventListener('click', () => {
+                    balanceCards.querySelectorAll('.farmer-transfer-balance__card').forEach(c => c.classList.remove('selected'));
+                    card.classList.add('selected');
+                    cultureSelect.value = String(item.culture_id);
+                    const cWrapper = cultureSelect.closest('.custom-select');
+                    if (cWrapper) {
+                        updateCustomTrigger(cultureSelect, cWrapper);
+                    }
+                    quantityInput.focus();
+                });
+                balanceCards.appendChild(card);
+            });
+        }
+
+        cultureSelect.innerHTML = '<option value="">Оберіть</option>' +
+            items.map(i => `<option value="${i.culture_id}" data-max="${i.quantity_kg}">${i.culture_name} (до ${formatWeight(i.quantity_kg)} кг)</option>`).join('');
+        const wrapper = cultureSelect.closest('.custom-select');
+        if (wrapper) {
+            buildCustomOptions(cultureSelect, wrapper);
+            updateCustomTrigger(cultureSelect, wrapper);
+        } else {
+            initCustomSelects(cultureSelect);
+        }
+    };
+
+    fromSelect.addEventListener('change', loadFromBalance);
+
+    openBtn?.addEventListener('click', () => {
+        populateOwners();
+        cultureSelect.innerHTML = '<option value="">Оберіть</option>';
+        initCustomSelects(cultureSelect);
+        if (quantityInput) quantityInput.value = '';
+        if (noteInput) noteInput.value = '';
+        if (hint) hint.textContent = '';
+        if (balanceSection) balanceSection.classList.add('hidden');
+        if (balanceCards) balanceCards.innerHTML = '';
+        modal.classList.remove('hidden');
+    });
+
+    confirmBtn.addEventListener('click', async () => {
+        const fromId = parseInt(fromSelect.value);
+        const toId = parseInt(toSelect.value);
+        const cultureId = parseInt(cultureSelect.value);
+        const qty = parseFloat(quantityInput.value);
+        if (!fromId) { showToast('Оберіть фермера-відправника', 'error'); return; }
+        if (!toId) { showToast('Оберіть фермера-отримувача', 'error'); return; }
+        if (fromId === toId) { showToast('Відправник і отримувач повинні бути різними', 'error'); return; }
+        if (!cultureId) { showToast('Оберіть культуру', 'error'); return; }
+        if (Number.isNaN(qty) || qty <= 0) { showToast('Вкажіть коректну кількість', 'error'); return; }
+
+        const selectedOption = cultureSelect.options[cultureSelect.selectedIndex];
+        const maxQty = parseFloat(selectedOption?.dataset?.max || '0');
+        if (qty > maxQty) {
+            showToast(`Максимум: ${formatWeight(maxQty)} кг`, 'error');
+            return;
+        }
+
+        const note = noteInput.value.trim();
+        const response = await apiFetch('/grain/farmer-movements/transfer', {
+            method: 'POST',
+            body: JSON.stringify({
+                from_owner_id: fromId,
+                to_owner_id: toId,
+                culture_id: cultureId,
+                quantity_kg: qty,
+                note: note || null
+            })
+        });
+        if (response.ok) {
+            showToast('Зерно переміщено', 'success');
+            closeModal();
+            await loadFarmerMovements();
+        } else {
+            const error = await response.json().catch(() => null);
+            showToast(error?.detail || 'Помилка переміщення', 'error');
+        }
+    });
 }
 
 function initIntakeFilters() {
@@ -3773,6 +4347,76 @@ function applyIntakeFilters(intakes) {
     }
 
     return filtered;
+}
+
+function initIntakeSummaryReport() {
+    const modal = document.getElementById('intake-summary-report-modal');
+    const openBtn = document.getElementById('intake-summary-report-btn');
+    const closeBtn = document.getElementById('intake-summary-report-close');
+    const cancelBtn = document.getElementById('intake-summary-report-cancel');
+    const downloadBtn = document.getElementById('intake-summary-report-download');
+    const overlay = modal?.querySelector('.modal-overlay');
+    const startInput = document.getElementById('intake-summary-start');
+    const endInput = document.getElementById('intake-summary-end');
+    const startNative = document.getElementById('intake-summary-start-native');
+    const endNative = document.getElementById('intake-summary-end-native');
+    const startBtn = document.getElementById('intake-summary-start-btn');
+    const endBtn = document.getElementById('intake-summary-end-btn');
+    const periodSelect = document.getElementById('intake-summary-period');
+
+    if (!modal || !openBtn || !downloadBtn) return;
+
+    const openModal = () => {
+        modal.classList.remove('hidden');
+        initCustomSelects(periodSelect);
+        applyPeriodToDates(periodSelect.value, startNative, endNative, startInput, endInput);
+    };
+    const closeModal = () => modal.classList.add('hidden');
+
+    openBtn.addEventListener('click', openModal);
+    closeBtn?.addEventListener('click', closeModal);
+    cancelBtn?.addEventListener('click', closeModal);
+    overlay?.addEventListener('click', closeModal);
+    bindDatePicker(startInput, startNative, startBtn);
+    bindDatePicker(endInput, endNative, endBtn);
+    periodSelect?.addEventListener('change', () => {
+        applyPeriodToDates(periodSelect.value, startNative, endNative, startInput, endInput);
+    });
+
+    downloadBtn.addEventListener('click', async () => {
+        const startIso = parseDateInput(startInput.value, 'дата початку');
+        if (startIso === undefined) return;
+        const endIso = parseDateInput(endInput.value, 'дата завершення');
+        if (endIso === undefined) return;
+
+        const params = new URLSearchParams();
+        if (startIso) params.append('start_date', startIso);
+        if (endIso) params.append('end_date', endIso);
+
+        downloadBtn.disabled = true;
+        downloadBtn.textContent = 'Завантаження...';
+        try {
+            const path = `/grain/intakes/summary-export${params.toString() ? `?${params}` : ''}`;
+            const response = await apiFetchBlob(path);
+            if (!response.ok) {
+                showToast('Не вдалося сформувати звіт', 'error');
+                return;
+            }
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'intakes_summary_report.xlsx';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(url);
+            closeModal();
+        } finally {
+            downloadBtn.disabled = false;
+            downloadBtn.textContent = 'Скачати Excel';
+        }
+    });
 }
 
 function initIntakeReportModal() {
@@ -4009,9 +4653,7 @@ function initDriverDeliveriesReportModal() {
         if (vehicleSelect.value) {
             params.append('vehicle_type_id', vehicleSelect.value);
         }
-        params.append('internal_only', 'true');
-
-        const path = `/grain/intakes/export${params.toString() ? `?${params}` : ''}`;
+        const path = `/grain/driver-deliveries/export${params.toString() ? `?${params}` : ''}`;
         const response = await apiFetchBlob(path);
         if (!response.ok) {
             const error = await response.json().catch(() => null);
@@ -4236,20 +4878,8 @@ async function loadStock() {
                     price: item.price_per_kg
                 });
             });
-            const reserveBtn = document.createElement('button');
-            reserveBtn.className = 'btn-icon btn-icon-warning';
-            reserveBtn.innerHTML = ICONS.reserve;
-            reserveBtn.title = 'Бронювання';
-            reserveBtn.addEventListener('click', () => {
-                openStockReserveModal({
-                    id: item.culture_id,
-                    label: item.culture_name
-                });
-            });
-
             actionsCell.appendChild(button);
             actionsCell.appendChild(priceBtn);
-            actionsCell.appendChild(reserveBtn);
         } else {
             actionsCell.innerHTML = '<span class="td-secondary">Лише перегляд</span>';
         }
@@ -4320,7 +4950,9 @@ async function loadStockAdjustments() {
         const deltaLabel = `<span class="${isAdd ? 'td-delta-add' : 'td-delta-sub'}">${isAdd ? '+' : '-'}${formatWeight(item.amount)} кг</span>`;
         const noteLabel = item.source === 'shipment'
             ? `Відправка: ${item.destination || '—'}`
-            : 'Ручне';
+            : item.source === 'intake'
+                ? `Прийом: ${item.destination || '—'}`
+                : 'Ручне';
 
         row.innerHTML = `
             <td>${formatDate(item.created_at)}</td>
@@ -4631,15 +5263,19 @@ async function loadPurchases() {
     tableBody.innerHTML = '';
     purchasesCache.forEach(item => {
         const categoryLabel = item.category === 'fertilizer' ? 'Добрива' : 'Посівне зерно';
+        const typeBadge = item.is_free
+            ? '<span class="inline-badge issue">Безкоштовно</span>'
+            : '<span class="inline-badge purchase">Закупка</span>';
         const row = document.createElement('tr');
         row.innerHTML = `
             <td>${formatDate(item.created_at)}</td>
+            <td>${typeBadge}</td>
             <td>${item.item_name}</td>
             <td>${categoryLabel}</td>
-            <td>${item.price_per_kg.toFixed(2)}</td>
-            <td>${item.currency}</td>
+            <td>${item.is_free ? '—' : item.price_per_kg.toFixed(2)}</td>
+            <td>${item.is_free ? '—' : item.currency}</td>
             <td>${formatWeight(item.quantity_kg)}</td>
-            <td>${formatCurrency(item.total_amount, item.currency)}</td>
+            <td>${item.is_free ? '—' : formatCurrency(item.total_amount, item.currency)}</td>
         `;
         tableBody.appendChild(row);
     });
@@ -4653,6 +5289,7 @@ async function loadShipments() {
     }
     shipmentsCache = await response.json();
     renderShipmentsTable(shipmentsCache);
+    renderDriverDeliveriesTable(applyDriverDeliveryFilters());
 }
 
 function openIntakeEdit(intakeId) {
@@ -5138,6 +5775,78 @@ function closeDriverAddModal() {
     }
 }
 
+function initDriversListExport() {
+    const btn = document.getElementById('drivers-list-export-btn');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+        const response = await apiFetchBlob('/grain/drivers/export');
+        if (!response.ok) {
+            showToast('Не вдалося сформувати звіт', 'error');
+            return;
+        }
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'drivers.xlsx';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+        showToast('Звіт сформовано', 'success');
+    });
+}
+
+let editingDriverId = null;
+
+function initDriverEditModal() {
+    const modal = document.getElementById('driver-edit-modal');
+    const closeBtn = document.getElementById('driver-edit-close');
+    const overlay = modal?.querySelector('.modal-overlay');
+    const form = document.getElementById('driver-edit-form');
+    if (!modal || !closeBtn || !overlay || !form) return;
+
+    const closeModal = () => {
+        editingDriverId = null;
+        modal.classList.add('hidden');
+    };
+    closeBtn.addEventListener('click', closeModal);
+    overlay.addEventListener('click', closeModal);
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!editingDriverId) return;
+        const name = document.getElementById('driver-edit-name').value.trim();
+        const phone = document.getElementById('driver-edit-phone').value.trim();
+        if (!name) {
+            setFormMessage('driver-edit-message', 'Вкажіть ПІБ водія', true);
+            return;
+        }
+        const response = await apiFetch(`/grain/drivers/${editingDriverId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ full_name: name, phone: phone || null })
+        });
+        if (response.ok) {
+            showToast('Водія оновлено', 'success');
+            closeModal();
+            await loadDrivers();
+        } else {
+            const error = await response.json().catch(() => null);
+            setFormMessage('driver-edit-message', error?.detail || 'Не вдалося оновити', true);
+        }
+    });
+}
+
+function openDriverEditModal(driver) {
+    const modal = document.getElementById('driver-edit-modal');
+    if (!modal) return;
+    editingDriverId = driver.id;
+    document.getElementById('driver-edit-name').value = driver.full_name;
+    document.getElementById('driver-edit-phone').value = driver.phone || '';
+    setFormMessage('driver-edit-message', '', false);
+    modal.classList.remove('hidden');
+}
+
 function initUserAddModal() {
     const modal = document.getElementById('user-add-modal');
     const openBtn = document.getElementById('user-add-btn');
@@ -5347,6 +6056,33 @@ function initStockReports() {
     if (seedBtn) {
         seedBtn.addEventListener('click', () => {
             downloadPurchaseStock('seed', 'purchase_stock_seed.xlsx');
+        });
+    }
+
+    const summaryBtn = document.getElementById('stock-summary-report-btn');
+    if (summaryBtn) {
+        summaryBtn.addEventListener('click', async () => {
+            summaryBtn.disabled = true;
+            summaryBtn.textContent = 'Завантаження...';
+            try {
+                const response = await apiFetchBlob('/grain/stock/summary-export');
+                if (!response.ok) {
+                    showToast('Не вдалося сформувати звіт', 'error');
+                    return;
+                }
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = 'stock_summary_report.xlsx';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                window.URL.revokeObjectURL(url);
+            } finally {
+                summaryBtn.disabled = false;
+                summaryBtn.textContent = 'Спец. звіт';
+            }
         });
     }
 }
@@ -5670,6 +6406,11 @@ function initPurchaseForm() {
     const totalInput = document.getElementById('purchase-total');
     const suggestions = document.getElementById('purchase-name-suggestions');
     const nameHint = document.getElementById('purchase-name-hint');
+    const isFreeCheckbox = document.getElementById('purchase-is-free');
+    const priceField = document.getElementById('purchase-price-field');
+    const currencyField = document.getElementById('purchase-currency-field');
+    const totalField = document.getElementById('purchase-total-field');
+    const submitBtn = document.getElementById('purchase-submit-btn');
 
     if (!form || !nameInput || !categorySelect || !priceInput || !currencySelect || !quantityInput || !totalInput || !suggestions || !nameHint) {
         return;
@@ -5677,6 +6418,18 @@ function initPurchaseForm() {
 
     initCustomSelects(categorySelect);
     initCustomSelects(currencySelect);
+
+    const toggleFreeMode = () => {
+        const isFree = isFreeCheckbox.checked;
+        if (priceField) priceField.style.display = isFree ? 'none' : '';
+        if (currencyField) currencyField.style.display = isFree ? 'none' : '';
+        if (totalField) totalField.style.display = isFree ? 'none' : '';
+        if (submitBtn) submitBtn.textContent = isFree ? 'Додати на склад' : 'Зберегти закупівлю';
+    };
+    if (isFreeCheckbox) {
+        isFreeCheckbox.addEventListener('change', toggleFreeMode);
+        toggleFreeMode();
+    }
 
     const updateTotal = () => {
         const price = parseFloat(priceInput.value);
@@ -5793,15 +6546,11 @@ function initPurchaseForm() {
 
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
+        const isFree = isFreeCheckbox ? isFreeCheckbox.checked : false;
         const name = nameInput.value.trim();
-        const price = parseFloat(priceInput.value);
         const qty = parseFloat(quantityInput.value);
         if (!name) {
             showToast('Вкажіть назву позиції', 'error');
-            return;
-        }
-        if (Number.isNaN(price) || price <= 0) {
-            showToast('Вкажіть коректну ціну', 'error');
             return;
         }
         if (Number.isNaN(qty) || qty <= 0) {
@@ -5812,25 +6561,40 @@ function initPurchaseForm() {
         const payload = {
             item_name: name,
             category: categorySelect.value,
-            price_per_kg: price,
-            currency: currencySelect.value,
-            quantity_kg: qty
+            quantity_kg: qty,
+            is_free: isFree
         };
+
+        if (!isFree) {
+            const price = parseFloat(priceInput.value);
+            if (Number.isNaN(price) || price <= 0) {
+                showToast('Вкажіть коректну ціну', 'error');
+                return;
+            }
+            payload.price_per_kg = price;
+            payload.currency = currencySelect.value;
+        }
 
         const response = await apiFetch('/purchases', {
             method: 'POST',
             body: JSON.stringify(payload)
         });
         if (response.ok) {
-            showToast('Закупівлю збережено', 'success');
+            showToast(isFree ? 'Додано на склад' : 'Закупівлю збережено', 'success');
             form.reset();
             totalInput.value = '';
             nameHint.textContent = '';
             suggestions.classList.add('hidden');
+            if (isFreeCheckbox) {
+                isFreeCheckbox.checked = false;
+                toggleFreeMode();
+            }
             await loadPurchaseStock();
             await loadPurchases();
-            await loadCashBalance();
-            await loadCashTransactions();
+            if (!isFree) {
+                await loadCashBalance();
+                await loadCashTransactions();
+            }
         } else {
             const error = await response.json().catch(() => null);
             showToast(error?.detail || 'Помилка збереження', 'error');

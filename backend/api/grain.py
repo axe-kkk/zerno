@@ -22,6 +22,7 @@ from backend.models import (
     StockAdjustmentLog,
     StockAdjustmentType,
     FarmerGrainDeduction,
+    FarmerGrainMovement,
     User
 )
 from backend.schemas import (
@@ -36,6 +37,9 @@ from backend.schemas import (
     GrainOwnerResponse,
     GrainStockResponse,
     FarmerBalanceItem,
+    FarmerGrainDeductRequest,
+    FarmerGrainTransferRequest,
+    FarmerGrainMovementResponse,
     GrainIntakeCreate,
     GrainIntakeResponse,
     GrainReserveRequest,
@@ -211,6 +215,72 @@ async def list_drivers(
 ):
     """Список водіїв підприємства"""
     return session.exec(select(Driver).order_by(Driver.full_name)).all()
+
+
+@router.get("/drivers/export")
+async def export_drivers(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """Експорт списку водіїв у Excel"""
+    drivers = session.exec(select(Driver).order_by(Driver.full_name)).all()
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Водії"
+
+    headers = ["№", "ПІБ", "Телефон", "Статус"]
+    sheet.append(headers)
+
+    header_fill = PatternFill("solid", fgColor="1F2937")
+    header_font = Font(color="FFFFFF", bold=True)
+    header_alignment = Alignment(horizontal="center", vertical="center")
+    thin_border = Border(
+        left=Side(style="thin", color="E5E7EB"),
+        right=Side(style="thin", color="E5E7EB"),
+        top=Side(style="thin", color="E5E7EB"),
+        bottom=Side(style="thin", color="E5E7EB"),
+    )
+    for col in range(1, len(headers) + 1):
+        cell = sheet.cell(row=1, column=col)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_alignment
+        cell.border = thin_border
+
+    alt_fill = PatternFill("solid", fgColor="F8FAFC")
+    for idx, driver in enumerate(drivers, start=1):
+        sheet.append([
+            idx,
+            driver.full_name,
+            driver.phone or "—",
+            "Активний" if driver.is_active else "Неактивний",
+        ])
+
+    for row in range(2, sheet.max_row + 1):
+        row_fill = alt_fill if row % 2 == 0 else None
+        for col in range(1, len(headers) + 1):
+            cell = sheet.cell(row=row, column=col)
+            if row_fill:
+                cell.fill = row_fill
+            cell.border = thin_border
+
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = f"A1:D{sheet.max_row}"
+    sheet.column_dimensions["A"].width = 8
+    sheet.column_dimensions["B"].width = 30
+    sheet.column_dimensions["C"].width = 20
+    sheet.column_dimensions["D"].width = 16
+
+    buffer = BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    filename = f"drivers_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/drivers", response_model=DriverResponse)
@@ -457,6 +527,251 @@ async def export_owner_balance(
     )
 
 
+@router.get("/farmer-movements", response_model=list[FarmerGrainMovementResponse])
+async def list_farmer_grain_movements(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """Список переміщень зерна фермерів"""
+    return session.exec(
+        select(FarmerGrainMovement).order_by(FarmerGrainMovement.created_at.desc())
+    ).all()
+
+
+@router.get("/farmer-movements/export")
+async def export_farmer_grain_movements(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+    start_date: str | None = None,
+    end_date: str | None = None,
+    movement_type: str | None = None,
+    owner_id: int | None = None,
+    culture_id: int | None = None,
+):
+    """Експорт переміщень зерна фермерів у Excel"""
+    query = select(FarmerGrainMovement).order_by(FarmerGrainMovement.created_at.desc())
+
+    if start_date:
+        try:
+            start_dt = datetime.combine(date.fromisoformat(start_date), time.min)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Некоректний формат дати початку")
+        query = query.where(FarmerGrainMovement.created_at >= start_dt)
+    if end_date:
+        try:
+            end_dt = datetime.combine(date.fromisoformat(end_date), time.max)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Некоректний формат дати завершення")
+        query = query.where(FarmerGrainMovement.created_at <= end_dt)
+    if movement_type:
+        query = query.where(FarmerGrainMovement.movement_type == movement_type)
+    if owner_id:
+        query = query.where(
+            (FarmerGrainMovement.from_owner_id == owner_id) |
+            (FarmerGrainMovement.to_owner_id == owner_id)
+        )
+    if culture_id:
+        query = query.where(FarmerGrainMovement.culture_id == culture_id)
+
+    movements = session.exec(query).all()
+
+    owner_map = {o.id: o.full_name for o in session.exec(select(GrainOwner)).all()}
+    culture_map = {c.id: c.name for c in session.exec(select(GrainCulture)).all()}
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Переміщення зерна"
+
+    headers = ["Дата", "Тип", "Від фермера", "До фермера", "Культура", "Кількість, кг", "Примітка"]
+    sheet.append(headers)
+
+    header_fill = PatternFill("solid", fgColor="1F2937")
+    header_font = Font(color="FFFFFF", bold=True)
+    header_alignment = Alignment(horizontal="center", vertical="center")
+    thin_border = Border(
+        left=Side(style="thin", color="E5E7EB"),
+        right=Side(style="thin", color="E5E7EB"),
+        top=Side(style="thin", color="E5E7EB"),
+        bottom=Side(style="thin", color="E5E7EB"),
+    )
+    for col in range(1, len(headers) + 1):
+        cell = sheet.cell(row=1, column=col)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_alignment
+        cell.border = thin_border
+
+    alt_fill = PatternFill("solid", fgColor="F8FAFC")
+    deduct_fill = PatternFill("solid", fgColor="FFEDD5")
+    transfer_fill = PatternFill("solid", fgColor="DBEAFE")
+
+    for m in movements:
+        type_label = "Переміщення" if m.movement_type == "transfer" else "Списання"
+        sheet.append([
+            m.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            type_label,
+            owner_map.get(m.from_owner_id, "—"),
+            owner_map.get(m.to_owner_id, "—") if m.to_owner_id else "—",
+            culture_map.get(m.culture_id, "—"),
+            m.quantity_kg,
+            m.note or "",
+        ])
+
+    for row in range(2, sheet.max_row + 1):
+        row_fill = alt_fill if row % 2 == 0 else None
+        type_val = sheet.cell(row=row, column=2).value
+        type_fill = transfer_fill if type_val == "Переміщення" else deduct_fill
+        for col in range(1, len(headers) + 1):
+            cell = sheet.cell(row=row, column=col)
+            if col == 2:
+                cell.fill = type_fill
+                cell.alignment = Alignment(horizontal="center")
+            elif row_fill:
+                cell.fill = row_fill
+            cell.border = thin_border
+            if col == 6:
+                cell.number_format = "#,##0.00"
+
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = f"A1:G{sheet.max_row}"
+    column_widths = [20, 16, 28, 28, 20, 16, 30]
+    for idx, width in enumerate(column_widths, start=1):
+        sheet.column_dimensions[chr(64 + idx)].width = width
+
+    buffer = BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    filename = f"farmer_movements_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/farmer-movements/deduct", response_model=FarmerGrainMovementResponse)
+async def deduct_farmer_grain(
+    payload: FarmerGrainDeductRequest,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """Списання зерна з балансу фермера"""
+    owner = session.get(GrainOwner, payload.owner_id)
+    if not owner:
+        raise HTTPException(status_code=404, detail="Фермера не знайдено")
+
+    culture = session.get(GrainCulture, payload.culture_id)
+    if not culture:
+        raise HTTPException(status_code=404, detail="Культуру не знайдено")
+
+    balance = await get_owner_balance(payload.owner_id, session, current_user)
+    culture_balance = next((b for b in balance if b.culture_id == payload.culture_id), None)
+    available = culture_balance.quantity_kg if culture_balance else 0.0
+
+    if payload.quantity_kg > available:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Недостатньо зерна. Доступно: {available:.2f} кг"
+        )
+
+    deduction = FarmerGrainDeduction(
+        owner_id=payload.owner_id,
+        culture_id=payload.culture_id,
+        quantity_kg=payload.quantity_kg,
+        payment_id=None
+    )
+    session.add(deduction)
+
+    movement = FarmerGrainMovement(
+        movement_type="deduct",
+        from_owner_id=payload.owner_id,
+        to_owner_id=None,
+        culture_id=payload.culture_id,
+        quantity_kg=payload.quantity_kg,
+        note=payload.note,
+        created_by_user_id=current_user.id
+    )
+    session.add(movement)
+    session.commit()
+    session.refresh(movement)
+    return movement
+
+
+@router.post("/farmer-movements/transfer", response_model=FarmerGrainMovementResponse)
+async def transfer_farmer_grain(
+    payload: FarmerGrainTransferRequest,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """Переміщення зерна від одного фермера до іншого"""
+    if payload.from_owner_id == payload.to_owner_id:
+        raise HTTPException(status_code=400, detail="Не можна переміщувати зерно самому собі")
+
+    from_owner = session.get(GrainOwner, payload.from_owner_id)
+    if not from_owner:
+        raise HTTPException(status_code=404, detail="Фермера-відправника не знайдено")
+
+    to_owner = session.get(GrainOwner, payload.to_owner_id)
+    if not to_owner:
+        raise HTTPException(status_code=404, detail="Фермера-отримувача не знайдено")
+
+    culture = session.get(GrainCulture, payload.culture_id)
+    if not culture:
+        raise HTTPException(status_code=404, detail="Культуру не знайдено")
+
+    balance = await get_owner_balance(payload.from_owner_id, session, current_user)
+    culture_balance = next((b for b in balance if b.culture_id == payload.culture_id), None)
+    available = culture_balance.quantity_kg if culture_balance else 0.0
+
+    if payload.quantity_kg > available:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Недостатньо зерна у відправника. Доступно: {available:.2f} кг"
+        )
+
+    deduction = FarmerGrainDeduction(
+        owner_id=payload.from_owner_id,
+        culture_id=payload.culture_id,
+        quantity_kg=payload.quantity_kg,
+        payment_id=None
+    )
+    session.add(deduction)
+
+    to_intake = GrainIntake(
+        culture_id=payload.culture_id,
+        vehicle_type_id=1,
+        owner_id=payload.to_owner_id,
+        is_own_grain=False,
+        owner_full_name=to_owner.full_name,
+        owner_phone=to_owner.phone,
+        is_internal_driver=False,
+        gross_weight_kg=payload.quantity_kg,
+        tare_weight_kg=0,
+        net_weight_kg=payload.quantity_kg,
+        accepted_weight_kg=payload.quantity_kg,
+        pending_quality=False,
+        impurity_percent=0,
+        has_trailer=False,
+        note=f"Трансфер від {from_owner.full_name}",
+        created_by_user_id=current_user.id
+    )
+    session.add(to_intake)
+
+    movement = FarmerGrainMovement(
+        movement_type="transfer",
+        from_owner_id=payload.from_owner_id,
+        to_owner_id=payload.to_owner_id,
+        culture_id=payload.culture_id,
+        quantity_kg=payload.quantity_kg,
+        note=payload.note,
+        created_by_user_id=current_user.id
+    )
+    session.add(movement)
+    session.commit()
+    session.refresh(movement)
+    return movement
+
+
 @router.post("/owners", response_model=GrainOwnerResponse)
 async def create_owner(
     payload: GrainOwnerCreate,
@@ -465,6 +780,25 @@ async def create_owner(
 ):
     """Створення власника"""
     owner = GrainOwner(full_name=payload.full_name, phone=payload.phone)
+    session.add(owner)
+    session.commit()
+    session.refresh(owner)
+    return owner
+
+
+@router.patch("/owners/{owner_id}", response_model=GrainOwnerResponse)
+async def update_owner(
+    owner_id: int,
+    payload: GrainOwnerCreate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """Оновлення фермера"""
+    owner = session.get(GrainOwner, owner_id)
+    if not owner:
+        raise HTTPException(status_code=404, detail="Фермера не знайдено")
+    owner.full_name = payload.full_name
+    owner.phone = payload.phone
     session.add(owner)
     session.commit()
     session.refresh(owner)
@@ -905,6 +1239,8 @@ async def export_stock_adjustments(
             query = query.where(StockAdjustmentLog.source.is_(None))
         elif source == 'shipment':
             query = query.where(StockAdjustmentLog.source == 'shipment')
+        elif source == 'intake':
+            query = query.where(StockAdjustmentLog.source == 'intake')
 
     if start_date:
         try:
@@ -975,6 +1311,8 @@ async def export_stock_adjustments(
         note = ''
         if log.source == 'shipment':
             note = f"Відправка: {log.destination or '-'}"
+        elif log.source == 'intake':
+            note = f"Прийом: {log.destination or '-'}"
         else:
             note = 'Ручне'
         sheet.append([
@@ -1142,7 +1480,27 @@ async def create_intake(
     session.refresh(intake)
 
     if not payload.pending_quality:
+        stock = _get_or_create_stock(session, payload.culture_id)
+        quantity_before = stock.quantity_kg
         _apply_stock_delta(session, payload.culture_id, accepted_weight, payload.is_own_grain)
+        session.refresh(stock)
+        owner_label = "Підприємство" if payload.is_own_grain else (owner_full_name or "Фермер")
+        session.add(StockAdjustmentLog(
+            stock_type=StockAdjustmentType.GRAIN,
+            culture_id=payload.culture_id,
+            purchase_stock_id=None,
+            category=None,
+            item_name=culture.name,
+            transaction_type=TransactionType.ADD,
+            amount=accepted_weight,
+            quantity_before=quantity_before,
+            quantity_after=stock.quantity_kg,
+            user_id=current_user.id,
+            user_full_name=current_user.full_name,
+            source="intake",
+            destination=owner_label,
+        ))
+        session.commit()
         if payload.is_internal_driver and driver_id:
             _apply_driver_stat_delta(
                 session,
@@ -1169,6 +1527,289 @@ async def list_intakes(
     if pending_only:
         query = query.where(GrainIntake.pending_quality == True)
     return session.exec(query).all()
+
+
+@router.get("/intakes/summary-export")
+async def export_intakes_summary(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+    start_date: str | None = None,
+    end_date: str | None = None,
+):
+    """Спец-звіт: зведена таблиця приходів по культурах з розбивкою фермери / підприємство"""
+    query = (
+        select(GrainIntake)
+        .where(GrainIntake.pending_quality == False)
+        .order_by(GrainIntake.created_at.desc())
+    )
+
+    if start_date:
+        try:
+            start_dt = datetime.combine(date.fromisoformat(start_date), time.min)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Некоректний формат дати початку")
+        query = query.where(GrainIntake.created_at >= start_dt)
+
+    if end_date:
+        try:
+            end_dt = datetime.combine(date.fromisoformat(end_date), time.max)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Некоректний формат дати завершення")
+        query = query.where(GrainIntake.created_at <= end_dt)
+
+    intakes = session.exec(query).all()
+
+    cultures = session.exec(select(GrainCulture).order_by(GrainCulture.name)).all()
+    culture_map = {c.id: c.name for c in cultures}
+    owners = session.exec(select(GrainOwner)).all()
+    owner_map = {o.id: o.full_name for o in owners}
+    drivers = session.exec(select(Driver)).all()
+    driver_map = {d.id: d.full_name for d in drivers}
+    vehicles = session.exec(select(VehicleType)).all()
+    vehicle_map = {v.id: v.name for v in vehicles}
+
+    data_by_culture = {}
+    for c in cultures:
+        data_by_culture[c.id] = {
+            "name": c.name,
+            "farmer_intakes": [],
+            "own_intakes": [],
+            "farmer_total": 0.0,
+            "own_total": 0.0,
+        }
+
+    for intake in intakes:
+        cid = intake.culture_id
+        if cid not in data_by_culture:
+            data_by_culture[cid] = {
+                "name": culture_map.get(cid, f"ID {cid}"),
+                "farmer_intakes": [],
+                "own_intakes": [],
+                "farmer_total": 0.0,
+                "own_total": 0.0,
+            }
+        entry = data_by_culture[cid]
+        dt = intake.created_at.strftime("%d.%m.%Y %H:%M") if intake.created_at else ""
+        driver_name = ""
+        if intake.driver_id:
+            driver_name = driver_map.get(intake.driver_id, "")
+        elif intake.external_driver_name:
+            driver_name = intake.external_driver_name
+        vehicle_name = vehicle_map.get(intake.vehicle_type_id, "")
+        row = {
+            "date": dt,
+            "source": "",
+            "driver": driver_name,
+            "vehicle": vehicle_name,
+            "gross": intake.gross_weight_kg,
+            "tare": intake.tare_weight_kg,
+            "net": intake.net_weight_kg,
+            "impurity": intake.impurity_percent,
+            "accepted": intake.accepted_weight_kg,
+            "note": intake.note or "",
+        }
+        if intake.is_own_grain:
+            row["source"] = "Підприємство"
+            entry["own_intakes"].append(row)
+            entry["own_total"] += intake.accepted_weight_kg
+        else:
+            owner_name = owner_map.get(intake.owner_id, intake.owner_full_name or "—")
+            row["source"] = owner_name
+            entry["farmer_intakes"].append(row)
+            entry["farmer_total"] += intake.accepted_weight_kg
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Спец. звіт"
+
+    thin_border = Border(
+        left=Side(style="thin", color="E5E7EB"),
+        right=Side(style="thin", color="E5E7EB"),
+        top=Side(style="thin", color="E5E7EB"),
+        bottom=Side(style="thin", color="E5E7EB"),
+    )
+    culture_fill = PatternFill("solid", fgColor="1F2937")
+    culture_font = Font(color="FFFFFF", bold=True, size=13)
+    col_header_fill = PatternFill("solid", fgColor="374151")
+    col_header_font = Font(color="FFFFFF", bold=True)
+    col_header_alignment = Alignment(horizontal="center", vertical="center")
+    subtitle_fill = PatternFill("solid", fgColor="DBEAFE")
+    subtitle_font = Font(bold=True, color="1E40AF")
+    total_fill = PatternFill("solid", fgColor="E2E8F0")
+    total_font = Font(bold=True)
+    grand_total_fill = PatternFill("solid", fgColor="BBF7D0")
+    grand_total_font = Font(bold=True, color="166534", size=11)
+
+    detail_headers = [
+        "Дата", "Власник / Джерело", "Водій", "Транспорт",
+        "Брутто, кг", "Тара, кг", "Нетто, кг", "Втрати, %", "Прийнято, кг", "Примітка"
+    ]
+    ncols = len(detail_headers)
+    weight_cols = {5, 6, 7, 9}
+
+    def style_data_row(row_num):
+        for col in range(1, ncols + 1):
+            cell = sheet.cell(row=row_num, column=col)
+            cell.border = thin_border
+            if col in weight_cols:
+                cell.number_format = "#,##0.00"
+            elif col == 8:
+                cell.number_format = "0.00"
+
+    def write_culture_header(name):
+        sheet.append([name] + [""] * (ncols - 1))
+        r = sheet.max_row
+        sheet.merge_cells(start_row=r, start_column=1, end_row=r, end_column=ncols)
+        for col in range(1, ncols + 1):
+            cell = sheet.cell(row=r, column=col)
+            cell.fill = culture_fill
+            cell.font = culture_font
+            cell.border = thin_border
+
+    def write_col_headers():
+        sheet.append(detail_headers)
+        r = sheet.max_row
+        for col in range(1, ncols + 1):
+            cell = sheet.cell(row=r, column=col)
+            cell.fill = col_header_fill
+            cell.font = col_header_font
+            cell.alignment = col_header_alignment
+            cell.border = thin_border
+
+    def write_section_label(label):
+        sheet.append([label] + [""] * (ncols - 1))
+        r = sheet.max_row
+        sheet.merge_cells(start_row=r, start_column=1, end_row=r, end_column=ncols)
+        for col in range(1, ncols + 1):
+            cell = sheet.cell(row=r, column=col)
+            cell.fill = subtitle_fill
+            cell.font = subtitle_font
+            cell.border = thin_border
+
+    def write_data_rows(rows):
+        for rd in rows:
+            sheet.append([
+                rd["date"], rd["source"], rd["driver"], rd["vehicle"],
+                rd["gross"], rd["tare"], rd["net"], rd["impurity"],
+                rd["accepted"], rd["note"]
+            ])
+            style_data_row(sheet.max_row)
+
+    def write_subtotal(label, total):
+        row_vals = ["", label, "", "", "", "", "", "", total, ""]
+        sheet.append(row_vals)
+        r = sheet.max_row
+        for col in range(1, ncols + 1):
+            cell = sheet.cell(row=r, column=col)
+            cell.fill = total_fill
+            cell.font = total_font
+            cell.border = thin_border
+            if col == 9:
+                cell.number_format = "#,##0.00"
+
+    def write_culture_total(name, total):
+        row_vals = ["", f"ВСЬОГО {name}:", "", "", "", "", "", "", total, ""]
+        sheet.append(row_vals)
+        r = sheet.max_row
+        for col in range(1, ncols + 1):
+            cell = sheet.cell(row=r, column=col)
+            cell.fill = grand_total_fill
+            cell.font = grand_total_font
+            cell.border = thin_border
+            if col == 9:
+                cell.number_format = "#,##0.00"
+
+    grand_farmer = 0
+    grand_own = 0
+
+    for cid in [c.id for c in cultures]:
+        entry = data_by_culture.get(cid)
+        if not entry:
+            continue
+        if not entry["farmer_intakes"] and not entry["own_intakes"]:
+            continue
+
+        if sheet.max_row > 1:
+            sheet.append([""] * ncols)
+
+        write_culture_header(entry["name"])
+        write_col_headers()
+
+        if entry["farmer_intakes"]:
+            write_section_label("Від фермерів")
+            write_data_rows(entry["farmer_intakes"])
+            write_subtotal("Разом від фермерів:", entry["farmer_total"])
+
+        if entry["own_intakes"]:
+            write_section_label("Від підприємства")
+            write_data_rows(entry["own_intakes"])
+            write_subtotal("Разом від підприємства:", entry["own_total"])
+
+        culture_total = entry["farmer_total"] + entry["own_total"]
+        write_culture_total(entry["name"], culture_total)
+        grand_farmer += entry["farmer_total"]
+        grand_own += entry["own_total"]
+
+    sheet.append([""] * ncols)
+    sheet.append(["ЗАГАЛЬНИЙ ПІДСУМОК", "", "", "", "", "", "", "", "", ""])
+    r = sheet.max_row
+    sheet.merge_cells(start_row=r, start_column=1, end_row=r, end_column=ncols)
+    for col in range(1, ncols + 1):
+        cell = sheet.cell(row=r, column=col)
+        cell.fill = culture_fill
+        cell.font = culture_font
+        cell.border = thin_border
+
+    sheet.append(["", "Всього від фермерів:", "", "", "", "", "", "", grand_farmer, ""])
+    r = sheet.max_row
+    for col in range(1, ncols + 1):
+        cell = sheet.cell(row=r, column=col)
+        cell.fill = total_fill
+        cell.font = total_font
+        cell.border = thin_border
+        if col == 9:
+            cell.number_format = "#,##0.00"
+
+    sheet.append(["", "Всього від підприємства:", "", "", "", "", "", "", grand_own, ""])
+    r = sheet.max_row
+    for col in range(1, ncols + 1):
+        cell = sheet.cell(row=r, column=col)
+        cell.fill = total_fill
+        cell.font = total_font
+        cell.border = thin_border
+        if col == 9:
+            cell.number_format = "#,##0.00"
+
+    sheet.append(["", "ВСЬОГО:", "", "", "", "", "", "", grand_farmer + grand_own, ""])
+    r = sheet.max_row
+    for col in range(1, ncols + 1):
+        cell = sheet.cell(row=r, column=col)
+        cell.fill = grand_total_fill
+        cell.font = Font(bold=True, color="166534", size=12)
+        cell.border = thin_border
+        if col == 9:
+            cell.number_format = "#,##0.00"
+
+    sheet.column_dimensions["A"].width = 18
+    sheet.column_dimensions["B"].width = 28
+    sheet.column_dimensions["C"].width = 22
+    sheet.column_dimensions["D"].width = 16
+    sheet.column_dimensions["E"].width = 14
+    sheet.column_dimensions["F"].width = 14
+    sheet.column_dimensions["G"].width = 14
+    sheet.column_dimensions["H"].width = 12
+    sheet.column_dimensions["I"].width = 16
+    sheet.column_dimensions["J"].width = 22
+
+    buffer = BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    filename = f"intakes_summary_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/intakes/export")
@@ -1406,10 +2047,33 @@ async def create_shipment(
     stock.quantity_kg -= payload.quantity_kg
     session.add(stock)
 
+    if payload.payment_format not in ("none", "cash", "cashless"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Невірний формат оплати"
+        )
+    if payload.driver_id is not None:
+        driver = session.get(Driver, payload.driver_id)
+        if not driver:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Водія не знайдено"
+            )
+    if payload.vehicle_type_id is not None:
+        vehicle_type = session.get(VehicleType, payload.vehicle_type_id)
+        if not vehicle_type:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Тип транспорту не знайдено"
+            )
+
     shipment = GrainShipment(
         culture_id=payload.culture_id,
         destination=destination,
         quantity_kg=payload.quantity_kg,
+        payment_format=payload.payment_format,
+        driver_id=payload.driver_id,
+        vehicle_type_id=payload.vehicle_type_id,
         created_by_user_id=current_user.id
     )
     session.add(shipment)
@@ -1571,6 +2235,24 @@ async def update_shipment(
     shipment.culture_id = new_culture_id
     shipment.quantity_kg = new_quantity
 
+    if payload.payment_format is not None:
+        if payload.payment_format not in ("none", "cash", "cashless"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Невірний формат оплати"
+            )
+        shipment.payment_format = payload.payment_format
+    if payload.driver_id is not None:
+        driver = session.get(Driver, payload.driver_id)
+        if not driver:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Водія не знайдено")
+        shipment.driver_id = payload.driver_id
+    if payload.vehicle_type_id is not None:
+        vt = session.get(VehicleType, payload.vehicle_type_id)
+        if not vt:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Тип транспорту не знайдено")
+        shipment.vehicle_type_id = payload.vehicle_type_id
+
     session.add(shipment)
     session.commit()
     session.refresh(shipment)
@@ -1679,6 +2361,337 @@ async def export_shipments(
     )
 
 
+@router.get("/driver-deliveries/export")
+async def export_driver_deliveries(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+    start_date: str | None = None,
+    end_date: str | None = None,
+    driver_id: int | None = None,
+    culture_id: int | None = None,
+    vehicle_type_id: int | None = None,
+):
+    """Експорт рейсів водіїв (прийом + відправки) у Excel"""
+    start_dt = None
+    end_dt = None
+    if start_date:
+        try:
+            start_dt = datetime.combine(date.fromisoformat(start_date), time.min)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Некоректний формат дати початку")
+    if end_date:
+        try:
+            end_dt = datetime.combine(date.fromisoformat(end_date), time.max)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Некоректний формат дати завершення")
+
+    intake_query = select(GrainIntake).where(GrainIntake.is_internal_driver == True).order_by(GrainIntake.created_at.desc())
+    if start_dt:
+        intake_query = intake_query.where(GrainIntake.created_at >= start_dt)
+    if end_dt:
+        intake_query = intake_query.where(GrainIntake.created_at <= end_dt)
+    if driver_id:
+        intake_query = intake_query.where(GrainIntake.driver_id == driver_id)
+    if culture_id:
+        intake_query = intake_query.where(GrainIntake.culture_id == culture_id)
+    if vehicle_type_id:
+        intake_query = intake_query.where(GrainIntake.vehicle_type_id == vehicle_type_id)
+    intakes = session.exec(intake_query).all()
+
+    ship_query = select(GrainShipment).where(GrainShipment.driver_id.isnot(None)).order_by(GrainShipment.created_at.desc())
+    if start_dt:
+        ship_query = ship_query.where(GrainShipment.created_at >= start_dt)
+    if end_dt:
+        ship_query = ship_query.where(GrainShipment.created_at <= end_dt)
+    if driver_id:
+        ship_query = ship_query.where(GrainShipment.driver_id == driver_id)
+    if culture_id:
+        ship_query = ship_query.where(GrainShipment.culture_id == culture_id)
+    if vehicle_type_id:
+        ship_query = ship_query.where(GrainShipment.vehicle_type_id == vehicle_type_id)
+    shipments = session.exec(ship_query).all()
+
+    culture_map = {c.id: c.name for c in session.exec(select(GrainCulture)).all()}
+    vehicle_map = {v.id: v.name for v in session.exec(select(VehicleType)).all()}
+    driver_items = session.exec(select(Driver)).all()
+    driver_map = {d.id: d.full_name for d in driver_items}
+    driver_phone_map = {d.id: d.phone for d in driver_items}
+
+    rows = []
+    for intake in intakes:
+        rows.append({
+            "date": intake.created_at,
+            "type": "Прийом",
+            "driver": driver_map.get(intake.driver_id, "-"),
+            "phone": driver_phone_map.get(intake.driver_id) or "-",
+            "vehicle": vehicle_map.get(intake.vehicle_type_id, "-"),
+            "trailer": "Так" if intake.has_trailer else "Ні",
+            "culture": culture_map.get(intake.culture_id, "-"),
+            "destination": "-",
+            "quantity": intake.net_weight_kg,
+            "accepted": "" if intake.pending_quality else intake.accepted_weight_kg,
+        })
+    for ship in shipments:
+        rows.append({
+            "date": ship.created_at,
+            "type": "Відправка",
+            "driver": driver_map.get(ship.driver_id, "-"),
+            "phone": driver_phone_map.get(ship.driver_id) or "-",
+            "vehicle": vehicle_map.get(ship.vehicle_type_id, "-") if ship.vehicle_type_id else "-",
+            "trailer": "-",
+            "culture": culture_map.get(ship.culture_id, "-"),
+            "destination": ship.destination,
+            "quantity": ship.quantity_kg,
+            "accepted": ship.quantity_kg,
+        })
+    rows.sort(key=lambda r: r["date"], reverse=True)
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Рейси водіїв"
+
+    headers = ["Дата", "Тип", "Водій", "Телефон", "Транспорт", "Причіп", "Культура", "Куди", "Кількість, кг", "Прийнято, кг"]
+    sheet.append(headers)
+
+    header_fill = PatternFill("solid", fgColor="1F2937")
+    header_font = Font(color="FFFFFF", bold=True)
+    header_alignment = Alignment(horizontal="center", vertical="center")
+    thin_border = Border(
+        left=Side(style="thin", color="E5E7EB"),
+        right=Side(style="thin", color="E5E7EB"),
+        top=Side(style="thin", color="E5E7EB"),
+        bottom=Side(style="thin", color="E5E7EB"),
+    )
+    for col in range(1, len(headers) + 1):
+        cell = sheet.cell(row=1, column=col)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_alignment
+        cell.border = thin_border
+
+    alt_fill = PatternFill("solid", fgColor="F8FAFC")
+    intake_fill = PatternFill("solid", fgColor="DBEAFE")
+    shipment_fill = PatternFill("solid", fgColor="FEF3C7")
+
+    for r in rows:
+        sheet.append([
+            r["date"].strftime("%Y-%m-%d %H:%M:%S"),
+            r["type"],
+            r["driver"],
+            r["phone"],
+            r["vehicle"],
+            r["trailer"],
+            r["culture"],
+            r["destination"],
+            r["quantity"],
+            r["accepted"],
+        ])
+
+    for row in range(2, sheet.max_row + 1):
+        row_fill = alt_fill if row % 2 == 0 else None
+        type_val = sheet.cell(row=row, column=2).value
+        type_fill = intake_fill if type_val == "Прийом" else shipment_fill
+        for col in range(1, len(headers) + 1):
+            cell = sheet.cell(row=row, column=col)
+            if col == 2:
+                cell.fill = type_fill
+                cell.alignment = Alignment(horizontal="center")
+            elif row_fill:
+                cell.fill = row_fill
+            cell.border = thin_border
+            if col in (9, 10):
+                cell.number_format = "#,##0.00"
+
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = f"A1:{chr(64 + len(headers))}{sheet.max_row}"
+    column_widths = [20, 14, 22, 16, 16, 10, 16, 24, 16, 16]
+    for idx, width in enumerate(column_widths, start=1):
+        sheet.column_dimensions[chr(64 + idx)].width = width
+
+    buffer = BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    filename = f"driver_deliveries_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/stock/summary-export")
+async def export_stock_summary(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """Спец-звіт: зведена таблиця по культурах (склад, фермерське, власне)"""
+    cultures = session.exec(select(GrainCulture).order_by(GrainCulture.name)).all()
+    stocks = session.exec(select(GrainStock)).all()
+    stock_map = {s.culture_id: s for s in stocks}
+
+    all_owners = session.exec(select(GrainOwner)).all()
+    owner_map = {o.id: o for o in all_owners}
+
+    intake_farmer_totals = session.exec(
+        select(
+            GrainIntake.culture_id,
+            GrainIntake.owner_id,
+            func.sum(GrainIntake.accepted_weight_kg)
+        )
+        .where(
+            GrainIntake.is_own_grain == False,
+            GrainIntake.pending_quality == False
+        )
+        .group_by(GrainIntake.culture_id, GrainIntake.owner_id)
+    ).all()
+
+    deductions = session.exec(
+        select(
+            FarmerGrainDeduction.culture_id,
+            FarmerGrainDeduction.owner_id,
+            func.sum(FarmerGrainDeduction.quantity_kg)
+        )
+        .group_by(FarmerGrainDeduction.culture_id, FarmerGrainDeduction.owner_id)
+    ).all()
+    deduction_map = {}
+    for cid, oid, qty in deductions:
+        deduction_map[(cid, oid)] = float(qty or 0)
+
+    farmer_detail_by_culture = {}
+    for cid, oid, total_qty in intake_farmer_totals:
+        total = float(total_qty or 0) - deduction_map.get((cid, oid), 0)
+        if total <= 0:
+            continue
+        if cid not in farmer_detail_by_culture:
+            farmer_detail_by_culture[cid] = []
+        owner = owner_map.get(oid)
+        farmer_detail_by_culture[cid].append({
+            "owner_name": owner.full_name if owner else f"ID {oid}",
+            "quantity_kg": total
+        })
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Зведений звіт"
+
+    headers = ["Культура", "На складі, кг", "Власне, кг", "Не викуплено у фермерів, кг", "Забронировано, кг", "Ціна, грн/кг"]
+    sheet.append(headers)
+
+    header_fill = PatternFill("solid", fgColor="1F2937")
+    header_font = Font(color="FFFFFF", bold=True)
+    header_alignment = Alignment(horizontal="center", vertical="center")
+    thin_border = Border(
+        left=Side(style="thin", color="E5E7EB"),
+        right=Side(style="thin", color="E5E7EB"),
+        top=Side(style="thin", color="E5E7EB"),
+        bottom=Side(style="thin", color="E5E7EB"),
+    )
+    for col in range(1, len(headers) + 1):
+        cell = sheet.cell(row=1, column=col)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_alignment
+        cell.border = thin_border
+
+    alt_fill = PatternFill("solid", fgColor="F8FAFC")
+    total_stock = 0
+    total_own = 0
+    total_farmer = 0
+    total_reserved = 0
+
+    for culture in cultures:
+        s = stock_map.get(culture.id)
+        qty = s.quantity_kg if s else 0
+        own = s.own_quantity_kg if s else 0
+        farmer = s.farmer_quantity_kg if s else 0
+        reserved = s.reserved_kg if s else 0
+        total_stock += qty
+        total_own += own
+        total_farmer += farmer
+        total_reserved += reserved
+        sheet.append([
+            culture.name,
+            qty,
+            own,
+            farmer,
+            reserved,
+            culture.price_per_kg
+        ])
+
+    total_row = ["РАЗОМ", total_stock, total_own, total_farmer, total_reserved, ""]
+    sheet.append(total_row)
+    total_row_idx = sheet.max_row
+    total_fill = PatternFill("solid", fgColor="E2E8F0")
+    total_font = Font(bold=True)
+    for col in range(1, len(headers) + 1):
+        cell = sheet.cell(row=total_row_idx, column=col)
+        cell.fill = total_fill
+        cell.font = total_font
+        cell.border = thin_border
+        if col in (2, 3, 4, 5):
+            cell.number_format = "#,##0.00"
+
+    for row in range(2, total_row_idx):
+        row_fill = alt_fill if row % 2 == 0 else None
+        for col in range(1, len(headers) + 1):
+            cell = sheet.cell(row=row, column=col)
+            if row_fill:
+                cell.fill = row_fill
+            cell.border = thin_border
+            if col in (2, 3, 4, 5, 6):
+                cell.number_format = "#,##0.00"
+
+    detail_sheet = workbook.create_sheet("Деталі по фермерах")
+    detail_headers = ["Культура", "Фермер", "Не викуплено, кг"]
+    detail_sheet.append(detail_headers)
+    for col in range(1, len(detail_headers) + 1):
+        cell = detail_sheet.cell(row=1, column=col)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_alignment
+        cell.border = thin_border
+
+    for culture in cultures:
+        details = farmer_detail_by_culture.get(culture.id, [])
+        for d in sorted(details, key=lambda x: x["quantity_kg"], reverse=True):
+            detail_sheet.append([culture.name, d["owner_name"], d["quantity_kg"]])
+
+    for row in range(2, detail_sheet.max_row + 1):
+        row_fill = alt_fill if row % 2 == 0 else None
+        for col in range(1, len(detail_headers) + 1):
+            cell = detail_sheet.cell(row=row, column=col)
+            if row_fill:
+                cell.fill = row_fill
+            cell.border = thin_border
+            if col == 3:
+                cell.number_format = "#,##0.00"
+
+    detail_sheet.column_dimensions["A"].width = 20
+    detail_sheet.column_dimensions["B"].width = 30
+    detail_sheet.column_dimensions["C"].width = 20
+    detail_sheet.freeze_panes = "A2"
+    detail_sheet.auto_filter.ref = f"A1:C{detail_sheet.max_row}"
+
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = f"A1:F{sheet.max_row}"
+    sheet.column_dimensions["A"].width = 20
+    sheet.column_dimensions["B"].width = 18
+    sheet.column_dimensions["C"].width = 18
+    sheet.column_dimensions["D"].width = 28
+    sheet.column_dimensions["E"].width = 20
+    sheet.column_dimensions["F"].width = 16
+
+    buffer = BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    filename = f"stock_summary_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/stock/export")
 async def export_grain_stock(
     session: Session = Depends(get_session),
@@ -1777,8 +2790,31 @@ async def update_intake_quality(
     session.commit()
     session.refresh(intake)
 
+    culture = session.get(GrainCulture, intake.culture_id)
+    culture_name = culture.name if culture else "-"
+    owner_label = "Підприємство" if intake.is_own_grain else (intake.owner_full_name or "Фермер")
+
     if was_pending:
+        stock = _get_or_create_stock(session, intake.culture_id)
+        quantity_before = stock.quantity_kg
         _apply_stock_delta(session, intake.culture_id, new_accepted, intake.is_own_grain)
+        session.refresh(stock)
+        session.add(StockAdjustmentLog(
+            stock_type=StockAdjustmentType.GRAIN,
+            culture_id=intake.culture_id,
+            purchase_stock_id=None,
+            category=None,
+            item_name=culture_name,
+            transaction_type=TransactionType.ADD,
+            amount=new_accepted,
+            quantity_before=quantity_before,
+            quantity_after=stock.quantity_kg,
+            user_id=current_admin.id,
+            user_full_name=current_admin.full_name,
+            source="intake",
+            destination=owner_label,
+        ))
+        session.commit()
         if intake.is_internal_driver and intake.driver_id:
             _apply_driver_stat_delta(
                 session,
@@ -1793,7 +2829,27 @@ async def update_intake_quality(
     else:
         delta_accepted = new_accepted - old_accepted
         if abs(delta_accepted) > 0:
+            stock = _get_or_create_stock(session, intake.culture_id)
+            quantity_before = stock.quantity_kg
             _apply_stock_delta(session, intake.culture_id, delta_accepted, intake.is_own_grain)
+            session.refresh(stock)
+            is_add = delta_accepted > 0
+            session.add(StockAdjustmentLog(
+                stock_type=StockAdjustmentType.GRAIN,
+                culture_id=intake.culture_id,
+                purchase_stock_id=None,
+                category=None,
+                item_name=culture_name,
+                transaction_type=TransactionType.ADD if is_add else TransactionType.SUBTRACT,
+                amount=abs(delta_accepted),
+                quantity_before=quantity_before,
+                quantity_after=stock.quantity_kg,
+                user_id=current_admin.id,
+                user_full_name=current_admin.full_name,
+                source="intake",
+                destination=owner_label,
+            ))
+            session.commit()
             if intake.is_internal_driver and intake.driver_id:
                 _apply_driver_stat_delta(
                     session,
