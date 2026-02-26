@@ -3,9 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
     <title>Система обліку зерна - Дашборд</title>
     <link rel="icon" type="image/svg+xml" href="static/favicon.svg">
-    <link rel="stylesheet" href="static/css/style.css?v=171">
+    <link rel="stylesheet" href="static/css/style.css?v=173">
 </head>
 <body class="dashboard-page">
     <div class="dashboard-container">
@@ -103,6 +105,14 @@
                         <polyline points="9 22 9 12 15 12 15 22" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                     </svg>
                     <span class="nav-text">Орендодавці</span>
+                </a>
+                <a href="#" class="nav-item" data-page="fields">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="2" y="3" width="20" height="18" rx="2" stroke="currentColor" stroke-width="2"/>
+                        <path d="M2 9h20M9 9v12" stroke="currentColor" stroke-width="2"/>
+                        <path d="M5 6h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    <span class="nav-text">Поля</span>
                 </a>
                 <a href="#" class="nav-item" data-page="drivers">
                     <svg class="nav-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -474,6 +484,14 @@
                                 </select>
                             </div>
                             <div class="form-field">
+                                <label>Наш комбайн</label>
+                                <select id="intake-filter-combine">
+                                    <option value="">Всі</option>
+                                    <option value="yes">Так</option>
+                                    <option value="no">Ні</option>
+                                </select>
+                            </div>
+                            <div class="form-field">
                                 <label>Пошук</label>
                                 <input type="text" id="intake-filter-query" placeholder="Власник, культура, водій">
                             </div>
@@ -718,6 +736,123 @@
                     </div>
                 </section>
 
+
+                <!-- Fields Section -->
+                <section class="page-section hidden" id="section-fields">
+                    <div class="section-header"></div>
+                    <div class="fields-grid">
+                        <div class="card table-card">
+                            <div class="card-header">
+                                <div class="card-title">Поля</div>
+                                <div class="card-header-actions">
+                                    <button class="btn btn-secondary btn-small" id="fields-report-btn">Звіт</button>
+                                    <button class="btn btn-primary btn-small" id="field-add-btn">Додати поле</button>
+                                </div>
+                            </div>
+                            <div class="table-filters" id="fields-filters">
+                                <div class="form-field">
+                                    <label>Пошук</label>
+                                    <input type="text" id="fields-filter-search" placeholder="Назва поля або власник...">
+                                </div>
+                                <div class="form-field">
+                                    <label>Власник</label>
+                                    <select id="fields-filter-owner">
+                                        <option value="">Всі</option>
+                                        <option value="enterprise">Підприємство</option>
+                                        <option value="landlord">Орендодавці</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="table-wrapper">
+                                <table class="data-table" id="fields-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Назва поля</th>
+                                            <th>Власник</th>
+                                            <th>Контракт</th>
+                                            <th>Примітка</th>
+                                            <th>Дії</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="card table-card">
+                            <div class="card-header">
+                                <div class="card-title">Привезено з полів</div>
+                                <div class="card-header-actions">
+                                    <button class="btn btn-secondary btn-small" id="field-intakes-report-btn">Звіт</button>
+                                </div>
+                            </div>
+                            <div class="table-filters" id="field-intakes-filters">
+                                <div class="form-field">
+                                    <label>Поле</label>
+                                    <select id="field-intakes-filter-field">
+                                        <option value="">Всі поля</option>
+                                    </select>
+                                </div>
+                                <div class="form-field">
+                                    <label>Культура</label>
+                                    <select id="field-intakes-filter-culture">
+                                        <option value="">Всі культури</option>
+                                    </select>
+                                </div>
+                                <div class="form-field">
+                                    <label>Період</label>
+                                    <select id="field-intakes-filter-period">
+                                        <option value="all">За весь час</option>
+                                        <option value="today">Сьогодні</option>
+                                        <option value="week">Останні 7 днів</option>
+                                        <option value="month">Останні 30 днів</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="table-wrapper">
+                                <table class="data-table" id="field-intakes-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Поле</th>
+                                            <th>Культура</th>
+                                            <th>Прийнято, кг</th>
+                                            <th>Дата</th>
+                                            <th>Дії</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Field Add/Edit Modal -->
+                <div class="modal hidden" id="field-modal">
+                    <div class="modal-overlay"></div>
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h3 id="field-modal-title">Додати поле</h3>
+                            <button class="modal-close" id="field-modal-close" aria-label="Закрити">×</button>
+                        </div>
+                        <div class="modal-body">
+                            <form id="field-form">
+                                <input type="hidden" id="field-edit-id" value="">
+                                <div class="form-field full">
+                                    <label>Назва поля *</label>
+                                    <input type="text" id="field-name" required placeholder="Введіть назву поля">
+                                </div>
+                                <div class="form-field full">
+                                    <label>Примітка</label>
+                                    <input type="text" id="field-note" placeholder="Необов'язково">
+                                </div>
+                                <div class="form-actions full">
+                                    <button type="button" class="btn btn-secondary" id="field-modal-cancel">Скасувати</button>
+                                    <button type="submit" class="btn btn-primary">Зберегти</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- Drivers Section -->
                 <section class="page-section hidden" id="section-drivers">
@@ -1127,7 +1262,7 @@
                                         <tr>
                                             <th>Орендодавець</th>
                                             <th>Поле</th>
-                                            <th>Дата контракту</th>
+                                            <th>Період</th>
                                             <th>Статус</th>
                                             <th>Дії</th>
                                         </tr>
@@ -1412,9 +1547,21 @@
                     </div>
                     <div class="form-field inline">
                         <label class="pill-toggle">
+                            <input type="checkbox" id="edit-own-combine">
+                            <span>Наш комбайн</span>
+                        </label>
+                    </div>
+                    <div class="form-field inline">
+                        <label class="pill-toggle">
                             <input type="checkbox" id="edit-own-grain">
                             <span>Зерно підприємства</span>
                         </label>
+                    </div>
+                    <div class="form-field hidden" id="edit-field-wrap">
+                        <label>Поле (звідки привезли)</label>
+                        <select id="edit-field">
+                            <option value="">Оберіть поле</option>
+                        </select>
                     </div>
                     <div class="form-field">
                         <label>Власник зерна</label>
@@ -1494,8 +1641,16 @@
                         <div class="intake-view-value" id="view-trailer">-</div>
                     </div>
                     <div class="intake-view-item">
+                        <div class="intake-view-label">Наш комбайн</div>
+                        <div class="intake-view-value" id="view-own-combine">-</div>
+                    </div>
+                    <div class="intake-view-item">
                         <div class="intake-view-label">Зерно підприємства</div>
                         <div class="intake-view-value" id="view-own-grain">-</div>
+                    </div>
+                    <div class="intake-view-item hidden" id="view-field-wrap">
+                        <div class="intake-view-label">Поле (звідки привезли)</div>
+                        <div class="intake-view-value" id="view-field">-</div>
                     </div>
                     <div class="intake-view-item">
                         <div class="intake-view-label">Власник зерна</div>
@@ -1654,6 +1809,14 @@
                             <option value="all">Всі</option>
                             <option value="pending">Очікує %</option>
                             <option value="confirmed">Підтверджено</option>
+                        </select>
+                    </div>
+                    <div class="form-field">
+                        <label>Наш комбайн</label>
+                        <select id="intake-report-combine">
+                            <option value="">Всі</option>
+                            <option value="true">Так</option>
+                            <option value="false">Ні</option>
                         </select>
                     </div>
                 </div>
@@ -2671,23 +2834,26 @@
                     </div>
                 </div>
 
-                <!-- Payment type: currency/rate selection (only for payment) -->
+                <!-- Виплата грошима: валюта + курс (тільки для типу Виплата) -->
                 <div class="fc-payment-options hidden" id="fc-payment-options">
-                    <div class="form-grid report-grid" style="margin-bottom:8px;">
-                        <div class="form-field">
-                            <label>Валюта виплати</label>
-                            <select id="fc-payment-currency">
-                                <option value="UAH">UAH</option>
-                                <option value="USD">USD</option>
-                                <option value="EUR">EUR</option>
-                            </select>
-                        </div>
-                        <div class="form-field fc-rate-field hidden" id="fc-payment-rate-field">
-                            <label>Курс</label>
-                            <input type="number" id="fc-payment-rate" min="0" step="0.01" placeholder="Курс до UAH">
+                    <div class="fc-payment-money">
+                        <span class="fc-payment-money__label">Фермер отримає гроші:</span>
+                        <div class="fc-payment-money__controls">
+                            <div class="fc-payment-money__field">
+                                <label for="fc-payment-currency" class="fc-payment-money__field-label">Валюта</label>
+                                <select id="fc-payment-currency">
+                                    <option value="UAH">UAH</option>
+                                    <option value="USD">USD</option>
+                                    <option value="EUR">EUR</option>
+                                </select>
+                            </div>
+                            <div class="fc-payment-money__field fc-rate-field hidden" id="fc-payment-rate-field">
+                                <label for="fc-payment-rate" class="fc-payment-money__field-label">Курс до гривні</label>
+                                <input type="number" id="fc-payment-rate" min="0" step="0.01" placeholder="грн за 1">
+                            </div>
+                            <div class="fc-payment-money__equiv" id="fc-payment-equiv"></div>
                         </div>
                     </div>
-                    <div class="fcp-equiv" id="fc-payment-equiv"></div>
                 </div>
 
                 <!-- Від фермера (only for payment) -->
@@ -2810,7 +2976,7 @@
                             <div class="fcp-selected-item" id="fcp-issue-selected">—</div>
                         </div>
                         <div class="form-field">
-                            <label>Кількість</label>
+                            <label id="fcp-issue-qty-label">Кількість</label>
                             <input type="number" id="fcp-issue-qty" min="0" step="0.01" placeholder="0.00">
                         </div>
                     </div>
@@ -2865,6 +3031,7 @@
 
                 <!-- GRAIN: оплата зерном з балансу -->
                 <div class="fcp-section hidden" id="fcp-section-grain">
+                    <div class="fcp-grain-recommend" id="fcp-grain-recommend"></div>
                     <div class="fcp-grain-balance">
                         <div class="fcp-grain-balance__title">Баланс фермера</div>
                         <div class="fcp-grain-cards" id="fcp-grain-cards">
@@ -2920,6 +3087,10 @@
                                         <input type="checkbox" id="intake-trailer">
                                         <span>Є причіп</span>
                                     </label>
+                                    <label class="pill-toggle">
+                                        <input type="checkbox" id="intake-own-combine">
+                                        <span>Наш комбайн</span>
+                                    </label>
                                 </div>
                             </div>
                         </div>
@@ -2963,7 +3134,13 @@
                                 </div>
                             </div>
                             <div class="form-field full hidden" id="own-grain-note">
-                                <div class="muted">Обрано: зерно підприємства. Дані власника не потрібні.</div>
+                                <div class="muted">Обрано: зерно підприємства. Оберіть поле, з якого привезли.</div>
+                            </div>
+                            <div class="form-field full hidden" id="own-grain-field-wrap">
+                                <label>Поле (звідки привезли)</label>
+                                <select id="intake-field">
+                                    <option value="">Оберіть поле</option>
+                                </select>
                             </div>
 
                             <div class="form-field" id="internal-driver-block">
@@ -3151,16 +3328,17 @@
             <div class="modal-body">
                 <form id="landlord-form">
                     <div class="form-field full">
-                        <label>ПІБ</label>
-                        <input type="text" id="landlord-full-name" required>
+                        <label>ПІБ *</label>
+                        <input type="text" id="landlord-full-name" required placeholder="ПІБ орендодавця">
                     </div>
                     <div class="form-field full">
                         <label>Телефон</label>
                         <input type="text" id="landlord-phone" placeholder="+380...">
                     </div>
                     <div class="form-actions full">
+                        <button type="button" class="btn btn-secondary" id="landlord-modal-cancel">Скасувати</button>
                         <button type="submit" class="btn btn-primary">Зберегти</button>
-                        <div class="form-hint" id="landlord-message"></div>
+                        <div class="form-hint full" id="landlord-message"></div>
                     </div>
                 </form>
             </div>
@@ -3358,18 +3536,69 @@
         </div>
     </div>
 
+    <!-- Contract Renew Modal -->
+    <div class="modal hidden" id="contract-renew-modal">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-wide">
+            <div class="modal-header">
+                <h3>Перевипуск контракту</h3>
+                <button class="modal-close" id="contract-renew-close" aria-label="Закрити">×</button>
+            </div>
+            <div class="modal-body">
+                <div id="contract-renew-info" class="hint" style="margin-bottom:12px;"></div>
+                <div class="form-grid">
+                    <div class="form-field">
+                        <label>Дата початку нового контракту</label>
+                        <div class="date-field">
+                            <input type="text" id="contract-renew-date" class="date-input" placeholder="дд.мм.рррр" inputmode="numeric">
+                            <button type="button" class="date-picker-btn" id="contract-renew-date-btn" aria-label="Відкрити календар">
+                                <svg class="date-picker-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                    <path d="M16 3v4M8 3v4M3 11h18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </button>
+                            <input type="date" id="contract-renew-date-native" class="date-native">
+                        </div>
+                    </div>
+                    <div class="form-field">
+                        <label>Примітка</label>
+                        <input type="text" id="contract-renew-note" placeholder="Необов'язково">
+                    </div>
+                </div>
+                <h4 style="margin:16px 0 8px;">Позиції контракту</h4>
+                <table class="data-table" style="margin-bottom:8px;">
+                    <thead>
+                        <tr>
+                            <th>Культура</th>
+                            <th>Кількість, кг</th>
+                            <th>Ціна, грн/кг</th>
+                        </tr>
+                    </thead>
+                    <tbody id="contract-renew-items-tbody"></tbody>
+                </table>
+                <div id="contract-renew-message" class="form-message hidden"></div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" id="contract-renew-cancel">Скасувати</button>
+                <button class="btn btn-primary" id="contract-renew-submit">Перевипустити</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Reserve Activate Confirm Modal -->
     <div class="modal hidden" id="reserve-activate-modal">
         <div class="modal-overlay"></div>
-        <div class="modal-content" style="max-width:480px;">
-            <div class="modal-header">
+        <div class="modal-content reserve-activate-modal-content">
+            <div class="modal-header reserve-activate-header">
                 <h3>Активувати резерв</h3>
                 <button class="modal-close" id="reserve-activate-close" aria-label="Закрити">×</button>
             </div>
-            <div class="modal-body">
-                <p>Резервний контракт <strong id="reserve-activate-id"></strong> буде активований.</p>
-                <p>Він стане звичайним <strong>контрактом</strong> — по ньому можна буде реєструвати видачу товару та приймати виплати від фермера.</p>
-                <div class="form-actions full" style="margin-top:16px;">
+            <div class="modal-body reserve-activate-body">
+                <p class="reserve-activate-intro">Резервний контракт <strong id="reserve-activate-id"></strong> буде активований.</p>
+                <p class="reserve-activate-hint">Вкажіть ціну за кг для кожної позиції — від неї буде пораховано суму боргу.</p>
+                <div id="reserve-activate-items" class="reserve-activate-items"></div>
+                <p class="reserve-activate-note">Він стане звичайним контрактом — по ньому можна буде реєструвати видачу та приймати виплати.</p>
+                <div class="form-actions full reserve-activate-actions">
                     <button class="btn btn-secondary" id="reserve-activate-cancel">Скасувати</button>
                     <button class="btn btn-primary" id="reserve-activate-confirm">Активувати</button>
                 </div>
@@ -3417,6 +3646,7 @@
                         <div class="fc-detail-fin-label">Залишок</div>
                         <div class="fc-detail-fin-value" id="fc-detail-balance">0,00</div>
                         <div class="fc-detail-fin-unit">грн</div>
+                        <div class="fc-detail-hint hidden" id="fc-detail-balance-hint"></div>
                     </div>
                     <div class="fc-detail-fin-card fc-fin-currency">
                         <div class="fc-detail-fin-label">Валюта / Курс</div>
@@ -3829,7 +4059,7 @@
         </div>
     </div>
     
-    <script src="static/js/dashboard.js?v=128"></script>
+    <script src="static/js/dashboard.js?v=129"></script>
 </body>
 </html>
 

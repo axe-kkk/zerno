@@ -1281,6 +1281,8 @@ body {
 
 .intake-modal .modal-body {
     padding-top: 12px;
+    max-height: 70vh;
+    overflow-y: auto;
 }
 
 .intake-modal .form-section {
@@ -1364,6 +1366,14 @@ body {
     font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.4px;
+}
+
+#intake-create-modal .custom-select.open {
+    z-index: 10000;
+}
+
+#intake-create-modal .custom-options {
+    z-index: 10001 !important;
 }
 
 .intake-view-grid {
@@ -1450,6 +1460,18 @@ body {
 
 .pill-toggle input:focus + span {
     box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.15);
+}
+
+.intake-combine-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(59, 130, 246, 0.15);
+    color: var(--info);
+    margin-left: 6px;
+    vertical-align: middle;
 }
 
 .intake-chip {
@@ -2869,6 +2891,36 @@ body {
     overflow-x: hidden;
 }
 
+/* Секція Поля — дві таблиці по 50% висоти, динамічне масштабування */
+#section-fields {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+#section-fields .fields-grid {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+#section-fields .fields-grid > .table-card {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+#section-fields .fields-grid > .table-card .table-wrapper {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: auto;
+}
+
 /* Улучшенные стили для таблицы контрактов */
 #contracts-table {
     font-size: 13px;
@@ -3186,6 +3238,36 @@ body {
     background: rgba(245, 158, 11, 0.18) !important;
 }
 
+/* Поля з контракту оренди — виділення */
+.data-table tbody tr.field-from-lease td:first-child {
+    border-left: 3px solid var(--primary);
+    padding-left: calc(12px - 3px);
+}
+
+.data-table tbody tr.field-from-lease td {
+    background: rgba(34, 197, 94, 0.06) !important;
+}
+
+.data-table tbody tr.field-from-lease:hover td {
+    background: rgba(34, 197, 94, 0.12) !important;
+}
+
+.field-badge {
+    display: inline-flex;
+    align-items: center;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    margin-left: 8px;
+    vertical-align: middle;
+}
+
+.field-badge-lease {
+    background: var(--primary);
+    color: #fff;
+}
+
 #stock-adjustments-table th {
     background: #e8f5e9;
     color: #2e7d32;
@@ -3357,6 +3439,11 @@ body {
 .status-badge.muted {
     background: rgba(100, 116, 139, 0.12);
     color: #64748b;
+}
+
+.status-badge.warning {
+    background: rgba(245, 158, 11, 0.15);
+    color: #b45309;
 }
 
 .status-badge.status-closed {
@@ -3673,6 +3760,45 @@ body {
     z-index: 10001 !important;
 }
 
+/* Field add/edit modal */
+#field-modal .modal-body {
+    padding-top: 4px;
+}
+
+#field-modal .form-field.full + .form-field.full {
+    margin-top: 16px;
+}
+
+#field-modal .form-actions.full {
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    gap: 12px;
+}
+
+/* Landlord add/edit modal */
+#landlord-modal .modal-body {
+    padding-top: 4px;
+}
+
+#landlord-modal .form-field.full + .form-field.full {
+    margin-top: 16px;
+}
+
+#landlord-modal .form-actions.full {
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+#landlord-modal .form-hint.full {
+    width: 100%;
+    margin-top: 4px;
+    order: 10;
+}
+
 /* ===== Farmer Contract Modal ===== */
 
 #farmer-contract-modal .modal-body {
@@ -3732,7 +3858,7 @@ body {
     display: none;
 }
 
-/* Payment options section */
+/* Payment options section — компактний рядок "Фермер отримає гроші" */
 .fc-payment-options {
     margin-bottom: 16px;
 }
@@ -3741,7 +3867,116 @@ body {
     display: none;
 }
 
+.fc-payment-money {
+    display: flex;
+    align-items: flex-end;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 12px 14px;
+    background: var(--bg-secondary, #f5f5f5);
+    border-radius: 8px;
+    border: 1px solid var(--border-color, #e0e0e0);
+}
+
+.fc-payment-money__label {
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+}
+
+.fc-payment-money__controls {
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+    flex: 1;
+}
+
+.fc-payment-money__field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.fc-payment-money__field-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.fc-payment-money__field select {
+    min-width: 120px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    font-size: 14px;
+}
+
+.fc-payment-money__field input[type="number"] {
+    width: 100px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    font-size: 14px;
+}
+
+.fc-payment-money__equiv {
+    font-size: 13px;
+    color: var(--text-muted);
+    align-self: center;
+    margin-left: 8px;
+}
+
 .fc-rate-field.hidden {
+    display: none;
+}
+
+/* Рядок контракту: комірка позиції (селект або валюта+курс для Гроші) */
+.fc-item-pos-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.fc-item-pos-cell .farmer-contract-item-select.hidden {
+    display: none !important;
+}
+
+.fc-item-cash-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.fc-item-cash-wrap.hidden {
+    display: none !important;
+}
+
+.fc-item-cash-wrap .farmer-contract-item-currency {
+    min-width: 100px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    font-size: 13px;
+}
+
+.fc-item-cash-wrap .farmer-contract-item-rate {
+    width: 82px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    font-size: 13px;
+}
+
+.fc-item-cash-wrap .farmer-contract-item-rate.hidden {
+    display: none;
+}
+
+/* Для рядка "Гроші" — колонку "Ціна" не показуємо (курс лише в комірці валюти) */
+.fc-item.fc-item--cash {
+    grid-template-columns: 100px 1fr 90px 0 80px 28px;
+}
+.fc-item.fc-item--cash .farmer-contract-item-price {
     display: none;
 }
 
@@ -4220,6 +4455,76 @@ body {
 }
 
 /* Grain balance cards */
+.fcp-grain-recommend {
+    margin-bottom: 14px;
+}
+
+.fcp-grain-recommend__hint {
+    font-size: 13px;
+    color: var(--text-muted);
+    padding: 10px 12px;
+    background: var(--bg-secondary, #f5f5f5);
+    border-radius: 8px;
+    border-left: 3px solid var(--primary, #2563eb);
+}
+
+.fcp-grain-recommend__block {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    background: var(--bg-secondary, #f5f5f5);
+    border-radius: 8px;
+    border-left: 3px solid var(--primary, #2563eb);
+}
+
+.fcp-grain-recommend__text {
+    font-size: 13px;
+    color: var(--text-primary);
+    flex: 1;
+    min-width: 200px;
+}
+
+.fcp-grain-recommend__btn {
+    flex-shrink: 0;
+}
+
+.fcp-grain-recommend__intro {
+    font-size: 13px;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+    font-weight: 500;
+}
+
+.fcp-grain-recommend__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.fcp-grain-recommend__item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    background: var(--bg-secondary, #f5f5f5);
+    border-radius: 6px;
+    margin-bottom: 6px;
+    border-left: 3px solid var(--primary, #2563eb);
+}
+
+.fcp-grain-recommend__item:last-child {
+    margin-bottom: 0;
+}
+
+.fcp-grain-recommend__item-text {
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
 .fcp-grain-balance {
     margin-bottom: 4px;
 }
@@ -5236,6 +5541,16 @@ body {
     background: #94a3b8;
 }
 
+.balance-bar-overpaid {
+    background: linear-gradient(90deg, var(--primary), #3b82f6);
+}
+
+.balance-overpaid {
+    color: #2563eb;
+    font-weight: 600;
+    font-size: 12px;
+}
+
 .balance-item-footer {
     font-size: 12px;
     color: var(--text-secondary);
@@ -5243,6 +5558,13 @@ body {
 
 .balance-item-footer strong {
     color: var(--primary-dark);
+}
+
+.grain-pay-hint {
+    font-size: 11px;
+    color: #2563eb;
+    margin-top: 2px;
+    padding-left: 2px;
 }
 
 /* Карточки зерна в модалке выплаты */
@@ -5770,6 +6092,24 @@ body {
 .row-muted td {
     opacity: 0.55;
 }
+
+.fc-status-hint,
+.fc-balance-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.fc-detail-hint {
+    font-size: 12px;
+    color: var(--warning, #b45309);
+    margin-top: 4px;
+}
+
+.fc-detail-hint.hidden {
+    display: none;
+}
+
 .row-cancelled td {
     opacity: 0.45;
     text-decoration: line-through;
@@ -5876,4 +6216,170 @@ body {
     .vouchers-grid {
         grid-template-columns: 1fr;
     }
+}
+
+/* Reserve activate modal — красиві стилі */
+#reserve-activate-modal .reserve-activate-modal-content {
+    max-width: 520px;
+    padding: 0;
+    overflow: hidden;
+    border-top: 4px solid var(--primary);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
+}
+
+#reserve-activate-modal .reserve-activate-header {
+    padding: 20px 24px 18px;
+    margin-bottom: 0;
+    border-bottom: 1px solid var(--border-light);
+    background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-hover) 100%);
+}
+
+#reserve-activate-modal .reserve-activate-header h3 {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+}
+
+#reserve-activate-modal .reserve-activate-body {
+    padding: 24px 24px 28px;
+    margin-bottom: 0;
+}
+
+#reserve-activate-modal .reserve-activate-intro {
+    font-size: 15px;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+    line-height: 1.5;
+}
+
+#reserve-activate-modal .reserve-activate-intro strong {
+    color: var(--primary-dark);
+    font-weight: 700;
+}
+
+#reserve-activate-modal .reserve-activate-hint {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-bottom: 18px;
+    line-height: 1.5;
+}
+
+#reserve-activate-modal .reserve-activate-items {
+    margin: 0 0 18px;
+    background: var(--bg-hover);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    overflow: hidden;
+}
+
+#reserve-activate-modal .reserve-activate-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+#reserve-activate-modal .reserve-activate-table thead th {
+    background: linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%);
+    padding: 12px 16px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: none;
+    letter-spacing: 0.02em;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+#reserve-activate-modal .reserve-activate-table thead th:first-child {
+    width: 50%;
+}
+
+#reserve-activate-modal .reserve-activate-table thead th:nth-child(2) {
+    width: 28%;
+}
+
+#reserve-activate-modal .reserve-activate-table thead th:last-child {
+    width: 22%;
+}
+
+#reserve-activate-modal .reserve-activate-table tbody td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-light);
+    vertical-align: middle;
+    color: var(--text-primary);
+}
+
+#reserve-activate-modal .reserve-activate-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+#reserve-activate-modal .reserve-activate-table tbody td:first-child {
+    font-weight: 500;
+}
+
+#reserve-activate-modal .reserve-activate-table tbody td:nth-child(2) {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+#reserve-activate-modal .reserve-activate-table .reserve-activate-price {
+    width: 100%;
+    max-width: 120px;
+    padding: 10px 12px;
+    font-size: 14px;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+#reserve-activate-modal .reserve-activate-table .reserve-activate-price:hover {
+    border-color: var(--primary-light);
+}
+
+#reserve-activate-modal .reserve-activate-table .reserve-activate-price:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.15);
+}
+
+#reserve-activate-modal .reserve-activate-table .form-input.input-error {
+    border-color: var(--danger);
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.15);
+}
+
+#reserve-activate-modal .reserve-activate-note {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin: 0 0 24px;
+    line-height: 1.5;
+}
+
+#reserve-activate-modal .reserve-activate-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 0;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-light);
+}
+
+#reserve-activate-modal .reserve-activate-actions .btn {
+    min-width: 120px;
+    padding: 10px 20px;
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+}
+
+#reserve-activate-modal .reserve-activate-actions .btn-primary {
+    background: linear-gradient(180deg, var(--primary) 0%, var(--primary-dark) 100%);
+    box-shadow: var(--shadow-sm);
+}
+
+#reserve-activate-modal .reserve-activate-actions .btn-primary:hover {
+    background: linear-gradient(180deg, var(--primary-light) 0%, var(--primary) 100%);
+    box-shadow: 0 2px 8px rgba(34, 197, 94, 0.35);
 }

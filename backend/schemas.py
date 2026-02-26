@@ -221,6 +221,7 @@ class FarmerContractItemCreate(BaseModel):
     item_name: Optional[str] = None  # для резерву — назва позиції (може бути нова)
     quantity_kg: float
     price_per_kg: float
+    currency: Optional[str] = None  # для грошей (CASH): UAH, USD, EUR
 
 
 class FarmerContractCreate(BaseModel):
@@ -231,6 +232,15 @@ class FarmerContractCreate(BaseModel):
     exchange_rate: Optional[float] = None  # для payment
     farmer_items: list[FarmerContractItemCreate] = []
     company_items: list[FarmerContractItemCreate] = []
+
+
+class ReserveActivateItem(BaseModel):
+    contract_item_id: int
+    price_per_kg: float
+
+
+class ReserveActivateRequest(BaseModel):
+    items: list[ReserveActivateItem]  # ціна за кг для кожної позиції при активації
 
 
 class FarmerContractItemResponse(BaseModel):
@@ -244,6 +254,7 @@ class FarmerContractItemResponse(BaseModel):
     price_per_kg: float
     total_value_uah: float
     delivered_kg: float = 0.0
+    currency: Optional[str] = None  # для cash: UAH, USD, EUR
 
     class Config:
         from_attributes = True
@@ -304,8 +315,10 @@ class GrainIntakeCreate(BaseModel):
     culture_id: int = Field(..., description="Культура")
     vehicle_type_id: int = Field(..., description="Тип транспорту")
     has_trailer: bool = Field(False, description="Є причіп")
-    
+    is_own_combine: bool = Field(False, description="Наш комбайн")
+
     is_own_grain: bool = Field(False, description="Зерно підприємства")
+    field_id: Optional[int] = Field(None, description="ID поля (звідки привезли зерно підприємства)")
     owner_id: Optional[int] = Field(None, description="ID власника")
     owner_full_name: Optional[str] = Field(None, description="ПІБ власника")
     owner_phone: Optional[str] = Field(None, description="Телефон власника")
@@ -370,7 +383,9 @@ class GrainIntakeResponse(BaseModel):
     culture_id: int
     vehicle_type_id: int
     has_trailer: bool
+    is_own_combine: bool
     is_own_grain: bool
+    field_id: Optional[int]
     owner_id: Optional[int]
     owner_full_name: Optional[str]
     owner_phone: Optional[str]
@@ -474,7 +489,9 @@ class GrainIntakeUpdateRequest(BaseModel):
     culture_id: Optional[int] = None
     vehicle_type_id: Optional[int] = None
     has_trailer: Optional[bool] = None
+    is_own_combine: Optional[bool] = None
     is_own_grain: Optional[bool] = None
+    field_id: Optional[int] = None
     owner_id: Optional[int] = None
     owner_full_name: Optional[str] = None
     owner_phone: Optional[str] = None
@@ -503,6 +520,27 @@ class DriverStatResponse(BaseModel):
 
 
 # Схемы для орендодавців
+
+class AgriFieldCreate(BaseModel):
+    """Схема створення поля"""
+    name: str = Field(..., description="Назва поля")
+    note: Optional[str] = Field(None, description="Примітка")
+
+
+class AgriFieldResponse(BaseModel):
+    """Схема відповіді для поля"""
+    id: int
+    name: str
+    owner_name: str
+    landlord_id: Optional[int] = None
+    lease_contract_id: Optional[int] = None
+    note: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
 
 class LandlordCreate(BaseModel):
     """Схема створення орендодавця"""
@@ -566,13 +604,23 @@ class LeaseContractResponse(BaseModel):
     field_name: str
     contract_items: list[LeaseContractItemResponse]
     contract_date: datetime
+    end_date: Optional[datetime] = None
+    parent_contract_id: Optional[int] = None
     is_active: bool
+    is_expired: bool = False
     note: Optional[str]
     created_at: datetime
     updated_at: Optional[datetime]
 
     class Config:
         from_attributes = True
+
+
+class LeaseContractRenewRequest(BaseModel):
+    """Схема перевипуску контракту"""
+    contract_date: datetime = Field(..., description="Дата початку нового контракту")
+    contract_items: list[LeaseContractItemCreate] = Field(..., min_length=1, description="Позиції нового контракту")
+    note: Optional[str] = Field(None, description="Примітка")
 
 
 class LeaseContractUpdate(BaseModel):

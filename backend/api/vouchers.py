@@ -161,21 +161,15 @@ async def create_voucher_payment(
             detail=f"Сума перевищує загальний залишок боргу ({total_remaining_uah:.2f} грн)"
         )
 
-    # Deduct from cash register
+    # Знімаємо з каси (дозволяємо касі йти в мінус при виплаті по боргу талонів)
     cash = get_or_create_cash_register(session)
     currency_enum = Currency(data.currency)
 
     if currency_enum == Currency.UAH:
-        if cash.uah_balance < data.amount - 0.01:
-            raise HTTPException(status_code=400, detail="Недостатньо коштів у касі (UAH)")
         cash.uah_balance -= data.amount
     elif currency_enum == Currency.USD:
-        if cash.usd_balance < data.amount - 0.01:
-            raise HTTPException(status_code=400, detail="Недостатньо коштів у касі (USD)")
         cash.usd_balance -= data.amount
     elif currency_enum == Currency.EUR:
-        if cash.eur_balance < data.amount - 0.01:
-            raise HTTPException(status_code=400, detail="Недостатньо коштів у касі (EUR)")
         cash.eur_balance -= data.amount
 
     session.add(cash)

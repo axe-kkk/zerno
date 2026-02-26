@@ -21,6 +21,7 @@ from backend.models import (
     StockAdjustmentType,
     Currency,
     TransactionType,
+    AgriField,
     User
 )
 from backend.schemas import (
@@ -32,6 +33,7 @@ from backend.schemas import (
     LeaseContractUpdate,
     LeaseContractItemCreate,
     LeaseContractItemResponse,
+    LeaseContractRenewRequest,
     LeasePaymentCreate,
     LeasePaymentResponse,
     LeasePaymentGrainItemResponse
@@ -42,6 +44,23 @@ router = APIRouter()
 
 
 # ===== Helpers =====
+
+def add_one_year(dt):
+    """Додати 1 рік до дати"""
+    d = dt.date() if isinstance(dt, datetime) else dt
+    try:
+        return d.replace(year=d.year + 1)
+    except ValueError:
+        return d.replace(year=d.year + 1, day=28)
+
+
+def is_contract_expired(contract):
+    """Чи завершився контракт"""
+    if not contract.end_date:
+        return False
+    end = contract.end_date.date() if isinstance(contract.end_date, datetime) else contract.end_date
+    return date.today() >= end
+
 
 def get_current_lease_period(contract_date):
     """Визначити поточний орендний рік за датою контракту"""
@@ -230,6 +249,7 @@ async def list_contracts(
         
         contract_dict = contract.model_dump()
         contract_dict["contract_items"] = items_list
+        contract_dict["is_expired"] = is_contract_expired(contract)
         result.append(LeaseContractResponse(**contract_dict))
     
     return result
@@ -271,17 +291,37 @@ async def create_contract(
                 detail=f"Культуру з ID {item.culture_id} не знайдено"
             )
     
+    end = add_one_year(payload.contract_date)
     contract = LeaseContract(
         landlord_id=payload.landlord_id,
         landlord_full_name=landlord.full_name,
         field_name=field_name,
         contract_date=payload.contract_date,
+        end_date=datetime.combine(end, dtime.min),
         is_active=payload.is_active,
         note=payload.note
     )
     session.add(contract)
-    session.flush()  # Получаем ID контракта
-    
+    session.flush()
+
+    existing_field = session.exec(
+        select(AgriField).where(
+            AgriField.name == field_name,
+            AgriField.landlord_id == payload.landlord_id
+        )
+    ).first()
+    if not existing_field:
+        agri_field = AgriField(
+            name=field_name,
+            owner_name=landlord.full_name,
+            landlord_id=payload.landlord_id,
+            lease_contract_id=contract.id
+        )
+        session.add(agri_field)
+    else:
+        existing_field.lease_contract_id = contract.id
+        session.add(existing_field)
+
     # Создаем позиции контракта
     for item in payload.contract_items:
         contract_item = LeaseContractItem(
@@ -310,6 +350,7 @@ async def create_contract(
     
     contract_dict = contract.model_dump()
     contract_dict["contract_items"] = items_list
+    contract_dict["is_expired"] = is_contract_expired(contract)
     return LeaseContractResponse(**contract_dict)
 
 
@@ -389,13 +430,89 @@ async def delete_contract(
     return contract
 
 
+@router.post("/contracts/{contract_id}/renew", response_model=LeaseContractResponse)
+async def renew_contract(
+    contract_id: int,
+    payload: LeaseContractRenewRequest,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """Перевипуск контракту оренди на новий рік"""
+    old_contract = session.get(LeaseContract, contract_id)
+    if not old_contract:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Контракт не знайдено"
+        )
+
+    landlord = session.get(Landlord, old_contract.landlord_id)
+    if not landlord:
+        raise HTTPException(status_code=404, detail="Орендодавця не знайдено")
+
+    for item in payload.contract_items:
+        culture = session.get(GrainCulture, item.culture_id)
+        if not culture:
+            raise HTTPException(status_code=404, detail=f"Культуру з ID {item.culture_id} не знайдено")
+
+    old_contract.is_active = False
+    old_contract.updated_at = datetime.utcnow()
+    session.add(old_contract)
+
+    end = add_one_year(payload.contract_date)
+    new_contract = LeaseContract(
+        landlord_id=old_contract.landlord_id,
+        landlord_full_name=landlord.full_name,
+        field_name=old_contract.field_name,
+        contract_date=payload.contract_date,
+        end_date=datetime.combine(end, dtime.min),
+        parent_contract_id=old_contract.id,
+        is_active=True,
+        note=payload.note
+    )
+    session.add(new_contract)
+    session.flush()
+
+    agri_field = session.exec(
+        select(AgriField).where(AgriField.lease_contract_id == old_contract.id)
+    ).first()
+    if agri_field:
+        agri_field.lease_contract_id = new_contract.id
+        session.add(agri_field)
+
+    for item in payload.contract_items:
+        session.add(LeaseContractItem(
+            contract_id=new_contract.id,
+            culture_id=item.culture_id,
+            quantity_kg=item.quantity_kg,
+            price_per_kg_uah=item.price_per_kg_uah
+        ))
+
+    session.commit()
+    session.refresh(new_contract)
+
+    items = session.exec(
+        select(LeaseContractItem).where(LeaseContractItem.contract_id == new_contract.id)
+    ).all()
+    items_list = []
+    for item in items:
+        culture = session.get(GrainCulture, item.culture_id)
+        item_dict = item.model_dump()
+        item_dict["culture_name"] = culture.name if culture else None
+        items_list.append(LeaseContractItemResponse(**item_dict))
+
+    contract_dict = new_contract.model_dump()
+    contract_dict["contract_items"] = items_list
+    contract_dict["is_expired"] = False
+    return LeaseContractResponse(**contract_dict)
+
+
 @router.get("/contracts/{contract_id}/balance")
 async def get_contract_balance(
     contract_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
-    """Залишок виплат по контракту за поточний орендний рік"""
+    """Залишок виплат по контракту"""
     contract = session.get(LeaseContract, contract_id)
     if not contract:
         raise HTTPException(
@@ -403,7 +520,13 @@ async def get_contract_balance(
             detail="Контракт не знайдено"
         )
 
-    period_start, period_end, period_num = get_current_lease_period(contract.contract_date)
+    cd = contract.contract_date
+    period_start = cd.date() if isinstance(cd, datetime) else cd
+    if contract.end_date:
+        ed = contract.end_date
+        period_end = ed.date() if isinstance(ed, datetime) else ed
+    else:
+        period_end = add_one_year(period_start)
 
     contract_items = session.exec(
         select(LeaseContractItem).where(
@@ -430,13 +553,15 @@ async def get_contract_balance(
             "remaining_cash_uah": round(remaining * ci.price_per_kg_uah, 2)
         })
 
+    expired = is_contract_expired(contract)
+
     return {
         "contract_id": contract_id,
         "landlord_full_name": contract.landlord_full_name,
         "field_name": contract.field_name,
         "period_start": period_start.isoformat(),
         "period_end": period_end.isoformat(),
-        "period_number": period_num,
+        "is_expired": expired,
         "items": items
     }
 
@@ -792,8 +917,19 @@ async def create_payment(
                 detail="Для виплати грошима вкажіть суму"
             )
 
-    # Получаем остатки по культурам за текущий период
-    period_start, period_end, _ = get_current_lease_period(contract.contract_date)
+    if is_contract_expired(contract):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Контракт завершений. Перевипустіть контракт для нових виплат."
+        )
+
+    cd = contract.contract_date
+    period_start = cd.date() if isinstance(cd, datetime) else cd
+    if contract.end_date:
+        ed = contract.end_date
+        period_end = ed.date() if isinstance(ed, datetime) else ed
+    else:
+        period_end = add_one_year(period_start)
     paid_per_culture = get_paid_per_culture(
         payload.contract_id, period_start, period_end, session
     )
@@ -805,7 +941,6 @@ async def create_payment(
     ).all()
     contract_items_map = {ci.culture_id: ci for ci in contract_items}
 
-    # Валидация каждой позиции
     for item in payload.grain_items:
         culture = session.get(GrainCulture, item.culture_id)
         if not culture:
@@ -823,7 +958,6 @@ async def create_payment(
 
         paid = paid_per_culture.get(item.culture_id, 0)
         remaining = max(0, ci.quantity_kg - paid)
-
         if item.quantity_kg > remaining + 0.01:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -904,18 +1038,10 @@ async def create_payment(
             )
         currency_str = payload.currency or "UAH"
         balance_field_map = {"UAH": "uah_balance", "USD": "usd_balance", "EUR": "eur_balance"}
-        currency_label_map = {"UAH": "UAH (гривня)", "USD": "USD (долар)", "EUR": "EUR (євро)"}
         balance_field = balance_field_map.get(currency_str, "uah_balance")
         current_balance = getattr(cash_register, balance_field)
         new_balance = current_balance - payload.amount
-
-        if new_balance < 0:
-            label = currency_label_map.get(currency_str, currency_str)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Недостатньо коштів у касі. Баланс {label}: {current_balance:.2f}"
-            )
-
+        # Дозволяємо касу в мінус при виплаті за контракт оренди
         setattr(cash_register, balance_field, new_balance)
         cash_register.updated_at = datetime.utcnow()
         session.add(cash_register)

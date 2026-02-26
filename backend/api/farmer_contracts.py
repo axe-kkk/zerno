@@ -37,11 +37,31 @@ from backend.schemas import (
     FarmerContractDetailResponse,
     FarmerContractItemResponse,
     FarmerContractPaymentCreate,
-    FarmerContractPaymentResponse
+    FarmerContractPaymentResponse,
+    ReserveActivateRequest,
 )
 from backend.auth import get_current_user
 
 router = APIRouter()
+
+# Типи виплат, що зменшують залишок боргу
+_BALANCE_REDUCING_PAYMENT_TYPES = (
+    FarmerContractPaymentType.CASH.value,
+    FarmerContractPaymentType.GRAIN.value,
+    FarmerContractPaymentType.VOUCHER.value,
+)
+
+
+def _compute_contract_balance_uah(session: Session, contract_id: int, total_value_uah: float) -> float:
+    """Залишок боргу = сума контракту мінус сума виплат (гроші, зерно, талони). Коректно для контрактів, створених до включення талонів у борг."""
+    payments = session.exec(
+        select(FarmerContractPayment).where(
+            FarmerContractPayment.contract_id == contract_id,
+            FarmerContractPayment.payment_type.in_(_BALANCE_REDUCING_PAYMENT_TYPES),
+        )
+    ).all()
+    paid = sum(p.amount_uah or 0 for p in payments)
+    return max(0.0, (total_value_uah or 0) - paid)
 
 
 def _get_or_create_grain_stock(session: Session, culture_id: int) -> GrainStock:
@@ -86,6 +106,54 @@ def _get_farmer_balance(session: Session, owner_id: int, culture_id: int) -> flo
     return float(total) - float(deductions)
 
 
+def _normalize_name_for_match(name: str) -> str:
+    """Канонічна назва для зіставлення: однакове написання кирилицею/латиницею (С/С, А/а тощо)."""
+    import re
+    if not name:
+        return ""
+    s = re.sub(r"\s+", " ", name.strip()).lower()
+    # Кириличні літери-близнюки замінюємо на латинські, щоб "Сульфат Амонію" = "Cульфат амонію"
+    cyr_to_lat = {
+        "а": "a", "в": "v", "с": "c", "е": "e", "о": "o", "р": "p", "у": "y", "х": "x",
+        "і": "i", "ї": "i", "є": "e", "и": "y", "н": "n", "т": "t", "м": "m", "л": "l",
+        "ф": "f", "ю": "u", "я": "a", "б": "b", "г": "g", "д": "d", "ж": "zh", "з": "z",
+        "к": "k", "п": "p", "ч": "ch", "ш": "sh", "щ": "shch", "ь": "", "’": "",
+    }
+    result = []
+    for c in s:
+        result.append(cyr_to_lat.get(c, c))
+    return "".join(result)
+
+
+def _find_purchase_stock_for_activation(
+    session: Session, item: FarmerContractItem
+) -> Optional[PurchaseStock]:
+    """Для активації резерву: знайти складську позицію по item (за id або за назвою з урахуванням різного написання)."""
+    # 1) Якщо є привʼязка і на тому складі вистачає — повертаємо її
+    if item.purchase_stock_id:
+        pstock = session.get(PurchaseStock, item.purchase_stock_id)
+        if pstock:
+            need = item.quantity_kg
+            available = pstock.quantity_kg - (pstock.reserved_kg - (item.quantity_kg if pstock.id == item.purchase_stock_id else 0))
+            if available >= need - 0.01:
+                return pstock
+    # 2) Шукаємо будь-яку позицію з такою ж назвою (нормалізованою) і з достатньою кількістю
+    item_name = (item.item_name or "").strip()
+    if not item_name:
+        return session.get(PurchaseStock, item.purchase_stock_id) if item.purchase_stock_id else None
+    key = _normalize_name_for_match(item_name)
+    all_stocks = session.exec(select(PurchaseStock)).all()
+    for s in all_stocks:
+        if _normalize_name_for_match(s.name) != key:
+            continue
+        available = s.quantity_kg - s.reserved_kg
+        if s.id == item.purchase_stock_id:
+            available += item.quantity_kg
+        if available >= item.quantity_kg - 0.01:
+            return s
+    return session.get(PurchaseStock, item.purchase_stock_id) if item.purchase_stock_id else None
+
+
 def _find_or_create_purchase_stock_by_name(session: Session, name: str, category: str = "fertilizer") -> PurchaseStock:
     """Для резерву: шукаємо за назвою, якщо немає — створюємо з 0 кількістю."""
     import re
@@ -121,7 +189,26 @@ async def list_farmer_contracts(
         query = query.where(FarmerContract.owner_id == owner_id)
     if status_filter:
         query = query.where(FarmerContract.status == status_filter.value)
-    return session.exec(query).all()
+    contracts = session.exec(query).all()
+    if not contracts:
+        return []
+    # Залишок боргу рахуємо з виплат (коректно для контрактів лише з талонами)
+    contract_ids = [c.id for c in contracts]
+    payments = session.exec(
+        select(FarmerContractPayment).where(
+            FarmerContractPayment.contract_id.in_(contract_ids),
+            FarmerContractPayment.payment_type.in_(_BALANCE_REDUCING_PAYMENT_TYPES),
+        )
+    ).all()
+    paid_by_id = {}
+    for p in payments:
+        paid_by_id[p.contract_id] = paid_by_id.get(p.contract_id, 0) + (p.amount_uah or 0)
+    return [
+        FarmerContractResponse(
+            **{**(c.model_dump() if hasattr(c, "model_dump") else c.dict()), "balance_uah": max(0.0, (c.total_value_uah or 0) - paid_by_id.get(c.id, 0))}
+        )
+        for c in contracts
+    ]
 
 
 @router.get("/payments", response_model=list[FarmerContractPaymentResponse])
@@ -562,8 +649,12 @@ async def get_farmer_contract(
     items = session.exec(
         select(FarmerContractItem).where(FarmerContractItem.contract_id == contract_id)
     ).all()
+    # Залишок боргу рахуємо з виплат (коректно для старих контрактів, де талони не входили в balance_uah)
+    balance_uah = _compute_contract_balance_uah(session, contract_id, contract.total_value_uah)
+    data = contract.model_dump() if hasattr(contract, "model_dump") else contract.dict()
+    data["balance_uah"] = balance_uah
     return FarmerContractDetailResponse(
-        **contract.dict(),
+        **data,
         items=[FarmerContractItemResponse.from_orm(item) for item in items]
     )
 
@@ -708,10 +799,8 @@ async def create_farmer_contract(
         for ci in payload.company_items:
             if ci.quantity_kg <= 0:
                 raise HTTPException(status_code=400, detail="Кількість має бути більше 0")
-            if ci.price_per_kg <= 0:
-                raise HTTPException(status_code=400, detail="Вкажіть ціну резерву")
-
-            price = ci.price_per_kg
+            # Ціна при резерві не вказується — буде вказана при активації
+            price = ci.price_per_kg if (ci.price_per_kg and ci.price_per_kg > 0) else 0.0
             purchase_stock_id = ci.purchase_stock_id
             culture_id = ci.culture_id
 
@@ -808,9 +897,10 @@ async def create_farmer_contract(
             item_name = culture.name
             if direction == FarmerContractItemDirection.FROM_COMPANY:
                 stock = _get_or_create_grain_stock(session, item.culture_id)
-                available = stock.own_quantity_kg - stock.reserved_kg
+                # Дозволяємо контракт на всю наявну кількість на складі (в т.ч. невикуплене зерно фермерів)
+                available = stock.quantity_kg - stock.reserved_kg
                 if item.quantity_kg > available + 0.01:
-                    raise HTTPException(status_code=400, detail=f"Недостатньо доступного зерна {culture.name}. Доступно: {available:.2f}")
+                    raise HTTPException(status_code=400, detail=f"Недостатньо зерна {culture.name} на складі. Доступно: {available:.2f}")
                 stock.reserved_kg += item.quantity_kg
             else:
                 available = _get_farmer_balance(session, payload.owner_id, item.culture_id)
@@ -841,10 +931,14 @@ async def create_farmer_contract(
             item_name = f"Талон: {culture.name}"
             # Талон не резервує фізичне зерно на складі
         else:
+            # Гроші: price_per_kg = курс (1 для UAH)
+            currency_str = getattr(item, "currency", None) or "UAH"
             price = item.price_per_kg or 1.0
+            if currency_str != "UAH" and (not price or price <= 0):
+                raise HTTPException(status_code=400, detail="Вкажіть курс валюти до гривні")
             item_name = "Готівка"
 
-        items_to_create.append(FarmerContractItem(
+        item_kw = dict(
             contract_id=0,
             direction=direction.value if hasattr(direction, 'value') else direction,
             item_type=item.item_type.value if hasattr(item.item_type, 'value') else item.item_type,
@@ -853,31 +947,29 @@ async def create_farmer_contract(
             item_name=item_name,
             quantity_kg=item.quantity_kg,
             price_per_kg=price,
-            total_value_uah=item.quantity_kg * price
-        ))
+            total_value_uah=item.quantity_kg * price,
+        )
+        if getattr(item, "item_type", None) == FarmerContractItemType.CASH or (
+            hasattr(item.item_type, "value") and item.item_type.value == "cash"
+        ):
+            item_kw["currency"] = getattr(item, "currency", None) or "UAH"
+        items_to_create.append(FarmerContractItem(**item_kw))
         return item.quantity_kg * price
-
-    voucher_total = 0.0  # Сума талонних позицій (обліковуються окремо)
 
     for item in payload.company_items:
         item_value = build_item(item, FarmerContractItemDirection.FROM_COMPANY)
         company_total += item_value
-        # Талонні позиції не входять у balance_uah контракту
-        item_type = item.item_type.value if hasattr(item.item_type, 'value') else item.item_type
-        if item_type == FarmerContractItemType.VOUCHER.value:
-            voucher_total += item_value
 
     for item in payload.farmer_items:
         farmer_total += build_item(item, FarmerContractItemDirection.FROM_FARMER)
 
-    # balance_uah = (сума від компанії БЕЗ талонів) - (сума від фермера)
-    non_voucher_company = company_total - voucher_total
+    # Залишок боргу = сума від компанії (включно з талонами) мінус сума від фермера
     contract = FarmerContract(
         owner_id=payload.owner_id,
         contract_type=payload.contract_type.value if hasattr(payload.contract_type, 'value') else payload.contract_type,
         status=FarmerContractStatus.OPEN.value,
         total_value_uah=company_total,
-        balance_uah=max(non_voucher_company - farmer_total, 0.0),
+        balance_uah=max(company_total - farmer_total, 0.0),
         note=payload.note,
         created_by_user_id=current_user.id
     )
@@ -900,10 +992,11 @@ async def create_farmer_contract(
 @router.post("/{contract_id}/activate", response_model=FarmerContractResponse)
 async def activate_reserve_contract(
     contract_id: int,
+    payload: Optional[ReserveActivateRequest] = None,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
-    """Активувати резервний контракт → перетворити в борговий"""
+    """Активувати резервний контракт → перетворити в борговий. Ціни позицій вказуються в payload (при створенні резерву ціна не вказувалась)."""
     contract = session.get(FarmerContract, contract_id)
     if not contract:
         raise HTTPException(status_code=404, detail="Контракт не знайдено")
@@ -912,31 +1005,80 @@ async def activate_reserve_contract(
     if contract.status != FarmerContractStatus.PENDING.value:
         raise HTTPException(status_code=400, detail="Контракт не в стані очікування")
 
-    # Перевіряємо, чи є достатньо товару на складі
     items = session.exec(
         select(FarmerContractItem).where(FarmerContractItem.contract_id == contract_id)
     ).all()
+    if not items:
+        raise HTTPException(status_code=400, detail="Контракт без позицій")
+
+    # Перевіряємо наявність на складі (враховуємо всю кількість, в т.ч. невикуплене зерно)
     for item in items:
         if item.item_type == FarmerContractItemType.GRAIN.value and item.culture_id:
             stock = _get_or_create_grain_stock(session, item.culture_id)
-            available = stock.own_quantity_kg - (stock.reserved_kg - item.quantity_kg)
+            available = stock.quantity_kg - (stock.reserved_kg - item.quantity_kg)
             if item.quantity_kg > available + 0.01:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Недостатньо {item.item_name} на складі для активації. Потрібно: {item.quantity_kg:.2f}, доступно: {available:.2f}"
                 )
+        elif item.item_type == FarmerContractItemType.PURCHASE.value:
+            pstock = _find_purchase_stock_for_activation(session, item)
+            if not pstock:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Позицію «{item.item_name}» не знайдено на складі або недостатньо кількості для активації"
+                )
+            available = pstock.quantity_kg - pstock.reserved_kg
+            if pstock.id == item.purchase_stock_id:
+                available += item.quantity_kg
+            if item.quantity_kg > available + 0.01:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Недостатньо {item.item_name} на складі для активації. Потрібно: {item.quantity_kg:.2f}, доступно: {available:.2f}"
+                )
+            # Привʼязуємо позицію до того складу, де є товар (назва може відрізнятися написанням)
+            if pstock.id != item.purchase_stock_id:
+                old_id = item.purchase_stock_id
+                item.purchase_stock_id = pstock.id
+                item.item_name = pstock.name
+                session.add(item)
+                if old_id:
+                    old_stock = session.get(PurchaseStock, old_id)
+                    if old_stock:
+                        old_stock.reserved_kg = max(0.0, old_stock.reserved_kg - item.quantity_kg)
+                        session.add(old_stock)
+                pstock.reserved_kg += item.quantity_kg
+                session.add(pstock)
+
+    # Оновлюємо ціни позицій і рахуємо суму контракту
+    price_by_id = {}
+    if payload and payload.items:
+        for p in payload.items:
+            if p.price_per_kg < 0:
+                raise HTTPException(status_code=400, detail=f"Ціна для позиції {p.contract_item_id} не може бути від'ємною")
+            price_by_id[p.contract_item_id] = p.price_per_kg
+
+    company_total = 0.0
+    for item in items:
+        if item.id in price_by_id:
+            price = price_by_id[item.id]
+        elif item.item_type == FarmerContractItemType.GRAIN.value and item.culture_id:
+            culture = session.get(GrainCulture, item.culture_id)
+            price = culture.price_per_kg if culture else 0.0
         elif item.item_type == FarmerContractItemType.PURCHASE.value and item.purchase_stock_id:
             pstock = session.get(PurchaseStock, item.purchase_stock_id)
-            if pstock:
-                available = pstock.quantity_kg - (pstock.reserved_kg - item.quantity_kg)
-                if item.quantity_kg > available + 0.01:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Недостатньо {item.item_name} на складі для активації. Потрібно: {item.quantity_kg:.2f}, доступно: {available:.2f}"
-                    )
+            price = pstock.sale_price_per_kg if pstock else 0.0
+        else:
+            price = item.price_per_kg or 0.0
+        item.price_per_kg = price
+        item.total_value_uah = item.quantity_kg * price
+        company_total += item.total_value_uah
+        session.add(item)
 
     contract.contract_type = FarmerContractType.DEBT.value
     contract.status = FarmerContractStatus.OPEN.value
+    contract.total_value_uah = company_total
+    contract.balance_uah = company_total
     contract.was_reserve = True
     contract.note = (contract.note or "") + " [Активовано з резерву]"
     session.add(contract)
@@ -1004,10 +1146,8 @@ async def list_farmer_contract_payments(
 def _check_contract_completion(session: Session, contract: FarmerContract):
     """Перевірити чи контракт повністю виконаний.
     Контракт закривається коли:
-    - balance_uah <= 0 (всі грошові зобов'язання виконані)
-    - всі НЕталонні позиції видані/прийняті
-    Талонні позиції НЕ враховуються при закритті контракту —
-    вони обробляються окремо через «Хлібний завод».
+    - balance_uah <= 0 (включно з талонами)
+    - всі позиції (в т.ч. талонні) видані/прийняті за потреби
     """
     if contract.balance_uah > 0.01:
         return  # Ще є борг
@@ -1020,10 +1160,10 @@ def _check_contract_completion(session: Session, contract: FarmerContract):
         contract.status = FarmerContractStatus.CLOSED.value
         return
 
-    # Перевіряємо тільки НЕталонні позиції
     non_voucher_items = [i for i in items if i.item_type != FarmerContractItemType.VOUCHER.value]
     if not non_voucher_items:
-        # Контракт тільки з талонами — не закриваємо автоматично
+        # Контракт тільки з талонами; борг уже 0 — закриваємо
+        contract.status = FarmerContractStatus.CLOSED.value
         return
 
     all_delivered = all(item.delivered_kg >= item.quantity_kg - 0.01 for item in non_voucher_items)
@@ -1085,10 +1225,19 @@ async def create_farmer_contract_payment(
                 session.add(pstock)
         elif item.item_type == FarmerContractItemType.CASH.value:
             cash_register = _get_cash_register(session)
-            cash_register.uah_balance -= payload.quantity_kg
+            currency_str = getattr(item, "currency", None) or "UAH"
+            try:
+                currency_enum = Currency(currency_str)
+            except ValueError:
+                currency_enum = Currency.UAH
+            balance_field_map = {Currency.UAH: "uah_balance", Currency.USD: "usd_balance", Currency.EUR: "eur_balance"}
+            field = balance_field_map[currency_enum]
+            current_bal = getattr(cash_register, field)
+            # Дозволяємо касі йти в мінус при виплаті
+            setattr(cash_register, field, current_bal - payload.quantity_kg)
             session.add(cash_register)
             session.add(Transaction(
-                currency=Currency.UAH,
+                currency=currency_enum,
                 amount=payload.quantity_kg,
                 transaction_type=TransactionType.SUBTRACT,
                 user_id=current_user.id,
@@ -1101,13 +1250,23 @@ async def create_farmer_contract_payment(
         item.delivered_kg += payload.quantity_kg
         session.add(item)
 
+        pay_currency = Currency.UAH
+        pay_amount = 0.0
+        if item.item_type == FarmerContractItemType.CASH.value:
+            try:
+                pay_currency = Currency(getattr(item, "currency", None) or "UAH")
+            except ValueError:
+                pay_currency = Currency.UAH
+            pay_amount = payload.quantity_kg
+
         payment = FarmerContractPayment(
             contract_id=contract_id,
             contract_item_id=item.id,
             payment_type=payload.payment_type.value if hasattr(payload.payment_type, 'value') else payload.payment_type,
             item_name=item.item_name,
-            amount=0.0,
-            currency=Currency.UAH,
+            amount=pay_amount,
+            currency=pay_currency,
+            exchange_rate=item.price_per_kg if item.item_type == FarmerContractItemType.CASH.value and getattr(item, "currency", "UAH") != "UAH" else None,
             amount_uah=amount_uah,
             quantity_kg=payload.quantity_kg,
             culture_id=item.culture_id,
@@ -1322,24 +1481,10 @@ async def create_farmer_contract_payment(
             ).first()
 
         qty = payload.quantity_kg
-        # Використовуємо ціну з позиції контракту, а не поточну ціну культури
         voucher_price = voucher_item.price_per_kg if voucher_item else culture.price_per_kg
         amount_uah = qty * voucher_price
 
-        # Проверяем баланс фермера
-        available = _get_farmer_balance(session, contract.owner_id, payload.culture_id)
-        if qty > available + 0.01:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Недостатньо зерна на балансі фермера. Доступно: {available:.2f}"
-            )
-
-        # Списываем зерно с баланса фермера → в "наше"
-        stock = _get_or_create_grain_stock(session, payload.culture_id)
-        stock.farmer_quantity_kg -= qty
-        stock.own_quantity_kg += qty
-        session.add(stock)
-
+        # Видача талону не торкається зерна на складі — лише запис у виплатах і талон у розділі «Хлібний завод»
         if voucher_item:
             voucher_item.delivered_kg += qty
             session.add(voucher_item)
@@ -1376,16 +1521,8 @@ async def create_farmer_contract_payment(
         )
         session.add(voucher)
 
-        # Списання з балансу фермера
-        session.add(FarmerGrainDeduction(
-            owner_id=contract.owner_id,
-            culture_id=payload.culture_id,
-            quantity_kg=qty,
-            payment_id=payment.id
-        ))
-
-        # Талон НЕ змінює balance_uah контракту.
-        # Борг по талону обліковується та погашається окремо через «Хлібний завод».
+        # Видача талону зменшує залишок боргу по контракту
+        contract.balance_uah = max(0.0, contract.balance_uah - amount_uah)
 
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Невідомий тип операції")
@@ -1549,24 +1686,9 @@ async def cancel_farmer_contract_payment(
         contract.balance_uah += payment.amount_uah
         session.add(contract)
 
-    # ─── VOUCHER: талон на зерно → повертаємо зерно фермеру, видаляємо талон ───
+    # ─── VOUCHER: талон на зерно — видача не торкалась складу, при скасуванні лише відкочуємо delivered і борг ───
     elif payment.payment_type == FarmerContractPaymentType.VOUCHER.value:
         qty = payment.quantity_kg or 0.0
-
-        if qty > 0 and payment.culture_id:
-            stock = _get_or_create_grain_stock(session, payment.culture_id)
-            stock.own_quantity_kg = max(0.0, stock.own_quantity_kg - qty)
-            stock.farmer_quantity_kg += qty
-            session.add(stock)
-
-            # Видаляємо списання з балансу фермера
-            deduction = session.exec(
-                select(FarmerGrainDeduction).where(
-                    FarmerGrainDeduction.payment_id == payment.id
-                )
-            ).first()
-            if deduction:
-                session.delete(deduction)
 
         # Повертаємо delivered_kg у позиції контракту
         if payment.contract_item_id:
@@ -1574,6 +1696,10 @@ async def cancel_farmer_contract_payment(
             if voucher_item:
                 voucher_item.delivered_kg = max(0.0, voucher_item.delivered_kg - qty)
                 session.add(voucher_item)
+
+        # Повертаємо суму талону до залишку боргу
+        contract.balance_uah += payment.amount_uah or 0.0
+        session.add(contract)
 
         # Видаляємо або закриваємо пов'язаний талон
         voucher = session.exec(
@@ -1597,7 +1723,6 @@ async def cancel_farmer_contract_payment(
                 )
             session.delete(voucher)
 
-        # Талон не змінював balance_uah, тому не повертаємо
         session.add(contract)
 
     # ─── SETTLEMENT: авторозрахунок (контракт виплати) ───

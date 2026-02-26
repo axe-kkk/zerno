@@ -6,14 +6,15 @@ from backend.models import (
     CashRegister,
     GrainCulture,
     VehicleType,
-    GrainStock
+    GrainStock,
+    AgriField
 )
 
-# Создание движка базы данных
+# Создание движка базы данных (echo=False — щоб не спамити логи SQL-запитами)
 engine = create_engine(
     settings.database_url,
-    echo=settings.debug,  # Показывать SQL запросы в debug режиме
-    pool_pre_ping=True,  # Проверка соединения перед использованием
+    echo=False,
+    pool_pre_ping=True,
 )
 
 
@@ -158,7 +159,62 @@ def init_db():
             print("✅ Додано колонку is_free до purchase_records")
         except Exception:
             conn.rollback()
-    
+
+        try:
+            conn.execute(text(
+                "ALTER TABLE lease_contracts ADD COLUMN end_date TIMESTAMP"
+            ))
+            conn.commit()
+            print("✅ Додано колонку end_date до lease_contracts")
+        except Exception:
+            conn.rollback()
+
+        try:
+            conn.execute(text(
+                "ALTER TABLE lease_contracts ADD COLUMN parent_contract_id INTEGER REFERENCES lease_contracts(id)"
+            ))
+            conn.commit()
+            print("✅ Додано колонку parent_contract_id до lease_contracts")
+        except Exception:
+            conn.rollback()
+
+        # Заповнення end_date для існуючих контрактів (contract_date + 1 рік)
+        try:
+            conn.execute(text(
+                "UPDATE lease_contracts SET end_date = contract_date + INTERVAL '1 year' WHERE end_date IS NULL"
+            ))
+            conn.commit()
+            print("✅ Заповнено end_date для існуючих контрактів")
+        except Exception:
+            conn.rollback()
+
+        try:
+            conn.execute(text(
+                "ALTER TABLE grain_intakes ADD COLUMN is_own_combine BOOLEAN DEFAULT FALSE"
+            ))
+            conn.commit()
+            print("✅ Додано колонку is_own_combine до grain_intakes")
+        except Exception:
+            conn.rollback()
+
+        try:
+            conn.execute(text(
+                "ALTER TABLE grain_intakes ADD COLUMN field_id INTEGER REFERENCES agri_fields(id)"
+            ))
+            conn.commit()
+            print("✅ Додано колонку field_id до grain_intakes")
+        except Exception:
+            conn.rollback()
+
+        try:
+            conn.execute(text(
+                "ALTER TABLE farmer_contract_items ADD COLUMN currency VARCHAR(8) DEFAULT 'UAH'"
+            ))
+            conn.commit()
+            print("✅ Додано колонку currency до farmer_contract_items")
+        except Exception:
+            conn.rollback()
+
     with Session(engine) as session:
         # Создание супер админа, если его еще нет
         admin = session.exec(

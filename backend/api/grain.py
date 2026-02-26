@@ -18,6 +18,7 @@ from backend.models import (
     GrainIntake,
     GrainShipment,
     DriverStat,
+    AgriField,
     TransactionType,
     StockAdjustmentLog,
     StockAdjustmentType,
@@ -800,6 +801,15 @@ async def update_owner(
     owner.full_name = payload.full_name
     owner.phone = payload.phone
     session.add(owner)
+
+    intakes = session.exec(
+        select(GrainIntake).where(GrainIntake.owner_id == owner_id)
+    ).all()
+    for intake in intakes:
+        intake.owner_full_name = payload.full_name
+        intake.owner_phone = payload.phone
+        session.add(intake)
+
     session.commit()
     session.refresh(owner)
     return owner
@@ -1382,6 +1392,17 @@ async def create_intake(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Для зерна підприємства власник не вказується"
             )
+        if not payload.field_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Оберіть поле, з якого привезли зерно"
+            )
+        field = session.get(AgriField, payload.field_id)
+        if not field:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Поле не знайдено"
+            )
         owner_id = None
         owner_full_name = None
         owner_phone = None
@@ -1455,11 +1476,15 @@ async def create_intake(
     else:
         accepted_weight = net_weight * (1 - payload.impurity_percent / 100)
 
+    field_id = payload.field_id if payload.is_own_grain else None
+
     intake = GrainIntake(
         culture_id=payload.culture_id,
         vehicle_type_id=payload.vehicle_type_id,
         has_trailer=payload.has_trailer,
+        is_own_combine=payload.is_own_combine,
         is_own_grain=payload.is_own_grain,
+        field_id=field_id,
         owner_id=owner_id,
         owner_full_name=owner_full_name,
         owner_phone=owner_phone,
@@ -1520,12 +1545,18 @@ async def create_intake(
 async def list_intakes(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
-    pending_only: bool = Query(False, description="Тільки очікуючі % втрат")
+    pending_only: bool = Query(False, description="Тільки очікуючі % втрат"),
+    is_own_combine: Optional[bool] = Query(None, description="Наш комбайн: true/false, None — всі"),
+    field_id: Optional[int] = Query(None, description="Фільтр по полю (прийоми зерна підприємства з цього поля)")
 ):
     """Список карток приходу"""
     query = select(GrainIntake).order_by(GrainIntake.created_at.desc())
     if pending_only:
         query = query.where(GrainIntake.pending_quality == True)
+    if is_own_combine is not None:
+        query = query.where(GrainIntake.is_own_combine == is_own_combine)
+    if field_id is not None:
+        query = query.where(GrainIntake.field_id == field_id)
     return session.exec(query).all()
 
 
@@ -1822,10 +1853,18 @@ async def export_intakes(
     status_filter: str = Query("all", description="all|pending|confirmed"),
     driver_id: int | None = None,
     vehicle_type_id: int | None = None,
-    internal_only: bool = Query(False, description="Тільки доставки наших водіїв")
+    internal_only: bool = Query(False, description="Тільки доставки наших водіїв"),
+    is_own_combine: Optional[bool] = Query(None, description="Наш комбайн: true/false, None — всі"),
+    only_field_intakes: bool = Query(False, description="Тільки прийоми з полів (зерно підприємства з поля)"),
+    field_id: Optional[int] = Query(None, description="Фільтр по полю (для прийомів з полів)")
 ):
     """Експорт карток приходу у Excel"""
     query = select(GrainIntake).order_by(GrainIntake.created_at.desc())
+
+    if only_field_intakes:
+        query = query.where(GrainIntake.field_id.isnot(None))
+    if field_id is not None:
+        query = query.where(GrainIntake.field_id == field_id)
 
     if start_date:
         try:
@@ -1869,6 +1908,9 @@ async def export_intakes(
             detail="Некоректний статус фільтра"
         )
 
+    if is_own_combine is not None:
+        query = query.where(GrainIntake.is_own_combine == is_own_combine)
+
     intakes = session.exec(query).all()
 
     culture_map = {
@@ -1880,6 +1922,8 @@ async def export_intakes(
     driver_items = session.exec(select(Driver)).all()
     driver_map = {item.id: item.full_name for item in driver_items}
     driver_phone_map = {item.id: item.phone for item in driver_items}
+    fields = session.exec(select(AgriField)).all()
+    field_map = {f.id: f.name for f in fields}
 
     workbook = Workbook()
     sheet = workbook.active
@@ -1890,7 +1934,9 @@ async def export_intakes(
         "Культура",
         "Транспорт",
         "Є причіп",
+        "Наш комбайн",
         "Зерно підприємства",
+        "Поле",
         "Власник",
         "Телефон власника",
         "Тип водія",
@@ -1932,6 +1978,7 @@ async def export_intakes(
         vehicle_name = vehicle_map.get(intake.vehicle_type_id, "-")
         owner_name = "Підприємство" if intake.is_own_grain else (intake.owner_full_name or "-")
         owner_phone = "-" if intake.is_own_grain else (intake.owner_phone or "-")
+        field_name = field_map.get(intake.field_id, "-") if intake.field_id else "-"
         driver_type = "Наш водій" if intake.is_internal_driver else "Інший водій"
         if intake.is_internal_driver:
             driver_name = driver_map.get(intake.driver_id, "-")
@@ -1946,7 +1993,9 @@ async def export_intakes(
             culture_name,
             vehicle_name,
             "Так" if intake.has_trailer else "Ні",
+            "Так" if intake.is_own_combine else "Ні",
             "Так" if intake.is_own_grain else "Ні",
+            field_name,
             owner_name,
             owner_phone,
             driver_type,
@@ -1961,28 +2010,30 @@ async def export_intakes(
             intake.note or ""
         ])
 
+    status_col = 17  # "Очікує %"
     for row in range(2, sheet.max_row + 1):
         row_fill = alt_fill if row % 2 == 0 else None
-        status_value = sheet.cell(row=row, column=15).value
+        status_value = sheet.cell(row=row, column=status_col).value
         status_fill = pending_fill if status_value == "Очікує %" else confirmed_fill
 
         for col in range(1, len(headers) + 1):
             cell = sheet.cell(row=row, column=col)
-            if col == 15:
+            if col == status_col:
                 cell.fill = status_fill
                 cell.alignment = Alignment(horizontal="center")
             elif row_fill:
                 cell.fill = row_fill
             cell.border = thin_border
-            if col in (11, 12, 13, 16):
+            if col in (13, 14, 15, 18):
                 cell.number_format = "#,##0.00"
-            if col == 14:
+            if col == 16:
                 cell.number_format = "0.00"
 
     sheet.freeze_panes = "A2"
-    sheet.auto_filter.ref = f"A1:Q{sheet.max_row}"
+    last_col_letter = chr(64 + len(headers)) if len(headers) <= 26 else "S"
+    sheet.auto_filter.ref = f"A1:{last_col_letter}{sheet.max_row}"
 
-    column_widths = [20, 16, 16, 10, 18, 24, 16, 14, 22, 16, 14, 14, 14, 12, 14, 14, 30]
+    column_widths = [20, 16, 16, 10, 12, 18, 20, 24, 16, 14, 22, 16, 14, 14, 14, 12, 14, 14, 30]
     for idx, width in enumerate(column_widths, start=1):
         sheet.column_dimensions[chr(64 + idx)].width = width
 
@@ -2893,12 +2944,22 @@ async def update_intake(
     old_accepted = intake.accepted_weight_kg
     old_is_own_grain = intake.is_own_grain
 
-    # Власник
+    # Власник та поле
     if update_data.get("is_own_grain") is True:
         update_data["owner_id"] = None
         update_data["owner_full_name"] = None
         update_data["owner_phone"] = None
+        field_id = update_data.get("field_id", intake.field_id)
+        if not field_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Оберіть поле, з якого привезли зерно"
+            )
+        field = session.get(AgriField, field_id)
+        if not field:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Поле не знайдено")
     elif update_data.get("is_own_grain") is False:
+        update_data["field_id"] = None
         owner_id = update_data.get("owner_id", intake.owner_id)
         owner_full_name = update_data.get("owner_full_name", intake.owner_full_name)
         owner_phone = update_data.get("owner_phone", intake.owner_phone)

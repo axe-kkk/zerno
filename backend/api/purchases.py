@@ -405,13 +405,7 @@ async def create_purchase(
         balance_field = balance_field_map[payload.currency]
         current_balance = getattr(cash_register, balance_field)
         new_balance = current_balance - total_amount
-        if new_balance < 0:
-            currency_label = currency_label_map[payload.currency]
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Недостатньо коштів. Поточний баланс {currency_label}: {current_balance}"
-            )
-
+        # Дозволяємо касі йти в мінус при закупівлі (як у виплатах по контрактах / хлібзаводі)
         setattr(cash_register, balance_field, new_balance)
         session.add(cash_register)
 

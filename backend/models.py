@@ -127,6 +127,7 @@ class GrainIntake(BaseModel, table=True):
     vehicle_type_id: int = Field(foreign_key="vehicle_types.id")
 
     is_own_grain: bool = Field(default=False, description="Зерно підприємства")
+    field_id: Optional[int] = Field(default=None, foreign_key="agri_fields.id", description="Поле (звідки привезли зерно підприємства)")
     owner_id: Optional[int] = Field(default=None, foreign_key="grain_owners.id")
     owner_full_name: Optional[str] = Field(default=None, description="ПІБ власника (знімок)")
     owner_phone: Optional[str] = Field(default=None, description="Телефон власника (знімок)")
@@ -136,6 +137,7 @@ class GrainIntake(BaseModel, table=True):
     external_driver_name: Optional[str] = Field(default=None, description="ПІБ стороннього водія")
 
     has_trailer: bool = Field(default=False, description="Є причіп")
+    is_own_combine: bool = Field(default=False, description="Наш комбайн")
     gross_weight_kg: float = Field(description="Брутто, кг")
     tare_weight_kg: float = Field(description="Тара, кг")
     net_weight_kg: float = Field(description="Нетто, кг")
@@ -272,9 +274,10 @@ class FarmerContractItem(BaseModel, table=True):
     purchase_stock_id: Optional[int] = Field(default=None, foreign_key="purchase_stock.id")
     item_name: Optional[str] = Field(default=None, description="Назва позиції (знімок)")
     quantity_kg: float = Field(default=0.0, description="Кількість, кг")
-    price_per_kg: float = Field(default=0.0, description="Ціна, грн/кг")
+    price_per_kg: float = Field(default=0.0, description="Ціна, грн/кг або курс для грошей")
     total_value_uah: float = Field(default=0.0, description="Сума, грн")
     delivered_kg: float = Field(default=0.0, description="Фактично видано/отримано, кг")
+    currency: Optional[str] = Field(default="UAH", sa_column=Column(String(8), default="UAH"))
 
 
 class FarmerContractPayment(BaseModel, table=True):
@@ -360,6 +363,17 @@ class StockAdjustmentLog(BaseModel, table=True):
     destination: Optional[str] = Field(default=None, description="Куди відправлено")
 
 
+class AgriField(BaseModel, table=True):
+    """Модель поля"""
+    __tablename__ = "agri_fields"
+
+    name: str = Field(index=True, description="Назва поля")
+    owner_name: str = Field(default="Підприємство", description="Власник поля")
+    landlord_id: Optional[int] = Field(default=None, foreign_key="landlords.id", description="Орендодавець (якщо є)")
+    lease_contract_id: Optional[int] = Field(default=None, foreign_key="lease_contracts.id", description="Контракт оренди (якщо є)")
+    note: Optional[str] = Field(default=None, description="Примітка")
+
+
 class Landlord(BaseModel, table=True):
     """Модель орендодавця"""
     __tablename__ = "landlords"
@@ -375,7 +389,9 @@ class LeaseContract(BaseModel, table=True):
     landlord_id: int = Field(foreign_key="landlords.id", description="ID орендодавця")
     landlord_full_name: str = Field(description="ПІБ орендодавця (знімок)")
     field_name: str = Field(description="Назва поля")
-    contract_date: datetime = Field(description="Дата укладення контракту")
+    contract_date: datetime = Field(description="Дата початку контракту")
+    end_date: Optional[datetime] = Field(default=None, description="Дата закінчення контракту")
+    parent_contract_id: Optional[int] = Field(default=None, foreign_key="lease_contracts.id", description="Попередній контракт (при перевипуску)")
     is_active: bool = Field(default=True, description="Активний контракт")
     note: Optional[str] = Field(default=None, description="Примітка")
 
