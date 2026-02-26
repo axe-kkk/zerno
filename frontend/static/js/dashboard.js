@@ -316,11 +316,12 @@ async function loadDashboardStats() {
         if (purContainer) {
             const cats = stats.purchases_by_category || [];
             const catColors = ['#8b5cf6', '#6366f1', '#ec4899', '#f59e0b', '#14b8a6', '#f97316', '#06b6d4'];
+            const categoryLabel = (cat) => ({ fertilizer: 'Добрива', seed: 'Посівне зерно' }[cat] || cat);
             if (cats.length > 0) {
                 purContainer.innerHTML = cats.map((c, i) => `
                     <div class="db-gf-cat-row">
                         <span class="db-gf-cat-dot" style="background:${catColors[i % catColors.length]}"></span>
-                        <span class="db-gf-cat-name">${escapeHtml(c.category)}</span>
+                        <span class="db-gf-cat-name">${escapeHtml(categoryLabel(c.category))}</span>
                         <span class="db-gf-cat-val">${formatAmount(c.quantity_kg)} кг</span>
                     </div>`).join('');
             } else {
