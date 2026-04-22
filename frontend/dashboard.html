@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <title>Система обліку зерна - Дашборд</title>
     <link rel="icon" type="image/svg+xml" href="static/favicon.svg">
-    <link rel="stylesheet" href="static/css/style.css?v=173">
+    <link rel="stylesheet" href="static/css/style.css?v=177">
 </head>
 <body class="dashboard-page">
     <div class="dashboard-container">
@@ -395,9 +395,9 @@
                                     <label>Опис</label>
                                     <input type="text" id="cash-description" placeholder="Наприклад, корекція">
                                 </div>
-                                <div class="form-actions full">
+                                <div class="form-actions full form-actions-stack-msg">
+                                    <div class="form-hint" id="cash-message" role="status" aria-live="polite"></div>
                                     <button type="submit" class="btn btn-primary">Зберегти</button>
-                                    <div class="form-hint" id="cash-message"></div>
                                 </div>
                             </form>
                         </div>
@@ -562,9 +562,9 @@
                                 <label>Сума</label>
                                 <input type="text" id="purchase-total" readonly>
                             </div>
-                            <div class="form-actions full">
+                            <div class="form-actions full form-actions-stack-msg">
+                                <div class="form-hint" id="purchase-message" role="status" aria-live="polite"></div>
                                 <button type="submit" class="btn btn-primary" id="purchase-submit-btn">Зберегти закупівлю</button>
-                                <div class="form-hint" id="purchase-message"></div>
                             </div>
                         </form>
                     </div>
@@ -845,6 +845,7 @@
                                     <label>Примітка</label>
                                     <input type="text" id="field-note" placeholder="Необов'язково">
                                 </div>
+                                <div class="form-hint full" id="field-message" role="status" aria-live="polite"></div>
                                 <div class="form-actions full">
                                     <button type="button" class="btn btn-secondary" id="field-modal-cancel">Скасувати</button>
                                     <button type="submit" class="btn btn-primary">Зберегти</button>
@@ -1237,6 +1238,7 @@
                                 <div class="card-title">Контракти</div>
                                 <div class="card-header-actions">
                                     <button class="btn btn-secondary btn-small" id="contracts-report-btn">Звіт</button>
+                                    <button class="btn btn-secondary btn-small" id="contracts-debt-report-btn" title="Лише контракти, за якими є борг до орендодавця">Звіт: борг</button>
                                     <button class="btn btn-primary btn-small" id="contract-add-btn">Додати</button>
                                 </div>
                             </div>
@@ -1253,6 +1255,7 @@
                                         <option value="">Всі статуси</option>
                                         <option value="active">Активні</option>
                                         <option value="inactive">Неактивні</option>
+                                        <option value="due">Ми ще винні</option>
                                     </select>
                                 </div>
                             </div>
@@ -1603,13 +1606,19 @@
                             <span>Очікує % втрат</span>
                         </label>
                     </div>
+                    <div class="form-field inline">
+                        <label class="pill-toggle">
+                            <input type="checkbox" id="edit-pending-tare">
+                            <span>Очікує тару</span>
+                        </label>
+                    </div>
                     <div class="form-field full">
                         <label>Примітка</label>
                         <textarea id="edit-note" rows="3"></textarea>
                     </div>
-                    <div class="form-actions full">
+                    <div class="form-actions full intake-edit-actions">
+                        <div id="edit-message" class="form-hint" role="status" aria-live="polite"></div>
                         <button type="submit" class="btn btn-primary">Зберегти</button>
-                        <div class="form-hint" id="edit-message"></div>
                     </div>
                 </form>
             </div>
@@ -1687,6 +1696,10 @@
                     <div class="intake-view-item">
                         <div class="intake-view-label">Очікує % втрат</div>
                         <div class="intake-view-value" id="view-pending">-</div>
+                    </div>
+                    <div class="intake-view-item">
+                        <div class="intake-view-label">Очікує тару</div>
+                        <div class="intake-view-value" id="view-pending-tare">-</div>
                     </div>
                     <div class="intake-view-item">
                         <div class="intake-view-label">Прийнято, кг</div>
@@ -1960,9 +1973,9 @@
                         <label>Телефон</label>
                         <input type="text" id="driver-phone" placeholder="+380...">
                     </div>
-                    <div class="form-actions full">
+                    <div class="form-actions full form-actions-stack-msg">
+                        <div class="form-hint status-label" id="driver-message" role="status" aria-live="polite"></div>
                         <button type="submit" class="btn btn-primary">Додати</button>
-                        <div class="form-hint status-label" id="driver-message"></div>
                     </div>
                 </form>
             </div>
@@ -1985,9 +1998,9 @@
                         <label>Телефон</label>
                         <input type="text" id="driver-edit-phone" placeholder="+380...">
                     </div>
-                    <div class="form-actions full">
+                    <div class="form-actions full form-actions-stack-msg">
+                        <div class="form-hint status-label" id="driver-edit-message" role="status" aria-live="polite"></div>
                         <button type="submit" class="btn btn-primary">Зберегти</button>
-                        <div class="form-hint status-label" id="driver-edit-message"></div>
                     </div>
                 </form>
             </div>
@@ -2030,9 +2043,9 @@
                         <label>Пароль</label>
                         <input type="password" id="user-password" required>
                     </div>
-                    <div class="form-actions full">
+                    <div class="form-actions full form-actions-stack-msg">
+                        <div class="form-hint status-label" id="user-message" role="status" aria-live="polite"></div>
                         <button type="submit" class="btn btn-primary">Додати</button>
-                        <div class="form-hint status-label" id="user-message"></div>
                     </div>
                 </form>
             </div>
@@ -2076,11 +2089,11 @@
                             <span class="switch-label">Активний</span>
                         </div>
                     </div>
+                    <div class="form-hint status-label full" id="user-edit-message" role="status" aria-live="polite"></div>
                     <div class="form-actions full">
                         <button type="button" class="btn btn-danger" id="user-edit-delete">Видалити</button>
                         <div style="flex: 1;"></div>
                         <button type="submit" class="btn btn-primary">Зберегти</button>
-                        <div class="form-hint status-label" id="user-edit-message"></div>
                     </div>
                 </form>
             </div>
@@ -2142,20 +2155,20 @@
                             <div class="form-field">
                                 <label>Водій</label>
                                 <select id="shipment-driver">
-                                    <option value="">— не обрано —</option>
+                                    <option value="">Пусто (не обрано)</option>
                                 </select>
                             </div>
                             <div class="form-field">
                                 <label>Тип транспорту</label>
                                 <select id="shipment-vehicle">
-                                    <option value="">— не обрано —</option>
+                                    <option value="">Пусто (не обрано)</option>
                                 </select>
                             </div>
                         </div>
                     </div>
                     <div class="form-actions sticky-actions">
+                        <div class="form-hint status-label" id="shipment-message" role="status" aria-live="polite"></div>
                         <button type="submit" class="btn btn-primary">Зберегти відправку</button>
-                        <div class="form-hint status-label" id="shipment-message"></div>
                     </div>
                 </form>
             </div>
@@ -2201,20 +2214,20 @@
                             <div class="form-field">
                                 <label>Водій</label>
                                 <select id="shipment-edit-driver">
-                                    <option value="">— не обрано —</option>
+                                    <option value="">Пусто (не обрано)</option>
                                 </select>
                             </div>
                             <div class="form-field">
                                 <label>Тип транспорту</label>
                                 <select id="shipment-edit-vehicle">
-                                    <option value="">— не обрано —</option>
+                                    <option value="">Пусто (не обрано)</option>
                                 </select>
                             </div>
                         </div>
                     </div>
                     <div class="form-actions sticky-actions">
+                        <div class="form-hint status-label" id="shipment-edit-message" role="status" aria-live="polite"></div>
                         <button type="submit" class="btn btn-primary">Зберегти</button>
-                        <div class="form-hint status-label" id="shipment-edit-message"></div>
                     </div>
                 </form>
             </div>
@@ -2587,9 +2600,9 @@
                         <label>Телефон</label>
                         <input type="text" id="farmer-edit-phone" placeholder="+380...">
                     </div>
-                    <div class="form-actions full">
+                    <div class="form-actions full form-actions-stack-msg">
+                        <div class="form-hint status-label" id="farmer-edit-message" role="status" aria-live="polite"></div>
                         <button type="submit" class="btn btn-primary">Зберегти</button>
-                        <div class="form-hint status-label" id="farmer-edit-message"></div>
                     </div>
                 </form>
             </div>
@@ -2728,6 +2741,7 @@
                         <input type="text" id="farmer-deduct-note" placeholder="Причина списання">
                     </div>
                 </div>
+                <div class="form-hint" id="farmer-deduct-message" role="status" aria-live="polite"></div>
             </div>
             <div class="modal-actions">
                 <button class="btn btn-secondary" id="farmer-deduct-cancel">Скасувати</button>
@@ -2780,6 +2794,7 @@
                     </div>
                 </div>
                 <div class="hint" id="farmer-transfer-hint"></div>
+                <div class="form-hint" id="farmer-transfer-message" role="status" aria-live="polite"></div>
             </div>
             <div class="modal-actions">
                 <button class="btn btn-secondary" id="farmer-transfer-cancel">Скасувати</button>
@@ -2823,7 +2838,7 @@
                     <div class="fcp-info" style="margin-bottom:12px;">
                         <div class="fcp-info__row">
                             <span class="fcp-info__label">Баланс фермера</span>
-                            <span class="fcp-info__value fcp-info__value--bold" id="fc-farmer-balance-total">—</span>
+                            <span class="fcp-info__value fcp-info__value--bold" id="fc-farmer-balance-total"><span class="empty-value" lang="uk">Пусто</span></span>
                         </div>
                     </div>
                     <div class="fcp-grain-balance" style="margin-bottom:12px;">
@@ -2906,6 +2921,7 @@
                         <span class="fc-totals__value" id="farmer-contract-total-payout">0,00</span>
                     </div>
                 </div>
+                <div class="form-hint full" id="farmer-contract-message" role="status" aria-live="polite"></div>
             </div>
             <div class="modal-actions">
                 <button class="btn btn-secondary" id="farmer-contract-cancel">Скасувати</button>
@@ -2927,15 +2943,15 @@
                 <div class="fcp-info">
                     <div class="fcp-info__row">
                         <span class="fcp-info__label">Контракт</span>
-                        <span class="fcp-info__value" id="fcp-contract-id">#—</span>
+                        <span class="fcp-info__value" id="fcp-contract-id"><span class="empty-value" lang="uk">Пусто</span></span>
                     </div>
                     <div class="fcp-info__row">
                         <span class="fcp-info__label">Фермер</span>
-                        <span class="fcp-info__value" id="fcp-farmer-name">—</span>
+                        <span class="fcp-info__value" id="fcp-farmer-name"><span class="empty-value" lang="uk">Пусто</span></span>
                     </div>
                     <div class="fcp-info__row">
                         <span class="fcp-info__label">Тип</span>
-                        <span class="fcp-info__value" id="fcp-contract-type">—</span>
+                        <span class="fcp-info__value" id="fcp-contract-type"><span class="empty-value" lang="uk">Пусто</span></span>
                     </div>
                     <div class="fcp-info__row fcp-info__row--accent">
                         <span class="fcp-info__label">Залишок боргу</span>
@@ -2973,7 +2989,7 @@
                     <div class="form-grid report-grid" style="margin-top:12px;" id="fcp-issue-form" class="hidden">
                         <div class="form-field">
                             <label>Обрана позиція</label>
-                            <div class="fcp-selected-item" id="fcp-issue-selected">—</div>
+                            <div class="fcp-selected-item" id="fcp-issue-selected"><span class="empty-value" lang="uk">Пусто</span></div>
                         </div>
                         <div class="form-field">
                             <label id="fcp-issue-qty-label">Кількість</label>
@@ -2992,7 +3008,7 @@
                     <div class="form-grid report-grid" style="margin-top:12px;">
                         <div class="form-field">
                             <label>Обрана позиція</label>
-                            <div class="fcp-selected-item" id="fcp-receive-selected">—</div>
+                            <div class="fcp-selected-item" id="fcp-receive-selected"><span class="empty-value" lang="uk">Пусто</span></div>
                         </div>
                         <div class="form-field">
                             <label>Кількість</label>
@@ -3053,6 +3069,7 @@
                     <div class="fcp-equiv" id="fcp-grain-equiv"></div>
                 </div>
 
+                <div class="form-hint full" id="fcp-validation-message" role="status" aria-live="polite"></div>
             </div>
             <div class="modal-actions">
                 <button class="btn btn-secondary" id="farmer-contract-payment-cancel">Скасувати</button>
@@ -3163,7 +3180,7 @@
                             </div>
                             <div class="form-field">
                                 <label>Тара, кг</label>
-                                <input type="number" id="tare-weight" min="0" step="0.01" required>
+                                <input type="number" id="tare-weight" min="0" step="0.01">
                             </div>
                             <div class="form-field">
                                 <label>Нетто, кг</label>
@@ -3179,6 +3196,12 @@
                                     <span>Очікує % втрат</span>
                                 </label>
                             </div>
+                            <div class="form-field inline">
+                                <label class="pill-toggle">
+                                    <input type="checkbox" id="pending-tare">
+                                    <span>Очікує тару</span>
+                                </label>
+                            </div>
                             <div class="form-field">
                                 <label>Прийнято, кг</label>
                                 <input type="text" id="accepted-weight" readonly>
@@ -3192,6 +3215,7 @@
 
 
                     <div class="form-actions sticky-actions">
+                        <div id="intake-message" class="form-hint" role="status" aria-live="polite"></div>
                         <button type="submit" class="btn btn-primary">Зберегти картку</button>
                     </div>
                 </form>
@@ -3224,6 +3248,7 @@
                         <input type="number" id="stock-adjust-amount" min="0" step="0.01" required>
                     </div>
                 </div>
+                <div class="form-hint" id="stock-adjust-message" role="status" aria-live="polite"></div>
             </div>
             <div class="modal-actions">
                 <button class="btn btn-secondary" id="stock-adjust-cancel">Скасувати</button>
@@ -3257,6 +3282,7 @@
                         <input type="number" id="stock-reserve-amount" min="0" step="0.01" required>
                     </div>
                 </div>
+                <div class="form-hint" id="stock-reserve-message" role="status" aria-live="polite"></div>
             </div>
             <div class="modal-actions">
                 <button class="btn btn-secondary" id="stock-reserve-cancel">Скасувати</button>
@@ -3283,6 +3309,7 @@
                         <input type="number" id="stock-price-value" min="0" step="0.01" required>
                     </div>
                 </div>
+                <div class="form-hint" id="stock-price-message" role="status" aria-live="polite"></div>
             </div>
             <div class="modal-actions">
                 <button class="btn btn-secondary" id="stock-price-cancel">Скасувати</button>
@@ -3309,6 +3336,7 @@
                         <input type="number" id="culture-price-value" min="0" step="0.01" required>
                     </div>
                 </div>
+                <div class="form-hint" id="culture-price-message" role="status" aria-live="polite"></div>
             </div>
             <div class="modal-actions">
                 <button class="btn btn-secondary" id="culture-price-cancel">Скасувати</button>
@@ -3335,10 +3363,10 @@
                         <label>Телефон</label>
                         <input type="text" id="landlord-phone" placeholder="+380...">
                     </div>
+                    <div class="form-hint full" id="landlord-message" role="status" aria-live="polite"></div>
                     <div class="form-actions full">
                         <button type="button" class="btn btn-secondary" id="landlord-modal-cancel">Скасувати</button>
                         <button type="submit" class="btn btn-primary">Зберегти</button>
-                        <div class="form-hint full" id="landlord-message"></div>
                     </div>
                 </form>
             </div>
@@ -3448,9 +3476,9 @@
                             <span>Активний контракт</span>
                         </label>
                     </div>
-                    <div class="form-actions full">
+                    <div class="form-actions full form-actions-stack-msg">
+                        <div class="form-hint" id="contract-message" role="status" aria-live="polite"></div>
                         <button type="submit" class="btn btn-primary">Зберегти</button>
-                        <div class="form-hint" id="contract-message"></div>
                     </div>
                 </form>
             </div>
@@ -3657,7 +3685,7 @@
                 <!-- Note -->
                 <div class="fc-detail-note-row" id="fc-detail-note-row">
                     <span class="fc-detail-note-icon">📝</span>
-                    <span id="fc-detail-note">—</span>
+                    <span id="fc-detail-note"><span class="empty-value" lang="uk">Пусто</span></span>
                 </div>
 
                 <!-- Items section -->
@@ -3984,9 +4012,16 @@
             <div class="modal-body">
                 <form id="payment-form" class="form-grid">
                     <div class="form-field full">
+                        <label>Контрагент (орендодавець)</label>
+                        <input type="text" id="payment-landlord-search" placeholder="Почніть вводити ПІБ..." autocomplete="off">
+                        <input type="hidden" id="payment-landlord-id">
+                        <div class="suggestions hidden" id="payment-landlord-suggestions"></div>
+                    </div>
+
+                    <div class="form-field full">
                         <label>Контракт</label>
-                        <select id="payment-contract" required>
-                            <option value="">Оберіть контракт</option>
+                        <select id="payment-contract" required disabled>
+                            <option value="">Спочатку оберіть орендодавця</option>
                         </select>
                     </div>
 
@@ -4050,16 +4085,16 @@
                         <label>Примітка</label>
                         <textarea id="payment-note" rows="2"></textarea>
                     </div>
-                    <div class="form-actions full">
+                    <div class="form-actions full form-actions-stack-msg">
+                        <div class="form-hint" id="payment-message" role="status" aria-live="polite"></div>
                         <button type="submit" class="btn btn-primary">Зберегти</button>
-                        <div class="form-hint" id="payment-message"></div>
                     </div>
                 </form>
             </div>
         </div>
     </div>
     
-    <script src="static/js/dashboard.js?v=129"></script>
+    <script src="static/js/dashboard.js?v=133"></script>
 </body>
 </html>
 

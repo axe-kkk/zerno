@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from typing import Optional
 from datetime import datetime, date, time, timedelta
 from io import BytesIO
@@ -56,6 +56,11 @@ from backend.schemas import (
 from backend.auth import get_current_user, get_current_super_admin
 
 router = APIRouter()
+
+
+def _intake_on_stock(intake: GrainIntake) -> bool:
+    """Картка вже враховується на складі (немає очікування ні тари, ні % втрат)."""
+    return not intake.pending_quality and not intake.pending_tare
 
 
 def _get_or_create_stock(session: Session, culture_id: int) -> GrainStock:
@@ -389,7 +394,8 @@ async def get_owner_balance(
         .where(
             GrainIntake.owner_id == owner_id,
             GrainIntake.is_own_grain == False,
-            GrainIntake.pending_quality == False
+            GrainIntake.pending_quality == False,
+            GrainIntake.pending_tare == False,
         )
         .group_by(GrainCulture.id, GrainCulture.name)
         .having(func.sum(GrainIntake.accepted_weight_kg) > 0)
@@ -447,7 +453,8 @@ async def export_owner_balance(
         .where(
             GrainIntake.owner_id == owner_id,
             GrainIntake.is_own_grain == False,
-            GrainIntake.pending_quality == False
+            GrainIntake.pending_quality == False,
+            GrainIntake.pending_tare == False,
         )
         .group_by(GrainCulture.id, GrainCulture.name)
         .having(func.sum(GrainIntake.accepted_weight_kg) > 0)
@@ -751,9 +758,11 @@ async def transfer_farmer_grain(
         net_weight_kg=payload.quantity_kg,
         accepted_weight_kg=payload.quantity_kg,
         pending_quality=False,
+        pending_tare=False,
         impurity_percent=0,
         has_trailer=False,
         note=f"Трансфер від {from_owner.full_name}",
+        is_farmer_transfer=True,
         created_by_user_id=current_user.id
     )
     session.add(to_intake)
@@ -837,7 +846,8 @@ async def export_owners(
         if intake.owner_id not in owner_stats:
             owner_stats[intake.owner_id] = {"count": 0, "total_kg": 0.0}
         owner_stats[intake.owner_id]["count"] += 1
-        owner_stats[intake.owner_id]["total_kg"] += intake.accepted_weight_kg or intake.net_weight_kg or 0
+        if _intake_on_stock(intake):
+            owner_stats[intake.owner_id]["total_kg"] += intake.accepted_weight_kg or 0.0
 
     workbook = Workbook()
     sheet = workbook.active
@@ -992,7 +1002,7 @@ async def export_owner_intakes(
             intake.tare_weight_kg,
             intake.net_weight_kg,
             intake.impurity_percent,
-            intake.accepted_weight_kg if not intake.pending_quality else "",
+            intake.accepted_weight_kg if _intake_on_stock(intake) else "",
             intake.note or ""
         ])
 
@@ -1096,18 +1106,25 @@ async def adjust_stock(
             detail="Недостатньо залишку для списання"
         )
 
-    # При корректировке пропорционально изменяем own и farmer
-    if quantity_before > 0:
-        own_ratio = stock.own_quantity_kg / quantity_before
-        farmer_ratio = stock.farmer_quantity_kg / quantity_before
+    # Важливо: `farmer_quantity_kg` — це "невикуплене у фермерів" (борг/лічильник),
+    # а фізичне зерно на складі = own + farmer.
+    #
+    # Тому при ручному списанні з фізичного складу спочатку зменшуємо "наше" зерно,
+    # і лише коли воно закінчилось — зачіпаємо `farmer_quantity_kg`.
+    # Це узгоджується з логікою відправок/виплат, де `farmer_quantity_kg` не повинен
+    # "стискатися пропорційно" при зменшенні фізичної кількості.
+    if payload.transaction_type == TransactionType.SUBTRACT:
+        remaining = float(payload.amount)
+        take_own = min(float(stock.own_quantity_kg or 0.0), remaining)
+        remaining -= take_own
+        take_farmer = remaining
+        stock.own_quantity_kg = max(0.0, float(stock.own_quantity_kg or 0.0) - take_own)
+        stock.farmer_quantity_kg = max(0.0, float(stock.farmer_quantity_kg or 0.0) - take_farmer)
+        stock.quantity_kg = max(0.0, float(stock.own_quantity_kg or 0.0) + float(stock.farmer_quantity_kg or 0.0))
     else:
-        # Если склад был пуст, корректировка идет в наше зерно
-        own_ratio = 1.0
-        farmer_ratio = 0.0
-    
-    stock.quantity_kg = new_quantity
-    stock.own_quantity_kg = new_quantity * own_ratio
-    stock.farmer_quantity_kg = new_quantity * farmer_ratio
+        # ADD: за замовчуванням додаємо в "наше" зерно
+        stock.own_quantity_kg = max(0.0, float(stock.own_quantity_kg or 0.0) + float(payload.amount))
+        stock.quantity_kg = max(0.0, float(stock.own_quantity_kg or 0.0) + float(stock.farmer_quantity_kg or 0.0))
     session.add(stock)
     session.add(
         StockAdjustmentLog(
@@ -1464,17 +1481,22 @@ async def create_intake(
         driver_id = None
         external_driver_name = payload.external_driver_name or "Інший водій"
 
-    net_weight = payload.gross_weight_kg - payload.tare_weight_kg
-    if net_weight <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Нетто має бути більше 0"
-        )
-
-    if payload.pending_quality:
+    if payload.pending_tare:
+        net_weight = 0.0
+        tare_stored = 0.0
         accepted_weight = 0.0
     else:
-        accepted_weight = net_weight * (1 - payload.impurity_percent / 100)
+        net_weight = payload.gross_weight_kg - payload.tare_weight_kg
+        if net_weight <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Нетто має бути більше 0"
+            )
+        tare_stored = payload.tare_weight_kg
+        if payload.pending_quality:
+            accepted_weight = 0.0
+        else:
+            accepted_weight = net_weight * (1 - payload.impurity_percent / 100)
 
     field_id = payload.field_id if payload.is_own_grain else None
 
@@ -1492,10 +1514,11 @@ async def create_intake(
         driver_id=driver_id,
         external_driver_name=external_driver_name,
         gross_weight_kg=payload.gross_weight_kg,
-        tare_weight_kg=payload.tare_weight_kg,
+        tare_weight_kg=tare_stored,
         net_weight_kg=net_weight,
         impurity_percent=payload.impurity_percent,
         pending_quality=payload.pending_quality,
+        pending_tare=payload.pending_tare,
         accepted_weight_kg=accepted_weight,
         note=payload.note,
         created_by_user_id=current_user.id
@@ -1504,7 +1527,7 @@ async def create_intake(
     session.commit()
     session.refresh(intake)
 
-    if not payload.pending_quality:
+    if not payload.pending_quality and not payload.pending_tare:
         stock = _get_or_create_stock(session, payload.culture_id)
         quantity_before = stock.quantity_kg
         _apply_stock_delta(session, payload.culture_id, accepted_weight, payload.is_own_grain)
@@ -1545,14 +1568,16 @@ async def create_intake(
 async def list_intakes(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
-    pending_only: bool = Query(False, description="Тільки очікуючі % втрат"),
+    pending_only: bool = Query(False, description="Очікують % втрат або тару"),
     is_own_combine: Optional[bool] = Query(None, description="Наш комбайн: true/false, None — всі"),
     field_id: Optional[int] = Query(None, description="Фільтр по полю (прийоми зерна підприємства з цього поля)")
 ):
     """Список карток приходу"""
     query = select(GrainIntake).order_by(GrainIntake.created_at.desc())
     if pending_only:
-        query = query.where(GrainIntake.pending_quality == True)
+        query = query.where(
+            or_(GrainIntake.pending_quality == True, GrainIntake.pending_tare == True)
+        )
     if is_own_combine is not None:
         query = query.where(GrainIntake.is_own_combine == is_own_combine)
     if field_id is not None:
@@ -1570,7 +1595,10 @@ async def export_intakes_summary(
     """Спец-звіт: зведена таблиця приходів по культурах з розбивкою фермери / підприємство"""
     query = (
         select(GrainIntake)
-        .where(GrainIntake.pending_quality == False)
+        .where(
+            GrainIntake.pending_quality == False,
+            GrainIntake.pending_tare == False,
+        )
         .order_by(GrainIntake.created_at.desc())
     )
 
@@ -1899,9 +1927,14 @@ async def export_intakes(
         query = query.where(GrainIntake.vehicle_type_id == vehicle_type_id)
 
     if status_filter == "pending":
-        query = query.where(GrainIntake.pending_quality == True)
+        query = query.where(
+            or_(GrainIntake.pending_quality == True, GrainIntake.pending_tare == True)
+        )
     elif status_filter == "confirmed":
-        query = query.where(GrainIntake.pending_quality == False)
+        query = query.where(
+            GrainIntake.pending_quality == False,
+            GrainIntake.pending_tare == False,
+        )
     elif status_filter != "all":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1946,7 +1979,7 @@ async def export_intakes(
         "Тара, кг",
         "Нетто, кг",
         "Втрати, %",
-        "Очікує %",
+        "Статус",
         "Прийнято, кг",
         "Примітка"
     ]
@@ -1986,7 +2019,14 @@ async def export_intakes(
         else:
             driver_name = intake.external_driver_name or "Інший водій"
             driver_phone = "-"
-        status_label = "Очікує %" if intake.pending_quality else "Підтверджено"
+        if intake.pending_tare and intake.pending_quality:
+            status_label = "Очікує тару та %"
+        elif intake.pending_tare:
+            status_label = "Очікує тару"
+        elif intake.pending_quality:
+            status_label = "Очікує %"
+        else:
+            status_label = "Підтверджено"
 
         sheet.append([
             intake.created_at.strftime("%Y-%m-%d %H:%M:%S"),
@@ -2006,7 +2046,7 @@ async def export_intakes(
             intake.net_weight_kg,
             intake.impurity_percent,
             status_label,
-            "" if intake.pending_quality else intake.accepted_weight_kg,
+            "" if (intake.pending_quality or intake.pending_tare) else intake.accepted_weight_kg,
             intake.note or ""
         ])
 
@@ -2014,7 +2054,7 @@ async def export_intakes(
     for row in range(2, sheet.max_row + 1):
         row_fill = alt_fill if row % 2 == 0 else None
         status_value = sheet.cell(row=row, column=status_col).value
-        status_fill = pending_fill if status_value == "Очікує %" else confirmed_fill
+        status_fill = pending_fill if status_value != "Підтверджено" else confirmed_fill
 
         for col in range(1, len(headers) + 1):
             cell = sheet.cell(row=row, column=col)
@@ -2479,8 +2519,8 @@ async def export_driver_deliveries(
             "trailer": "Так" if intake.has_trailer else "Ні",
             "culture": culture_map.get(intake.culture_id, "-"),
             "destination": "-",
-            "quantity": intake.net_weight_kg,
-            "accepted": "" if intake.pending_quality else intake.accepted_weight_kg,
+            "quantity": intake.net_weight_kg if not intake.pending_tare else "",
+            "accepted": "" if not _intake_on_stock(intake) else intake.accepted_weight_kg,
         })
     for ship in shipments:
         rows.append({
@@ -2591,7 +2631,8 @@ async def export_stock_summary(
         )
         .where(
             GrainIntake.is_own_grain == False,
-            GrainIntake.pending_quality == False
+            GrainIntake.pending_quality == False,
+            GrainIntake.pending_tare == False,
         )
         .group_by(GrainIntake.culture_id, GrainIntake.owner_id)
     ).all()
@@ -2830,6 +2871,12 @@ async def update_intake_quality(
             detail="Картку не знайдено"
         )
 
+    if intake.pending_tare:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Спочатку вкажіть тару в картці приходу",
+        )
+
     new_accepted = intake.net_weight_kg * (1 - payload.impurity_percent / 100)
     old_accepted = intake.accepted_weight_kg
     was_pending = intake.pending_quality
@@ -2939,7 +2986,7 @@ async def update_intake(
     old_has_trailer = intake.has_trailer
     old_is_internal_driver = intake.is_internal_driver
     old_driver_id = intake.driver_id
-    old_pending = intake.pending_quality
+    old_on_stock = _intake_on_stock(intake)
     old_net = intake.net_weight_kg
     old_accepted = intake.accepted_weight_kg
     old_is_own_grain = intake.is_own_grain
@@ -3017,19 +3064,26 @@ async def update_intake(
     gross = update_data.get("gross_weight_kg", intake.gross_weight_kg)
     tare = update_data.get("tare_weight_kg", intake.tare_weight_kg)
     pending = update_data.get("pending_quality", intake.pending_quality)
+    pending_tare = update_data.get("pending_tare", intake.pending_tare)
     impurity = update_data.get("impurity_percent", intake.impurity_percent)
-    if gross is not None and tare is not None:
-        net = gross - tare
+    if pending_tare:
+        update_data["net_weight_kg"] = 0.0
+        update_data["accepted_weight_kg"] = 0.0
+        update_data["tare_weight_kg"] = 0.0
+        update_data["pending_tare"] = True
+    elif gross is not None and tare is not None:
+        net = float(gross) - float(tare)
         if net <= 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Нетто має бути більше 0"
             )
         update_data["net_weight_kg"] = net
+        update_data["pending_tare"] = False
         if pending:
             update_data["accepted_weight_kg"] = 0.0
         else:
-            update_data["accepted_weight_kg"] = net * (1 - impurity / 100)
+            update_data["accepted_weight_kg"] = net * (1 - float(impurity) / 100)
 
     # Оновлюємо модель
     for field, value in update_data.items():
@@ -3040,7 +3094,7 @@ async def update_intake(
     session.refresh(intake)
 
     # Коригуємо склад і статистику
-    if not old_pending:
+    if old_on_stock:
         _apply_stock_delta(session, old_culture_id, -old_accepted, old_is_own_grain)
         if old_is_internal_driver and old_driver_id:
             _apply_driver_stat_delta(
@@ -3054,7 +3108,7 @@ async def update_intake(
                 delta_accepted_kg=-old_accepted
             )
 
-    if not intake.pending_quality:
+    if _intake_on_stock(intake):
         _apply_stock_delta(session, intake.culture_id, intake.accepted_weight_kg, intake.is_own_grain)
         if intake.is_internal_driver and intake.driver_id:
             _apply_driver_stat_delta(

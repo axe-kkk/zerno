@@ -12,6 +12,7 @@ const ICONS = {
     operation: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
     activate: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
     close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+    renew: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
     balance: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
     adjust: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>',
     price: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
@@ -24,12 +25,40 @@ function iconBtn(iconName, tooltip, cls = 'btn-icon-secondary') {
     return `<button class="btn-icon ${cls}" title="${tooltip}">${ICONS[iconName]}</button>`;
 }
 
+/** Текст мітки відсутніх даних (для <option> тощо, де HTML недоступний) */
+const EMPTY_VALUE_UA = 'Пусто';
+
+/** HTML-мітка «даних немає / не вказано» */
+function emptyValueHtml() {
+    return `<span class="empty-value" lang="uk">${EMPTY_VALUE_UA}</span>`;
+}
+
 let currentUser = null;
 let isSuperAdmin = false;
 let culturesCache = [];
 let vehicleTypesCache = [];
 let driversCache = [];
 let intakesCache = [];
+
+function intakeOnStock(intake) {
+    return intake && !intake.pending_quality && !intake.pending_tare;
+}
+
+function intakeStatusLabel(intake) {
+    if (!intake) return '';
+    if (intake.pending_tare && intake.pending_quality) return 'Очікує тару та %';
+    if (intake.pending_tare) return 'Очікує тару';
+    if (intake.pending_quality) return 'Очікує %';
+    return 'Підтверджено';
+}
+
+function intakeStatusBadgeClass(intake) {
+    if (!intake) return 'success';
+    if (intake.pending_tare) return 'danger';
+    if (intake.pending_quality) return 'warning';
+    return 'success';
+}
+
 let ownersCache = [];
 let purchaseStockCache = [];
 let purchasesCache = [];
@@ -54,13 +83,40 @@ let cancellingPaymentId = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     const token = localStorage.getItem('token');
+    const isCashPocket = document.body?.dataset?.app === 'cash-pocket';
     if (!token) {
-        window.location.href = 'login.html';
+        const loginUrl = new URL('login.html', window.location.href);
+        const page = (window.location.pathname.split('/').pop() || '').toLowerCase();
+        loginUrl.searchParams.set('next', page === 'pocket-kassa.html' ? 'pocket-kassa.html' : 'dashboard.html');
+        window.location.href = loginUrl.toString();
         return;
     }
 
-    initializeDashboard();
+    if (isCashPocket) {
+        initializeCashPocket().catch((err) => {
+            console.error('Помилка ініціалізації каси:', err);
+            showToast('Не вдалося завантажити дані. Перезавантажте сторінку.', 'error');
+        });
+    } else {
+        initializeDashboard().catch((err) => {
+            console.error('Помилка ініціалізації дашборда:', err);
+            showToast('Не вдалося завантажити дані. Перезавантажте сторінку.', 'error');
+        });
+    }
 });
+
+/** Мобільний окремий екран лише «Каса» (сторінка pocket-kassa.html, без посилання з основного UI). */
+async function initializeCashPocket() {
+    await loadUserInfo();
+    initLogout();
+    initCashForm();
+    initCashReportModal();
+    initCustomSelects();
+    await Promise.all([
+        loadCashBalance(),
+        loadCashTransactions()
+    ]);
+}
 
 async function initializeDashboard() {
     await loadUserInfo();
@@ -188,9 +244,14 @@ async function loadUserInfo() {
         isSuperAdmin = user.role === 'super_admin';
 
         const userName = user.full_name;
-        document.getElementById('user-name').textContent = userName;
-        document.getElementById('user-role').textContent =
-            isSuperAdmin ? 'Супер адмін' : 'Користувач';
+        const nameEl = document.getElementById('user-name');
+        const roleEl = document.getElementById('user-role');
+        if (nameEl) {
+            nameEl.textContent = userName;
+        }
+        if (roleEl) {
+            roleEl.textContent = isSuperAdmin ? 'Супер адмін' : 'Користувач';
+        }
 
         const initials = user.full_name
             .split(' ')
@@ -198,13 +259,18 @@ async function loadUserInfo() {
             .join('')
             .toUpperCase()
             .substring(0, 2);
-        document.getElementById('user-initials').textContent = initials || 'А';
+        const initialsEl = document.getElementById('user-initials');
+        if (initialsEl) initialsEl.textContent = initials || 'А';
 
         updateAdminVisibility();
     } catch (error) {
         console.error('Помилка завантаження даних користувача:', error);
         localStorage.removeItem('token');
-        window.location.href = 'login.html';
+        const loginUrl = new URL('login.html', window.location.href);
+        if (document.body?.dataset?.app === 'cash-pocket') {
+            loginUrl.searchParams.set('next', 'pocket-kassa.html');
+        }
+        window.location.href = loginUrl.toString();
     }
 }
 
@@ -340,12 +406,12 @@ async function loadDashboardStats() {
                 const date = t.created_at ? new Date(t.created_at).toLocaleString('uk-UA', {
                     day: '2-digit', month: '2-digit',
                     hour: '2-digit', minute: '2-digit'
-                }) : '—';
+                }) : emptyValueHtml();
                 return `
                     <div class="db-tx-item ${cls}">
                         <div class="db-tx-amount ${amtCls}">${sign}${formatAmount(t.amount)} ${escapeHtml(t.currency)}</div>
                         <div class="db-tx-details">
-                            <div class="db-tx-desc">${escapeHtml(t.description || '—')}</div>
+                            <div class="db-tx-desc">${t.description ? escapeHtml(t.description) : emptyValueHtml()}</div>
                             <div class="db-tx-date">${date}</div>
                         </div>
                     </div>`;
@@ -374,12 +440,12 @@ async function loadCashBalance() {
         if (usdEl) usdEl.textContent = formatCurrency(balance.usd_balance, 'USD');
         if (eurEl) eurEl.textContent = formatCurrency(balance.eur_balance, 'EUR');
 
-        document.getElementById('cash-uah').textContent =
-            formatCurrency(balance.uah_balance, 'UAH');
-        document.getElementById('cash-usd').textContent =
-            formatCurrency(balance.usd_balance, 'USD');
-        document.getElementById('cash-eur').textContent =
-            formatCurrency(balance.eur_balance, 'EUR');
+        const cashUah = document.getElementById('cash-uah');
+        const cashUsd = document.getElementById('cash-usd');
+        const cashEur = document.getElementById('cash-eur');
+        if (cashUah) cashUah.textContent = formatCurrency(balance.uah_balance, 'UAH');
+        if (cashUsd) cashUsd.textContent = formatCurrency(balance.usd_balance, 'USD');
+        if (cashEur) cashEur.textContent = formatCurrency(balance.eur_balance, 'EUR');
 
         // Load voucher debt for cash section
         try {
@@ -414,6 +480,9 @@ async function loadCashTransactions() {
     }
     const transactions = await response.json();
     const tableBody = document.querySelector('#cash-transactions-table tbody');
+    if (!tableBody) {
+        return;
+    }
     tableBody.innerHTML = '';
     if (!transactions.length) {
         tableBody.innerHTML = '<tr><td colspan="6" class="table-empty-message">Операцій ще немає</td></tr>';
@@ -426,11 +495,11 @@ async function loadCashTransactions() {
         const currSymbol = currSymbols[item.currency] || item.currency;
         row.innerHTML = `
             <td>${formatDate(item.created_at)}</td>
-            <td>${item.user_full_name || '—'}</td>
+            <td>${item.user_full_name ? escapeHtml(item.user_full_name) : emptyValueHtml()}</td>
             <td><strong>${currSymbol} ${item.currency}</strong></td>
             <td><span class="${isAdd ? 'td-delta-add' : 'td-delta-sub'}">${isAdd ? '+' : '-'}${formatAmount(Math.abs(item.amount))} ${currSymbol}</span></td>
             <td><span class="inline-badge ${isAdd ? 'issue' : 'receive'}">${isAdd ? 'Додано' : 'Віднято'}</span></td>
-            <td>${item.description || '<span class="td-secondary">—</span>'}</td>
+            <td>${item.description || emptyValueHtml()}</td>
         `;
         tableBody.appendChild(row);
     });
@@ -445,6 +514,9 @@ async function loadCultures() {
     culturesCache = await response.json();
 
     const select = document.getElementById('intake-culture');
+    if (!select) {
+        return;
+    }
     select.innerHTML = culturesCache
         .map(culture => `<option value="${culture.id}">${culture.name}</option>`)
         .join('');
@@ -502,8 +574,7 @@ async function loadCultures() {
 async function updateCulturePrice(cultureId, priceValue) {
     const price = parseFloat(priceValue);
     if (Number.isNaN(price) || price < 0) {
-        showToast('Вкажіть коректну ціну', 'error');
-        return;
+        return false;
     }
     const response = await apiFetch(`/grain/cultures/${cultureId}/price`, {
         method: 'PATCH',
@@ -512,9 +583,9 @@ async function updateCulturePrice(cultureId, priceValue) {
     if (response.ok) {
         await loadCultures();
         await loadStock();
-    } else {
-        showToast('Не вдалося оновити ціну', 'error');
+        return true;
     }
+    return false;
 }
 
 async function loadVehicleTypes() {
@@ -525,6 +596,9 @@ async function loadVehicleTypes() {
     }
     vehicleTypesCache = await response.json();
     const select = document.getElementById('intake-vehicle');
+    if (!select) {
+        return;
+    }
     select.innerHTML = vehicleTypesCache
         .map(vehicle => `<option value="${vehicle.id}">${vehicle.name}</option>`)
         .join('');
@@ -549,6 +623,9 @@ async function loadDrivers() {
     driversCache = await response.json();
 
     const select = document.getElementById('intake-driver');
+    if (!select) {
+        return;
+    }
     select.innerHTML = driversCache
         .map(driver => `<option value="${driver.id}">${driver.full_name}</option>`)
         .join('');
@@ -575,7 +652,7 @@ async function loadDrivers() {
                         ${driver.full_name}
                     </td>
                     <td>
-                        ${driver.phone || '-'}
+                        ${driver.phone ? escapeHtml(driver.phone) : emptyValueHtml()}
                     </td>
                     <td class="actions-cell"></td>
                 `;
@@ -665,6 +742,7 @@ function initShipmentsForm() {
     if (!form || !cultureSelect) {
         return;
     }
+    formBindInvalidHighlightClearing(form);
 
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -675,11 +753,13 @@ function initShipmentsForm() {
         const driverVal = document.getElementById('shipment-driver')?.value;
         const vehicleVal = document.getElementById('shipment-vehicle')?.value;
         if (!destination) {
-            showToast('Вкажіть куди відправляємо', 'error');
+            formShowValidationError(form, 'shipment-message', 'Вкажіть куди відправляємо', ['shipment-destination']);
             return;
         }
         if (!cultureId || Number.isNaN(quantity) || quantity <= 0) {
-            showToast('Вкажіть коректну кількість', 'error');
+            const msg = !cultureId ? 'Оберіть культуру' : 'Вкажіть коректну кількість';
+            const ids = !cultureId ? ['shipment-culture'] : ['shipment-quantity'];
+            formShowValidationError(form, 'shipment-message', msg, ids);
             return;
         }
         const payload = {
@@ -697,6 +777,7 @@ function initShipmentsForm() {
         });
         if (response.ok) {
             showToast('Відправку збережено', 'success');
+            clearFormValidationState(form, 'shipment-message');
             form.reset();
             closeShipmentCreateModal();
             await loadShipments();
@@ -704,7 +785,7 @@ function initShipmentsForm() {
             await loadStockAdjustments();
         } else {
             const error = await response.json().catch(() => null);
-            showToast(error?.detail || 'Помилка збереження', 'error');
+            setFormMessage('shipment-message', error?.detail || 'Помилка збереження', true);
         }
     });
 }
@@ -717,6 +798,8 @@ function initShipmentCreateModal() {
     if (!modal || !openBtn || !closeBtn || !overlay) return;
 
     openBtn.addEventListener('click', () => {
+        const form = document.getElementById('shipment-form');
+        if (form) clearFormValidationState(form, 'shipment-message');
         populateShipmentSelects();
         modal.classList.remove('hidden');
         initCustomSelects();
@@ -727,6 +810,8 @@ function initShipmentCreateModal() {
 
 function closeShipmentCreateModal() {
     const modal = document.getElementById('shipment-create-modal');
+    const form = document.getElementById('shipment-form');
+    if (form) clearFormValidationState(form, 'shipment-message');
     if (modal) modal.classList.add('hidden');
 }
 
@@ -734,11 +819,11 @@ function populateShipmentSelects() {
     const driverSelect = document.getElementById('shipment-driver');
     const vehicleSelect = document.getElementById('shipment-vehicle');
     if (driverSelect) {
-        driverSelect.innerHTML = '<option value="">— не обрано —</option>' +
+        driverSelect.innerHTML = '<option value="">Пусто (не обрано)</option>' +
             driversCache.map(d => `<option value="${d.id}">${d.full_name}</option>`).join('');
     }
     if (vehicleSelect) {
-        vehicleSelect.innerHTML = '<option value="">— не обрано —</option>' +
+        vehicleSelect.innerHTML = '<option value="">Пусто (не обрано)</option>' +
             vehicleTypesCache.map(v => `<option value="${v.id}">${v.name}</option>`).join('');
     }
 }
@@ -763,7 +848,7 @@ function updateShipmentCultureOptions() {
 function getPaymentFormatLabel(val) {
     if (val === 'cash') return 'Готівка';
     if (val === 'cashless') return 'Безготівковий';
-    return '—';
+    return emptyValueHtml();
 }
 
 function renderShipmentsTable(items) {
@@ -791,9 +876,9 @@ function renderShipmentsTable(items) {
             <td><span class="inline-badge grain">${getCultureName(item.culture_id)}</span></td>
             <td class="td-weight">${formatWeight(item.quantity_kg)} кг</td>
             <td>${getPaymentFormatLabel(item.payment_format)}</td>
-            <td>${item.driver_id ? getDriverName(item.driver_id) : '—'}</td>
-            <td>${item.vehicle_type_id ? getVehicleName(item.vehicle_type_id) : '—'}</td>
-            <td>${getUserName(item.created_by_user_id)}</td>
+            <td>${item.driver_id ? getDriverName(item.driver_id) : emptyValueHtml()}</td>
+            <td>${item.vehicle_type_id ? getVehicleName(item.vehicle_type_id) : emptyValueHtml()}</td>
+            <td>${getUserNameHtml(item.created_by_user_id)}</td>
             <td class="actions-cell"></td>
         `;
         const actionsCell = row.querySelector('.actions-cell');
@@ -817,8 +902,10 @@ function initShipmentsEditModal() {
     if (!modal || !closeBtn || !overlay || !form) {
         return;
     }
+    formBindInvalidHighlightClearing(form);
     const closeModal = () => {
         editingShipmentId = null;
+        clearFormValidationState(form, 'shipment-edit-message');
         modal.classList.add('hidden');
     };
     closeBtn.addEventListener('click', closeModal);
@@ -836,11 +923,13 @@ function initShipmentsEditModal() {
         const driverVal = document.getElementById('shipment-edit-driver')?.value;
         const vehicleVal = document.getElementById('shipment-edit-vehicle')?.value;
         if (!destination) {
-            showToast('Вкажіть куди відправляємо', 'error');
+            formShowValidationError(form, 'shipment-edit-message', 'Вкажіть куди відправляємо', ['shipment-edit-destination']);
             return;
         }
         if (!cultureId || Number.isNaN(quantity) || quantity <= 0) {
-            showToast('Вкажіть коректну кількість', 'error');
+            const msg = !cultureId ? 'Оберіть культуру' : 'Вкажіть коректну кількість';
+            const ids = !cultureId ? ['shipment-edit-culture'] : ['shipment-edit-quantity'];
+            formShowValidationError(form, 'shipment-edit-message', msg, ids);
             return;
         }
         const payload = {
@@ -858,13 +947,14 @@ function initShipmentsEditModal() {
         });
         if (response.ok) {
             showToast('Відправку оновлено', 'success');
+            clearFormValidationState(form, 'shipment-edit-message');
             await loadShipments();
             await loadStock();
             await loadStockAdjustments();
             closeModal();
         } else {
             const error = await response.json().catch(() => null);
-            showToast(error?.detail || 'Помилка оновлення', 'error');
+            setFormMessage('shipment-edit-message', error?.detail || 'Помилка оновлення', true);
         }
     });
 }
@@ -889,19 +979,20 @@ function openShipmentEditModal(item) {
 
     const driverSelect = document.getElementById('shipment-edit-driver');
     if (driverSelect) {
-        driverSelect.innerHTML = '<option value="">— не обрано —</option>' +
+        driverSelect.innerHTML = '<option value="">Пусто (не обрано)</option>' +
             driversCache.map(d => `<option value="${d.id}">${d.full_name}</option>`).join('');
         driverSelect.value = item.driver_id ? String(item.driver_id) : '';
     }
 
     const vehicleSelect = document.getElementById('shipment-edit-vehicle');
     if (vehicleSelect) {
-        vehicleSelect.innerHTML = '<option value="">— не обрано —</option>' +
+        vehicleSelect.innerHTML = '<option value="">Пусто (не обрано)</option>' +
             vehicleTypesCache.map(v => `<option value="${v.id}">${v.name}</option>`).join('');
         vehicleSelect.value = item.vehicle_type_id ? String(item.vehicle_type_id) : '';
     }
 
     initCustomSelects();
+    clearFormValidationState(document.getElementById('shipment-edit-form'), 'shipment-edit-message');
     modal.classList.remove('hidden');
 }
 
@@ -974,6 +1065,11 @@ function getUserName(userId) {
     }
     const user = usersCache?.find?.(item => item.id === userId);
     return user ? user.full_name : '-';
+}
+
+function getUserNameHtml(userId) {
+    const name = getUserName(userId);
+    return name === '-' ? emptyValueHtml() : escapeHtml(name);
 }
 
 function openDriverDeleteModal(driverId) {
@@ -1088,7 +1184,8 @@ function openUserEditModal(user) {
     }
     document.getElementById('user-edit-is-active').checked = user.is_active;
     updateUserStatusLabel(user.is_active);
-    setFormMessage('user-edit-message', '', false);
+    const uf = document.getElementById('user-edit-form');
+    if (uf) clearFormValidationState(uf, 'user-edit-message');
     modal.classList.remove('hidden');
 }
 
@@ -1110,9 +1207,12 @@ function initUserEditModal() {
     if (!modal || !closeBtn || !overlay || !form || !passwordToggle || !deleteBtn) {
         return;
     }
+
+    formBindInvalidHighlightClearing(form);
     
     const closeModal = () => {
         editingUserId = null;
+        clearFormValidationState(form, 'user-edit-message');
         modal.classList.add('hidden');
     };
     
@@ -1161,7 +1261,7 @@ function initUserEditModal() {
         const isActive = document.getElementById('user-edit-is-active').checked;
         
         if (!fullName) {
-            setFormMessage('user-edit-message', 'Вкажіть ПІБ', true);
+            formShowValidationError(form, 'user-edit-message', 'Вкажіть ПІБ', ['user-edit-full-name']);
             return;
         }
         
@@ -1187,6 +1287,7 @@ function initUserEditModal() {
         
         if (response.ok) {
             showToast('Користувача оновлено', 'success');
+            clearFormValidationState(form, 'user-edit-message');
             await loadUsers();
             closeModal();
         } else {
@@ -1282,7 +1383,7 @@ function renderOwnersTable(owners) {
         const row = document.createElement('tr');
         row.innerHTML = `
             <td><strong>${owner.full_name}</strong></td>
-            <td>${owner.phone || '<span class="td-secondary">—</span>'}</td>
+            <td>${owner.phone || emptyValueHtml()}</td>
             <td class="actions-cell">
                 <button class="btn-icon btn-icon-secondary" data-edit-owner="${owner.id}" title="Редагувати">${ICONS.edit}</button>
                 <button class="btn-icon btn-icon-secondary" data-balance="${owner.id}" title="Баланс">${ICONS.balance}</button>
@@ -1341,7 +1442,7 @@ async function openReserveActivateModal(contractId) {
         items.forEach(item => {
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td>${escapeHtml(item.item_name || '—')}</td>
+                <td>${item.item_name ? escapeHtml(item.item_name) : emptyValueHtml()}</td>
                 <td>${Number(item.quantity_kg).toFixed(2)} кг</td>
                 <td><input type="number" step="0.01" min="0" class="form-input reserve-activate-price" data-item-id="${item.id}" placeholder="0.00" value=""></td>
             `;
@@ -1604,7 +1705,7 @@ async function openFcContractDetailModal(contractId) {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td>${dirLabels[item.direction] || item.direction}</td>
-                    <td>${item.item_name || '—'}</td>
+                    <td>${item.item_name ? escapeHtml(item.item_name) : emptyValueHtml()}</td>
                     <td>${formatWeight(item.quantity_kg)}</td>
                     <td>${formatAmount(item.price_per_kg)}</td>
                     <td>${formatAmount(item.total_value_uah)}</td>
@@ -1631,8 +1732,8 @@ async function openFcContractDetailModal(contractId) {
                 tr.innerHTML = `
                     <td>${formatDate(p.payment_date)}</td>
                     <td>${payTypeLabels[p.payment_type] || p.payment_type}</td>
-                    <td>${p.item_name || '—'}</td>
-                    <td>${p.quantity_kg != null ? formatWeight(p.quantity_kg) : '—'}</td>
+                    <td>${p.item_name ? escapeHtml(p.item_name) : emptyValueHtml()}</td>
+                    <td>${p.quantity_kg != null ? formatWeight(p.quantity_kg) : emptyValueHtml()}</td>
                     <td>${formatAmount(p.amount_uah)}</td>
                     <td>${statusLabel}</td>
                 `;
@@ -1703,15 +1804,23 @@ function openFcPaymentDetailModal(payment) {
     };
 
     const contract = contractsMap.get(payment.contract_id);
-    const ownerName = contract ? (ownersMap.get(contract.owner_id) || `#${contract.owner_id}`) : '—';
+    const ownerName = contract ? (ownersMap.get(contract.owner_id) || `#${contract.owner_id}`) : EMPTY_VALUE_UA;
 
     document.getElementById('fc-pay-detail-id').textContent = `#${payment.id}`;
     document.getElementById('fc-pay-detail-date').textContent = formatDate(payment.payment_date);
     document.getElementById('fc-pay-detail-type').textContent = typeLabels[payment.payment_type] || payment.payment_type;
     document.getElementById('fc-pay-detail-owner').textContent = ownerName;
     document.getElementById('fc-pay-detail-contract').textContent = `#${payment.contract_id}`;
-    document.getElementById('fc-pay-detail-item').textContent = payment.item_name || '—';
-    document.getElementById('fc-pay-detail-qty').textContent = payment.quantity_kg != null ? formatWeight(payment.quantity_kg) + ' кг' : '—';
+    const itemEl = document.getElementById('fc-pay-detail-item');
+    if (itemEl) {
+        itemEl.innerHTML = payment.item_name ? escapeHtml(payment.item_name) : emptyValueHtml();
+    }
+    const qtyEl = document.getElementById('fc-pay-detail-qty');
+    if (qtyEl) {
+        qtyEl.innerHTML = payment.quantity_kg != null
+            ? escapeHtml(formatWeight(payment.quantity_kg) + ' кг')
+            : emptyValueHtml();
+    }
 
     const curr = (payment.currency || 'UAH').toUpperCase();
     document.getElementById('fc-pay-detail-amount').textContent = `${formatAmount(payment.amount)} ${curr}`;
@@ -2106,11 +2215,11 @@ function renderFarmerContractPaymentsTable(payments) {
         const row = document.createElement('tr');
         if (payment.is_cancelled) row.classList.add('row-cancelled');
         const contract = contractsMap.get(payment.contract_id);
-        const ownerName = contract ? (ownersMap.get(contract.owner_id) || `#${contract.owner_id}`) : '—';
+        const ownerName = contract ? (ownersMap.get(contract.owner_id) || `#${contract.owner_id}`) : emptyValueHtml();
         const typeInfo = typeLabels[payment.payment_type] || { text: payment.payment_type, cls: '' };
         let amountLabel = '';
         if (payment.payment_type === 'goods_issue' || payment.payment_type === 'goods_receive') {
-            const itemName = payment.item_name || '—';
+            const itemName = payment.item_name ? escapeHtml(payment.item_name) : emptyValueHtml();
             const isCash = payment.item_name === 'Готівка';
             const amt = isCash ? (payment.amount ?? payment.quantity_kg ?? 0) : (payment.quantity_kg || 0);
             const unit = isCash ? ((payment.currency || 'UAH').toUpperCase()) : 'кг';
@@ -2177,6 +2286,9 @@ function initFarmerContractModal() {
     const balanceTotalLabel = document.getElementById('farmer-contract-total-balance');
     if (!modal || !openBtn || !saveBtn || !addFarmerItemBtn || !addCompanyItemBtn || !ownerInput || !ownerIdInput || !ownerSuggestions || !farmerItemsBody || !companyItemsBody || !farmerTotalLabel || !companyTotalLabel || !balanceTotalLabel) return;
 
+    const fcFormRoot = modal.querySelector('.modal-body');
+    if (fcFormRoot) formBindInvalidHighlightClearing(fcFormRoot);
+
     const farmerSection = document.getElementById('fc-section-farmer');
     const companySection = document.querySelector('.fc-section--company');
     const companyTitle = document.getElementById('fc-company-title');
@@ -2205,7 +2317,7 @@ function initFarmerContractModal() {
     const loadFarmerBalanceForPayment = async (ownerId) => {
         if (!ownerId) {
             fcFarmerBalanceCards.innerHTML = '<div class="fcp-grain-empty">Оберіть фермера</div>';
-            fcFarmerBalanceTotal.textContent = '—';
+            fcFarmerBalanceTotal.innerHTML = emptyValueHtml();
             paymentFarmerBalance = [];
             return;
         }
@@ -2331,6 +2443,7 @@ function initFarmerContractModal() {
     };
 
     const resetForm = () => {
+        if (fcFormRoot) clearFormValidationState(fcFormRoot, 'farmer-contract-message');
         ownerInput.value = '';
         ownerIdInput.value = '';
         ownerSuggestions.innerHTML = '';
@@ -2346,7 +2459,7 @@ function initFarmerContractModal() {
         if (fcPaymentRateField) fcPaymentRateField.classList.add('hidden');
         if (fcPaymentEquiv) fcPaymentEquiv.textContent = '';
         if (fcFarmerBalanceCards) fcFarmerBalanceCards.innerHTML = '<div class="fcp-grain-empty">Оберіть фермера</div>';
-        if (fcFarmerBalanceTotal) fcFarmerBalanceTotal.textContent = '—';
+        if (fcFarmerBalanceTotal) fcFarmerBalanceTotal.innerHTML = emptyValueHtml();
         applyContractType();
     };
 
@@ -2354,7 +2467,10 @@ function initFarmerContractModal() {
         resetForm();
         modal.classList.remove('hidden');
     };
-    const closeModal = () => modal.classList.add('hidden');
+    const closeModal = () => {
+        if (fcFormRoot) clearFormValidationState(fcFormRoot, 'farmer-contract-message');
+        modal.classList.add('hidden');
+    };
 
     openBtn.addEventListener('click', openModal);
     closeBtn?.addEventListener('click', closeModal);
@@ -2380,7 +2496,7 @@ function initFarmerContractModal() {
     saveBtn.addEventListener('click', async () => {
         const ownerId = ownerIdInput.value ? parseInt(ownerIdInput.value, 10) : null;
         if (!ownerId) {
-            showToast('Оберіть фермера зі списку', 'warning');
+            formShowValidationError(fcFormRoot, 'farmer-contract-message', 'Оберіть фермера зі списку', ['farmer-contract-owner']);
             return;
         }
         const type = typeSelect.value;
@@ -2393,16 +2509,16 @@ function initFarmerContractModal() {
 
         if (isPayment) {
             if (!farmerItems.length) {
-                showToast('Вкажіть зерно для обміну на гроші', 'warning');
+                formShowValidationError(fcFormRoot, 'farmer-contract-message', 'Вкажіть зерно для обміну на гроші', [], [farmerSection].filter(Boolean));
                 return;
             }
         } else {
             if (!companyItems.length && (!farmerItems.length)) {
-                showToast('Додайте позиції контракту', 'warning');
+                formShowValidationError(fcFormRoot, 'farmer-contract-message', 'Додайте позиції контракту', [], [companySection, farmerSection].filter(Boolean));
                 return;
             }
             if (!companyItems.length) {
-                showToast('Додайте що фермер отримує', 'warning');
+                formShowValidationError(fcFormRoot, 'farmer-contract-message', 'Додайте що фермер отримує', [], [companySection].filter(Boolean));
                 return;
             }
         }
@@ -2421,7 +2537,7 @@ function initFarmerContractModal() {
             if (payload.currency !== 'UAH') {
                 const rate = parseFloat(fcPaymentRate?.value) || 0;
                 if (!rate) {
-                    showToast('Вкажіть курс валюти', 'warning');
+                    formShowValidationError(fcFormRoot, 'farmer-contract-message', 'Вкажіть курс валюти', ['fc-payment-rate']);
                     return;
                 }
                 payload.exchange_rate = rate;
@@ -2437,10 +2553,11 @@ function initFarmerContractModal() {
             });
             if (!response.ok) {
                 const error = await response.json().catch(() => null);
-                showToast(error?.detail || 'Не вдалося створити контракт', 'error');
+                setFormMessage('farmer-contract-message', error?.detail || 'Не вдалося створити контракт', true);
                 return;
             }
             showToast(isPayment ? 'Контракт виплати створено та оплачено' : 'Контракт створено', 'success');
+            if (fcFormRoot) clearFormValidationState(fcFormRoot, 'farmer-contract-message');
             closeModal();
             await loadFarmerContracts();
             await loadFarmerContractPayments();
@@ -2473,8 +2590,8 @@ function initFarmerContractModal() {
                     <div class="fc-item-suggestions hidden"></div>
                 </div>
                 <input type="number" class="farmer-contract-item-qty" min="0" step="0.01" placeholder="0">
-                <span class="fc-item__price-placeholder">—</span>
-                <span class="fc-item__total farmer-contract-item-total">—</span>
+                <span class="fc-item__price-placeholder">${emptyValueHtml()}</span>
+                <span class="fc-item__total farmer-contract-item-total">${emptyValueHtml()}</span>
                 <button class="fc-item__remove farmer-contract-item-remove" title="Видалити">×</button>
             `;
             targetBody.appendChild(card);
@@ -2618,7 +2735,7 @@ function initFarmerContractModal() {
                 priceInput.readOnly = !isDebtContract;
             } else if (type === 'purchase') {
                 if (direction === 'farmer') {
-                    if (itemSel) itemSel.innerHTML = '<option value="">—</option>';
+                    if (itemSel) itemSel.innerHTML = `<option value="">${EMPTY_VALUE_UA}</option>`;
                     priceInput.value = '';
                     priceInput.readOnly = true;
                 } else {
@@ -2703,7 +2820,7 @@ function initFarmerContractModal() {
         const removeBtn = card.querySelector('.farmer-contract-item-remove');
 
         const updateRowTotal = () => {
-            card.querySelector('.farmer-contract-item-total').textContent = '—';
+            card.querySelector('.farmer-contract-item-total').innerHTML = emptyValueHtml();
             updateContractTotal();
         };
 
@@ -2923,6 +3040,9 @@ function initFarmerContractPaymentModal() {
 
     if (!modal || !saveBtn) return;
 
+    const fcpFormRoot = modal.querySelector('.modal-body');
+    if (fcpFormRoot) formBindInvalidHighlightClearing(fcpFormRoot);
+
     let currentPaymentType = 'goods_issue';
     let farmerBalanceData = [];
     let contractDetail = null;
@@ -2966,8 +3086,8 @@ function initFarmerContractPaymentModal() {
             const price = culture ? culture.price_per_kg : 0;
             if (!price || price <= 0) return null;
             const recommendedKg = balance / price;
-            const name = item.culture_name || '—';
-            return { culture_id: item.culture_id, cultureName: name, price, recommendedKg };
+            const cultureName = item.culture_name ? item.culture_name : emptyValueHtml();
+            return { culture_id: item.culture_id, cultureName, price, recommendedKg };
         }).filter(Boolean);
 
         if (!lines.length) {
@@ -3004,15 +3124,16 @@ function initFarmerContractPaymentModal() {
     }
 
     const resetForm = () => {
+        if (fcpFormRoot) clearFormValidationState(fcpFormRoot, 'fcp-validation-message');
         selectedIssueItemId = null;
         selectedReceiveItemId = null;
-        issueSelectedEl.textContent = '—';
+        issueSelectedEl.innerHTML = emptyValueHtml();
         issueQtyInput.value = '';
         issueQtyInput.placeholder = '0.00';
         const qtyLabel = document.getElementById('fcp-issue-qty-label');
         if (qtyLabel) qtyLabel.textContent = 'Кількість';
         issueEquiv.textContent = '';
-        receiveSelectedEl.textContent = '—';
+        receiveSelectedEl.innerHTML = emptyValueHtml();
         receiveQtyInput.value = '';
         receiveEquiv.textContent = '';
         cashAmountInput.value = '';
@@ -3085,7 +3206,7 @@ function initFarmerContractPaymentModal() {
                     : `${typeLabels[item.item_type] || item.item_type} • ${fmtQty} ${unit} × ${formatAmount(item.price_per_kg)} грн`;
                 card.innerHTML = `
                     <div class="fcp-ci-info">
-                        <span class="fcp-ci-name">${item.item_name || '—'}</span>
+                        <span class="fcp-ci-name">${item.item_name ? escapeHtml(item.item_name) : emptyValueHtml()}</span>
                         <span class="fcp-ci-meta">${metaStr}</span>
                     </div>
                     <div class="fcp-ci-progress">
@@ -3263,7 +3384,10 @@ function initFarmerContractPaymentModal() {
     };
     openFarmerContractPaymentModal = openModal;
 
-    const closeModal = () => modal.classList.add('hidden');
+    const closeModal = () => {
+        if (fcpFormRoot) clearFormValidationState(fcpFormRoot, 'fcp-validation-message');
+        modal.classList.add('hidden');
+    };
 
     closeBtn?.addEventListener('click', closeModal);
     cancelBtn?.addEventListener('click', closeModal);
@@ -3273,6 +3397,7 @@ function initFarmerContractPaymentModal() {
     allTabs.forEach(tab => {
         tab?.addEventListener('click', () => {
             if (tab.classList.contains('fcp-tab--hidden')) return;
+            if (fcpFormRoot) clearFormValidationState(fcpFormRoot, 'fcp-validation-message');
             switchTab(tab.dataset.type);
         });
     });
@@ -3365,31 +3490,54 @@ function initFarmerContractPaymentModal() {
         let payload = { payment_type: type };
 
         if (type === 'goods_issue') {
-            if (!selectedIssueItemId) { showToast('Оберіть позицію для видачі', 'warning'); return; }
+            if (!selectedIssueItemId) {
+                formShowValidationError(fcpFormRoot, 'fcp-validation-message', 'Оберіть позицію для видачі', [], [sectionIssue].filter(Boolean));
+                return;
+            }
             const qty = parseFloat(issueQtyInput.value) || 0;
-            if (!qty) { showToast('Вкажіть кількість', 'warning'); return; }
+            if (!qty) {
+                formShowValidationError(fcpFormRoot, 'fcp-validation-message', 'Вкажіть кількість', ['fcp-issue-qty']);
+                return;
+            }
             payload.contract_item_id = selectedIssueItemId;
             payload.quantity_kg = qty;
         } else if (type === 'goods_receive') {
-            if (!selectedReceiveItemId) { showToast('Оберіть позицію для прийому', 'warning'); return; }
+            if (!selectedReceiveItemId) {
+                formShowValidationError(fcpFormRoot, 'fcp-validation-message', 'Оберіть позицію для прийому', [], [sectionReceive].filter(Boolean));
+                return;
+            }
             const qty = parseFloat(receiveQtyInput.value) || 0;
-            if (!qty) { showToast('Вкажіть кількість', 'warning'); return; }
+            if (!qty) {
+                formShowValidationError(fcpFormRoot, 'fcp-validation-message', 'Вкажіть кількість', ['fcp-receive-qty']);
+                return;
+            }
             payload.contract_item_id = selectedReceiveItemId;
             payload.quantity_kg = qty;
         } else if (type === 'cash') {
             const amount = parseFloat(cashAmountInput.value) || 0;
-            if (!amount) { showToast('Вкажіть суму', 'warning'); return; }
+            if (!amount) {
+                formShowValidationError(fcpFormRoot, 'fcp-validation-message', 'Вкажіть суму', ['fcp-cash-amount']);
+                return;
+            }
             payload.amount = amount;
             payload.currency = cashCurrencySelect.value;
             if (payload.currency !== 'UAH') {
                 const rate = parseFloat(cashRateInput.value) || 0;
-                if (!rate) { showToast('Вкажіть курс', 'warning'); return; }
+                if (!rate) {
+                    formShowValidationError(fcpFormRoot, 'fcp-validation-message', 'Вкажіть курс', ['fcp-cash-rate']);
+                    return;
+                }
                 payload.exchange_rate = rate;
             }
         } else if (type === 'grain') {
             const cultureId = grainCultureSelect.value ? parseInt(grainCultureSelect.value, 10) : null;
             const qty = parseFloat(grainQtyInput.value) || 0;
-            if (!cultureId || !qty) { showToast('Вкажіть культуру та кількість', 'warning'); return; }
+            if (!cultureId || !qty) {
+                const msg = !cultureId ? 'Оберіть культуру' : 'Вкажіть кількість';
+                const ids = !cultureId ? ['fcp-grain-culture'] : ['fcp-grain-qty'];
+                formShowValidationError(fcpFormRoot, 'fcp-validation-message', msg, ids);
+                return;
+            }
             payload.culture_id = cultureId;
             payload.quantity_kg = qty;
         }
@@ -3403,10 +3551,11 @@ function initFarmerContractPaymentModal() {
             });
             if (!response.ok) {
                 const error = await response.json().catch(() => null);
-                showToast(error?.detail || 'Не вдалося зберегти', 'error');
+                setFormMessage('fcp-validation-message', error?.detail || 'Не вдалося зберегти', true);
                 return;
             }
             showToast('Операцію збережено', 'success');
+            if (fcpFormRoot) clearFormValidationState(fcpFormRoot, 'fcp-validation-message');
             closeModal();
             await loadFarmerContracts();
             await loadFarmerContractPayments();
@@ -3533,6 +3682,7 @@ function buildDriverDeliveriesData() {
             gross_weight_kg: intake.gross_weight_kg,
             accepted_weight_kg: intake.accepted_weight_kg,
             pending_quality: intake.pending_quality,
+            pending_tare: intake.pending_tare,
         });
     });
     shipmentsCache.filter(s => s.driver_id).forEach(ship => {
@@ -3548,6 +3698,7 @@ function buildDriverDeliveriesData() {
             gross_weight_kg: null,
             accepted_weight_kg: ship.quantity_kg,
             pending_quality: false,
+            pending_tare: false,
         });
     });
     return items;
@@ -3609,13 +3760,13 @@ function renderDriverDeliveriesTable(items) {
             <td>${formatDate(item.created_at)}</td>
             <td>${typeBadge}</td>
             <td><strong>${getDriverName(item.driver_id)}</strong></td>
-            <td>${driver?.phone || '<span class="td-secondary">—</span>'}</td>
-            <td>${item.vehicle_type_id ? getVehicleName(item.vehicle_type_id) : '<span class="td-secondary">—</span>'}</td>
+            <td>${driver?.phone || emptyValueHtml()}</td>
+            <td>${item.vehicle_type_id ? getVehicleName(item.vehicle_type_id) : emptyValueHtml()}</td>
             <td>${item.has_trailer ? '<span class="status-badge success">Так</span>' : '<span class="td-secondary">Ні</span>'}</td>
             <td><span class="inline-badge grain">${getCultureName(item.culture_id)}</span></td>
-            <td>${item.destination || '<span class="td-secondary">—</span>'}</td>
-            <td class="td-weight">${formatWeight(item.quantity_kg)} кг</td>
-            <td class="td-weight">${item.pending_quality ? '<span class="status-badge warning">Очікує</span>' : formatWeight(item.accepted_weight_kg) + ' кг'}</td>
+            <td>${item.destination || emptyValueHtml()}</td>
+            <td class="td-weight">${isIntake && item.pending_tare ? emptyValueHtml() : formatWeight(item.quantity_kg) + ' кг'}</td>
+            <td class="td-weight">${item._type === 'intake' && (item.pending_quality || item.pending_tare) ? `<span class="status-badge ${item.pending_tare ? 'danger' : 'warning'}">Очікує</span>` : formatWeight(item.accepted_weight_kg) + ' кг'}</td>
         `;
         tableBody.appendChild(row);
     });
@@ -3712,8 +3863,8 @@ function renderFarmerIntakesTable(intakes) {
     hint.textContent = '';
     rows.forEach(intake => {
         const row = document.createElement('tr');
-        const ownerName = intake.owner_full_name || '—';
-        const ownerPhone = intake.owner_phone || '<span class="td-secondary">—</span>';
+        const ownerName = intake.owner_full_name ? escapeHtml(intake.owner_full_name) : emptyValueHtml();
+        const ownerPhone = intake.owner_phone ? escapeHtml(intake.owner_phone) : emptyValueHtml();
         row.innerHTML = `
             <td>${formatDate(intake.created_at)}</td>
             <td><strong>${ownerName}</strong></td>
@@ -3721,7 +3872,7 @@ function renderFarmerIntakesTable(intakes) {
             <td><span class="inline-badge grain">${getCultureName(intake.culture_id)}</span></td>
             <td class="td-weight">${formatWeight(intake.gross_weight_kg)} кг</td>
             <td class="td-weight">${formatWeight(intake.net_weight_kg)} кг</td>
-            <td class="td-weight">${intake.pending_quality ? '<span class="status-badge warning">Очікує</span>' : formatWeight(intake.accepted_weight_kg) + ' кг'}</td>
+            <td class="td-weight">${(intake.pending_quality || intake.pending_tare) ? `<span class="status-badge ${intake.pending_tare ? 'danger' : 'warning'}">Очікує</span>` : formatWeight(intake.accepted_weight_kg) + ' кг'}</td>
         `;
         tableBody.appendChild(row);
     });
@@ -3740,20 +3891,23 @@ function renderIntakeTable(intakes) {
     }
     intakes.forEach(intake => {
         const row = document.createElement('tr');
-        if (intake.pending_quality) {
+        if (intake.pending_tare) {
+            row.classList.add('row-pending-tare');
+        } else if (intake.pending_quality) {
             row.classList.add('row-pending');
         }
         const cultureName = getCultureName(intake.culture_id);
-        const ownerName = intake.is_own_grain ? 'Підприємство' : (intake.owner_full_name || '—');
+        const ownerName = intake.is_own_grain ? 'Підприємство' : (intake.owner_full_name ? escapeHtml(intake.owner_full_name) : emptyValueHtml());
         const combineBadge = intake.is_own_combine ? ' <span class="intake-combine-badge" title="Наш комбайн">Комбайн</span>' : '';
-        const statusLabel = intake.pending_quality ? 'Очікує %' : 'Підтверджено';
+        const statusLabel = intakeStatusLabel(intake);
+        const badgeClass = intakeStatusBadgeClass(intake);
         row.innerHTML = `
             <td>${formatDate(intake.created_at)}</td>
             <td><span class="inline-badge grain">${cultureName}</span></td>
-            <td class="td-weight">${formatWeight(intake.net_weight_kg)} кг</td>
-            <td class="td-weight">${intake.pending_quality ? '<span class="td-secondary">—</span>' : formatWeight(intake.accepted_weight_kg) + ' кг'}</td>
+            <td class="td-weight">${intake.pending_tare ? emptyValueHtml() : formatWeight(intake.net_weight_kg) + ' кг'}</td>
+            <td class="td-weight">${intakeOnStock(intake) ? formatWeight(intake.accepted_weight_kg) + ' кг' : emptyValueHtml()}</td>
             <td><strong>${ownerName}</strong>${combineBadge}</td>
-            <td><span class="status-badge ${intake.pending_quality ? 'warning' : 'success'}">${statusLabel}</span></td>
+            <td><span class="status-badge ${badgeClass}">${statusLabel}</span></td>
             <td class="actions-cell">
                 <button class="btn-icon btn-icon-secondary" data-view="${intake.id}" title="Переглянути">${ICONS.view}</button>
                 <button class="btn-icon btn-icon-secondary" data-edit="${intake.id}" title="Редагувати">${ICONS.edit}</button>
@@ -4036,8 +4190,11 @@ function initFarmerEditModal() {
     const form = document.getElementById('farmer-edit-form');
     if (!modal || !closeBtn || !overlay || !form) return;
 
+    formBindInvalidHighlightClearing(form);
+
     const closeModal = () => {
         editingFarmerId = null;
+        clearFormValidationState(form, 'farmer-edit-message');
         modal.classList.add('hidden');
     };
     closeBtn.addEventListener('click', closeModal);
@@ -4049,7 +4206,7 @@ function initFarmerEditModal() {
         const name = document.getElementById('farmer-edit-name').value.trim();
         const phone = document.getElementById('farmer-edit-phone').value.trim();
         if (!name) {
-            setFormMessage('farmer-edit-message', 'Вкажіть ПІБ фермера', true);
+            formShowValidationError(form, 'farmer-edit-message', 'Вкажіть ПІБ фермера', ['farmer-edit-name']);
             return;
         }
         const response = await apiFetch(`/grain/owners/${editingFarmerId}`, {
@@ -4058,6 +4215,7 @@ function initFarmerEditModal() {
         });
         if (response.ok) {
             showToast('Фермера оновлено', 'success');
+            clearFormValidationState(form, 'farmer-edit-message');
             closeModal();
             await loadOwnersList('');
         } else {
@@ -4073,13 +4231,16 @@ function openFarmerEditModal(owner) {
     editingFarmerId = owner.id;
     document.getElementById('farmer-edit-name').value = owner.full_name;
     document.getElementById('farmer-edit-phone').value = owner.phone || '';
-    setFormMessage('farmer-edit-message', '', false);
+    const ff = document.getElementById('farmer-edit-form');
+    if (ff) clearFormValidationState(ff, 'farmer-edit-message');
     modal.classList.remove('hidden');
 }
 
 function openFarmerDeductModal(ownerId, cultureId, cultureName, available) {
     const modal = document.getElementById('farmer-deduct-modal');
     if (!modal) return;
+    const body = modal.querySelector('.modal-body');
+    if (body) clearFormValidationState(body, 'farmer-deduct-message');
     document.getElementById('farmer-deduct-culture-name').value = cultureName;
     document.getElementById('farmer-deduct-available').value = formatWeight(available) + ' кг';
     document.getElementById('farmer-deduct-quantity').value = '';
@@ -4101,7 +4262,13 @@ function initFarmerDeductModal() {
     const overlay = modal?.querySelector('.modal-overlay');
     if (!modal || !confirmBtn) return;
 
-    const closeModal = () => modal.classList.add('hidden');
+    const body = modal.querySelector('.modal-body');
+    if (body) formBindInvalidHighlightClearing(body);
+
+    const closeModal = () => {
+        if (body) clearFormValidationState(body, 'farmer-deduct-message');
+        modal.classList.add('hidden');
+    };
     closeBtn?.addEventListener('click', closeModal);
     cancelBtn?.addEventListener('click', closeModal);
     overlay?.addEventListener('click', closeModal);
@@ -4111,11 +4278,11 @@ function initFarmerDeductModal() {
         if (!ctx) return;
         const qty = parseFloat(document.getElementById('farmer-deduct-quantity').value);
         if (Number.isNaN(qty) || qty <= 0) {
-            showToast('Вкажіть коректну кількість', 'error');
+            formShowValidationError(body, 'farmer-deduct-message', 'Вкажіть коректну кількість', ['farmer-deduct-quantity']);
             return;
         }
         if (qty > ctx.available) {
-            showToast(`Максимум: ${formatWeight(ctx.available)} кг`, 'error');
+            formShowValidationError(body, 'farmer-deduct-message', `Максимум: ${formatWeight(ctx.available)} кг`, ['farmer-deduct-quantity']);
             return;
         }
         const note = document.getElementById('farmer-deduct-note').value.trim();
@@ -4209,11 +4376,11 @@ function renderFarmerMovementsTable(data) {
         row.innerHTML = `
             <td>${formatDate(m.created_at)}</td>
             <td>${typeBadge}</td>
-            <td><strong>${fromOwner ? fromOwner.full_name : '—'}</strong></td>
-            <td>${toOwner ? `<strong>${toOwner.full_name}</strong>` : '<span class="td-secondary">—</span>'}</td>
-            <td>${culture ? culture.name : '—'}</td>
+            <td><strong>${fromOwner ? escapeHtml(fromOwner.full_name) : emptyValueHtml()}</strong></td>
+            <td>${toOwner ? `<strong>${escapeHtml(toOwner.full_name)}</strong>` : emptyValueHtml()}</td>
+            <td>${culture ? escapeHtml(culture.name) : emptyValueHtml()}</td>
             <td class="td-weight">${formatWeight(m.quantity_kg)} кг</td>
-            <td>${m.note || '<span class="td-secondary">—</span>'}</td>
+            <td>${m.note ? escapeHtml(m.note) : emptyValueHtml()}</td>
         `;
         tableBody.appendChild(row);
     });
@@ -4359,7 +4526,13 @@ function initFarmerTransferModal() {
     const openBtn = document.getElementById('farmer-transfer-btn');
     if (!modal || !confirmBtn || !fromSelect || !toSelect || !cultureSelect) return;
 
-    const closeModal = () => modal.classList.add('hidden');
+    const transferRoot = modal.querySelector('.modal-body');
+    if (transferRoot) formBindInvalidHighlightClearing(transferRoot);
+
+    const closeModal = () => {
+        if (transferRoot) clearFormValidationState(transferRoot, 'farmer-transfer-message');
+        modal.classList.add('hidden');
+    };
     closeBtn?.addEventListener('click', closeModal);
     cancelBtn?.addEventListener('click', closeModal);
     overlay?.addEventListener('click', closeModal);
@@ -4434,6 +4607,7 @@ function initFarmerTransferModal() {
     fromSelect.addEventListener('change', loadFromBalance);
 
     openBtn?.addEventListener('click', () => {
+        if (transferRoot) clearFormValidationState(transferRoot, 'farmer-transfer-message');
         populateOwners();
         cultureSelect.innerHTML = '<option value="">Оберіть</option>';
         initCustomSelects(cultureSelect);
@@ -4450,16 +4624,33 @@ function initFarmerTransferModal() {
         const toId = parseInt(toSelect.value);
         const cultureId = parseInt(cultureSelect.value);
         const qty = parseFloat(quantityInput.value);
-        if (!fromId) { showToast('Оберіть фермера-відправника', 'error'); return; }
-        if (!toId) { showToast('Оберіть фермера-отримувача', 'error'); return; }
-        if (fromId === toId) { showToast('Відправник і отримувач повинні бути різними', 'error'); return; }
-        if (!cultureId) { showToast('Оберіть культуру', 'error'); return; }
-        if (Number.isNaN(qty) || qty <= 0) { showToast('Вкажіть коректну кількість', 'error'); return; }
+        if (!fromId) {
+            formShowValidationError(transferRoot, 'farmer-transfer-message', 'Оберіть фермера-відправника', ['farmer-transfer-from']);
+            return;
+        }
+        if (!toId) {
+            formShowValidationError(transferRoot, 'farmer-transfer-message', 'Оберіть фермера-отримувача', ['farmer-transfer-to']);
+            return;
+        }
+        if (fromId === toId) {
+            const ff = fromSelect.closest('.form-field');
+            const tf = toSelect.closest('.form-field');
+            formShowValidationError(transferRoot, 'farmer-transfer-message', 'Відправник і отримувач повинні бути різними', [], [ff, tf].filter(Boolean));
+            return;
+        }
+        if (!cultureId) {
+            formShowValidationError(transferRoot, 'farmer-transfer-message', 'Оберіть культуру', ['farmer-transfer-culture']);
+            return;
+        }
+        if (Number.isNaN(qty) || qty <= 0) {
+            formShowValidationError(transferRoot, 'farmer-transfer-message', 'Вкажіть коректну кількість', ['farmer-transfer-quantity']);
+            return;
+        }
 
         const selectedOption = cultureSelect.options[cultureSelect.selectedIndex];
         const maxQty = parseFloat(selectedOption?.dataset?.max || '0');
         if (qty > maxQty) {
-            showToast(`Максимум: ${formatWeight(maxQty)} кг`, 'error');
+            formShowValidationError(transferRoot, 'farmer-transfer-message', `Максимум: ${formatWeight(maxQty)} кг`, ['farmer-transfer-quantity']);
             return;
         }
 
@@ -4480,7 +4671,7 @@ function initFarmerTransferModal() {
             await loadFarmerMovements();
         } else {
             const error = await response.json().catch(() => null);
-            showToast(error?.detail || 'Помилка переміщення', 'error');
+            setFormMessage('farmer-transfer-message', error?.detail || 'Помилка переміщення', true);
         }
     });
 }
@@ -4578,9 +4769,9 @@ function applyIntakeFilters(intakes) {
     }
 
     if (status === 'pending') {
-        filtered = filtered.filter(item => item.pending_quality);
+        filtered = filtered.filter(item => item.pending_quality || item.pending_tare);
     } else if (status === 'confirmed') {
-        filtered = filtered.filter(item => !item.pending_quality);
+        filtered = filtered.filter(item => !item.pending_quality && !item.pending_tare);
     }
 
     if (combineValue === 'yes') {
@@ -5073,13 +5264,13 @@ function applyPeriodToDates(period, startNative, endNative, startInput, endInput
 }
 
 function updateIntakeMetrics(intakes) {
-    const pendingCount = intakes.filter(item => item.pending_quality).length;
+    const pendingCount = intakes.filter(item => item.pending_quality || item.pending_tare).length;
     const now = new Date();
     const todayKey = now.toDateString();
     const todayCount = intakes.filter(item => new Date(item.created_at).toDateString() === todayKey).length;
     const todayKg = intakes
         .filter(item => new Date(item.created_at).toDateString() === todayKey)
-        .reduce((sum, item) => sum + (item.pending_quality ? 0 : item.accepted_weight_kg || 0), 0);
+        .reduce((sum, item) => sum + (intakeOnStock(item) ? (item.accepted_weight_kg || 0) : 0), 0);
 
     const pendingEl = document.getElementById('intake-pending-count');
     const todayEl = document.getElementById('intake-today-count');
@@ -5231,10 +5422,11 @@ async function loadStockAdjustments() {
         const typeLabel = isPurchase ? categoryLabel : 'Зерно';
         const isAdd = item.transaction_type === 'add';
         const deltaLabel = `<span class="${isAdd ? 'td-delta-add' : 'td-delta-sub'}">${isAdd ? '+' : '-'}${formatWeight(item.amount)} кг</span>`;
+        const destPart = item.destination ? escapeHtml(item.destination) : emptyValueHtml();
         const noteLabel = item.source === 'shipment'
-            ? `Відправка: ${item.destination || '—'}`
+            ? `Відправка: ${destPart}`
             : item.source === 'intake'
-                ? `Прийом: ${item.destination || '—'}`
+                ? `Прийом: ${destPart}`
                 : 'Ручне';
 
         row.innerHTML = `
@@ -5312,8 +5504,7 @@ function renderPurchaseStockTable(tableId, category) {
 async function updatePurchaseStockPrice(stockId, priceValue) {
     const price = parseFloat(priceValue);
     if (Number.isNaN(price) || price < 0) {
-        showToast('Вкажіть коректну ціну', 'error');
-        return;
+        return false;
     }
     const response = await apiFetch(`/purchases/stock/${stockId}/price`, {
         method: 'PATCH',
@@ -5321,9 +5512,9 @@ async function updatePurchaseStockPrice(stockId, priceValue) {
     });
     if (response.ok) {
         await loadPurchaseStock();
-    } else {
-        showToast('Не вдалося оновити ціну', 'error');
+        return true;
     }
+    return false;
 }
 
 let stockAdjustContext = null;
@@ -5343,9 +5534,15 @@ function initStockAdjustModal() {
         return;
     }
 
+    const body = modal.querySelector('.modal-body');
+    if (body) formBindInvalidHighlightClearing(body);
+
     initCustomSelects(typeSelect);
 
-    const closeModal = () => modal.classList.add('hidden');
+    const closeModal = () => {
+        if (body) clearFormValidationState(body, 'stock-adjust-message');
+        modal.classList.add('hidden');
+    };
     overlay.addEventListener('click', closeModal);
     closeBtn.addEventListener('click', closeModal);
     cancelBtn.addEventListener('click', closeModal);
@@ -5356,7 +5553,7 @@ function initStockAdjustModal() {
         }
         const amount = parseFloat(amountInput.value);
         if (Number.isNaN(amount) || amount <= 0) {
-            showToast('Вкажіть коректну кількість', 'error');
+            formShowValidationError(body, 'stock-adjust-message', 'Вкажіть коректну кількість', ['stock-adjust-amount']);
             return;
         }
         const endpoint = stockAdjustContext.type === 'grain'
@@ -5376,7 +5573,7 @@ function initStockAdjustModal() {
             await loadStockAdjustments();
         } else {
             const data = await response.json().catch(() => ({}));
-            showToast(data.detail || 'Не вдалося оновити склад', 'error');
+            setFormMessage('stock-adjust-message', data.detail || 'Не вдалося оновити склад', true);
         }
     });
 }
@@ -5394,9 +5591,15 @@ function initStockReserveModal() {
         return;
     }
 
+    const body = modal.querySelector('.modal-body');
+    if (body) formBindInvalidHighlightClearing(body);
+
     initCustomSelects(actionSelect);
 
-    const closeModal = () => modal.classList.add('hidden');
+    const closeModal = () => {
+        if (body) clearFormValidationState(body, 'stock-reserve-message');
+        modal.classList.add('hidden');
+    };
     overlay.addEventListener('click', closeModal);
     closeBtn.addEventListener('click', closeModal);
     cancelBtn.addEventListener('click', closeModal);
@@ -5405,7 +5608,7 @@ function initStockReserveModal() {
         if (!stockReserveContext) return;
         const amount = parseFloat(amountInput.value);
         if (Number.isNaN(amount) || amount <= 0) {
-            showToast('Вкажіть коректну кількість', 'error');
+            formShowValidationError(body, 'stock-reserve-message', 'Вкажіть коректну кількість', ['stock-reserve-amount']);
             return;
         }
         const action = actionSelect.value;
@@ -5418,7 +5621,7 @@ function initStockReserveModal() {
         });
         if (!response.ok) {
             const error = await response.json().catch(() => null);
-            showToast(error?.detail || 'Не вдалося змінити бронювання', 'error');
+            setFormMessage('stock-reserve-message', error?.detail || 'Не вдалося змінити бронювання', true);
             return;
         }
         await loadStock();
@@ -5433,6 +5636,8 @@ function openStockReserveModal({ id, label }) {
     const amountInput = document.getElementById('stock-reserve-amount');
     const actionSelect = document.getElementById('stock-reserve-action');
     if (!modal || !title || !amountInput || !actionSelect) return;
+    const body = modal.querySelector('.modal-body');
+    if (body) clearFormValidationState(body, 'stock-reserve-message');
     stockReserveContext = { id, label };
     title.textContent = label;
     amountInput.value = '';
@@ -5452,7 +5657,13 @@ function initStockPriceModal() {
         return;
     }
 
-    const closeModal = () => modal.classList.add('hidden');
+    const body = modal.querySelector('.modal-body');
+    if (body) formBindInvalidHighlightClearing(body);
+
+    const closeModal = () => {
+        if (body) clearFormValidationState(body, 'stock-price-message');
+        modal.classList.add('hidden');
+    };
     overlay.addEventListener('click', closeModal);
     closeBtn.addEventListener('click', closeModal);
     cancelBtn.addEventListener('click', closeModal);
@@ -5461,7 +5672,16 @@ function initStockPriceModal() {
         if (!stockPriceContext) {
             return;
         }
-        await updatePurchaseStockPrice(stockPriceContext.id, priceInput.value);
+        const price = parseFloat(priceInput.value);
+        if (Number.isNaN(price) || price < 0) {
+            formShowValidationError(body, 'stock-price-message', 'Вкажіть коректну ціну', ['stock-price-value']);
+            return;
+        }
+        const ok = await updatePurchaseStockPrice(stockPriceContext.id, priceInput.value);
+        if (!ok) {
+            setFormMessage('stock-price-message', 'Не вдалося оновити ціну', true);
+            return;
+        }
         closeModal();
     });
 }
@@ -5477,7 +5697,13 @@ function initCulturePriceModal() {
         return;
     }
 
-    const closeModal = () => modal.classList.add('hidden');
+    const body = modal.querySelector('.modal-body');
+    if (body) formBindInvalidHighlightClearing(body);
+
+    const closeModal = () => {
+        if (body) clearFormValidationState(body, 'culture-price-message');
+        modal.classList.add('hidden');
+    };
     overlay.addEventListener('click', closeModal);
     closeBtn.addEventListener('click', closeModal);
     cancelBtn.addEventListener('click', closeModal);
@@ -5486,7 +5712,16 @@ function initCulturePriceModal() {
         if (!culturePriceContext) {
             return;
         }
-        await updateCulturePrice(culturePriceContext.id, priceInput.value);
+        const price = parseFloat(priceInput.value);
+        if (Number.isNaN(price) || price < 0) {
+            formShowValidationError(body, 'culture-price-message', 'Вкажіть коректну ціну', ['culture-price-value']);
+            return;
+        }
+        const ok = await updateCulturePrice(culturePriceContext.id, priceInput.value);
+        if (!ok) {
+            setFormMessage('culture-price-message', 'Не вдалося оновити ціну', true);
+            return;
+        }
         closeModal();
     });
 }
@@ -5499,6 +5734,8 @@ function openStockAdjustModal({ type, id, label }) {
     if (!modal || !title || !amountInput || !typeSelect) {
         return;
     }
+    const body = modal.querySelector('.modal-body');
+    if (body) clearFormValidationState(body, 'stock-adjust-message');
     stockAdjustContext = { type, id };
     title.textContent = label;
     amountInput.value = '';
@@ -5514,6 +5751,8 @@ function openStockPriceModal({ id, label, price }) {
     if (!modal || !title || !priceInput) {
         return;
     }
+    const body = modal.querySelector('.modal-body');
+    if (body) clearFormValidationState(body, 'stock-price-message');
     stockPriceContext = { id };
     title.textContent = label;
     priceInput.value = Number(price).toFixed(2);
@@ -5527,6 +5766,8 @@ function openCulturePriceModal({ id, label, price }) {
     if (!modal || !title || !priceInput) {
         return;
     }
+    const body = modal.querySelector('.modal-body');
+    if (body) clearFormValidationState(body, 'culture-price-message');
     culturePriceContext = { id };
     title.textContent = label;
     priceInput.value = Number(price).toFixed(2);
@@ -5555,10 +5796,10 @@ async function loadPurchases() {
             <td>${typeBadge}</td>
             <td>${item.item_name}</td>
             <td>${categoryLabel}</td>
-            <td>${item.is_free ? '—' : item.price_per_kg.toFixed(2)}</td>
-            <td>${item.is_free ? '—' : item.currency}</td>
+            <td>${item.is_free ? emptyValueHtml() : item.price_per_kg.toFixed(2)}</td>
+            <td>${item.is_free ? emptyValueHtml() : item.currency}</td>
             <td>${formatWeight(item.quantity_kg)}</td>
-            <td>${item.is_free ? '—' : formatCurrency(item.total_amount, item.currency)}</td>
+            <td>${item.is_free ? emptyValueHtml() : formatCurrency(item.total_amount, item.currency)}</td>
         `;
         tableBody.appendChild(row);
     });
@@ -5581,6 +5822,7 @@ function openIntakeEdit(intakeId) {
     if (!intake || !modal) {
         return;
     }
+    clearEditIntakeFormFieldErrors();
     editingIntakeId = intakeId;
     document.getElementById('edit-culture').value = intake.culture_id;
     document.getElementById('edit-vehicle').value = intake.vehicle_type_id;
@@ -5599,6 +5841,8 @@ function openIntakeEdit(intakeId) {
     document.getElementById('edit-tare').value = intake.tare_weight_kg;
     document.getElementById('edit-impurity').value = intake.impurity_percent || 0;
     document.getElementById('edit-pending').checked = intake.pending_quality;
+    const editPendingTare = document.getElementById('edit-pending-tare');
+    if (editPendingTare) editPendingTare.checked = !!intake.pending_tare;
     document.getElementById('edit-note').value = intake.note || '';
 
     syncEditDriverBlocks();
@@ -5639,7 +5883,7 @@ function renderFieldsTable(data) {
     data.forEach(f => {
         const tr = document.createElement('tr');
         if (f.lease_contract_id) tr.classList.add('field-from-lease');
-        const contractInfo = f.lease_contract_id ? `#${f.lease_contract_id}` : '—';
+        const contractInfo = f.lease_contract_id ? `#${f.lease_contract_id}` : emptyValueHtml();
         const isEnterprise = !f.landlord_id;
         const leaseBadge = f.lease_contract_id
             ? ' <span class="field-badge field-badge-lease" title="Створено з контракту оренди">Оренда</span>'
@@ -5648,7 +5892,7 @@ function renderFieldsTable(data) {
             <td>${f.name}${leaseBadge}</td>
             <td>${f.owner_name}</td>
             <td>${contractInfo}</td>
-            <td>${f.note || '—'}</td>
+            <td>${f.note ? escapeHtml(f.note) : emptyValueHtml()}</td>
             <td class="actions-cell">
                 ${isEnterprise ? `
                     <button class="btn-icon btn-icon-secondary" onclick="openFieldEditModal(${f.id})" title="Редагувати">${ICONS.edit}</button>
@@ -5693,7 +5937,7 @@ function renderFieldIntakesTable() {
         tr.innerHTML = `
             <td>${getFieldName(intake.field_id)}</td>
             <td><span class="inline-badge grain">${getCultureName(intake.culture_id)}</span></td>
-            <td class="td-weight">${intake.pending_quality ? '—' : formatWeight(intake.accepted_weight_kg) + ' кг'}</td>
+            <td class="td-weight">${intakeOnStock(intake) ? formatWeight(intake.accepted_weight_kg) + ' кг' : emptyValueHtml()}</td>
             <td>${formatDate(intake.created_at)}</td>
             <td class="actions-cell">
                 <button class="btn-icon btn-icon-secondary" data-view="${intake.id}" title="Переглянути">${ICONS.view}</button>
@@ -5743,6 +5987,9 @@ function updateFieldIntakesFilterOptions() {
 }
 
 function initFieldsSection() {
+    const fieldForm = document.getElementById('field-form');
+    if (fieldForm) formBindInvalidHighlightClearing(fieldForm);
+
     document.getElementById('fields-filter-search')?.addEventListener('input', applyFieldsFilters);
     document.getElementById('fields-filter-owner')?.addEventListener('change', applyFieldsFilters);
 
@@ -5805,6 +6052,7 @@ function initFieldsSection() {
     });
 
     document.getElementById('field-add-btn')?.addEventListener('click', () => {
+        if (fieldForm) clearFormValidationState(fieldForm, 'field-message');
         document.getElementById('field-modal-title').textContent = 'Додати поле';
         document.getElementById('field-edit-id').value = '';
         document.getElementById('field-name').value = '';
@@ -5812,11 +6060,16 @@ function initFieldsSection() {
         document.getElementById('field-modal').classList.remove('hidden');
     });
 
-    document.getElementById('field-form')?.addEventListener('submit', async (e) => {
+    fieldForm?.addEventListener('submit', async (e) => {
         e.preventDefault();
         const editId = document.getElementById('field-edit-id').value;
+        const name = document.getElementById('field-name').value.trim();
+        if (!name) {
+            formShowValidationError(fieldForm, 'field-message', 'Вкажіть назву поля', ['field-name']);
+            return;
+        }
         const payload = {
-            name: document.getElementById('field-name').value.trim(),
+            name,
             note: document.getElementById('field-note').value.trim() || null
         };
 
@@ -5834,12 +6087,15 @@ function initFieldsSection() {
             showNotification(editId ? 'Поле оновлено' : 'Поле додано', 'success');
         } else {
             const err = await res.json();
-            showNotification(err.detail || 'Помилка', 'error');
+            setFormMessage('field-message', err.detail || 'Помилка', true);
         }
     });
 
     const fieldModal = document.getElementById('field-modal');
-    const closeFieldModal = () => fieldModal?.classList.add('hidden');
+    const closeFieldModal = () => {
+        if (fieldForm) clearFormValidationState(fieldForm, 'field-message');
+        fieldModal?.classList.add('hidden');
+    };
 
     document.getElementById('field-modal-close')?.addEventListener('click', closeFieldModal);
     document.getElementById('field-modal-cancel')?.addEventListener('click', closeFieldModal);
@@ -5849,6 +6105,9 @@ function initFieldsSection() {
 function openFieldEditModal(fieldId) {
     const field = fieldsCache.find(f => f.id === fieldId);
     if (!field) return;
+
+    const fieldForm = document.getElementById('field-form');
+    if (fieldForm) clearFormValidationState(fieldForm, 'field-message');
 
     document.getElementById('field-modal-title').textContent = 'Редагувати поле';
     document.getElementById('field-edit-id').value = field.id;
@@ -5896,6 +6155,7 @@ function initNavigation() {
             item.classList.add('active');
 
             const page = item.dataset.page;
+            localStorage.setItem('lastPage', page);
             document.getElementById('page-title').textContent = titles[page] || 'Дашборд';
 
             sections.forEach(section => section.classList.add('hidden'));
@@ -5928,10 +6188,22 @@ function initNavigation() {
         });
     });
 
+    // Відновлюємо останню відкриту сторінку після перезавантаження
+    const lastPage = localStorage.getItem('lastPage');
+    if (lastPage && lastPage !== 'dashboard') {
+        const savedItem = document.querySelector(`.nav-item[data-page="${lastPage}"]`);
+        if (savedItem) {
+            savedItem.click();
+        }
+    }
+
 }
 
 function initLogout() {
     const logoutBtn = document.getElementById('logout-btn');
+    if (!logoutBtn) {
+        return;
+    }
     logoutBtn.addEventListener('click', async () => {
         try {
             await apiFetch('/auth/logout', { method: 'POST' });
@@ -5939,13 +6211,164 @@ function initLogout() {
             console.error('Помилка виходу:', error);
         } finally {
             localStorage.removeItem('token');
-            window.location.href = 'login.html';
+            localStorage.removeItem('lastPage');
+            const loginUrl = new URL('login.html', window.location.href);
+            if (document.body?.dataset?.app === 'cash-pocket') {
+                loginUrl.searchParams.set('next', 'pocket-kassa.html');
+            }
+            window.location.href = loginUrl.toString();
         }
     });
 }
 
+function clearIntakeFormFieldErrors() {
+    document.querySelectorAll('#intake-form .form-field.has-field-error').forEach(el => {
+        el.classList.remove('has-field-error');
+    });
+    const msg = document.getElementById('intake-message');
+    if (msg) {
+        msg.textContent = '';
+        msg.classList.remove('error', 'success');
+    }
+}
+
+function markIntakeFormFieldError(elementId) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    const field = el.closest('.form-field');
+    if (field) field.classList.add('has-field-error');
+}
+
+function clearEditIntakeFormFieldErrors() {
+    document.querySelectorAll('#intake-edit-form .form-field.has-field-error').forEach(el => {
+        el.classList.remove('has-field-error');
+    });
+    const msg = document.getElementById('edit-message');
+    if (msg) {
+        msg.textContent = '';
+        msg.classList.remove('error', 'success');
+    }
+}
+
+function markEditIntakeFormFieldError(elementId) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    const field = el.closest('.form-field');
+    if (field) field.classList.add('has-field-error');
+}
+
+function initEditIntakeFormInvalidStateClearing(form) {
+    if (!form || form.dataset.editInvalidStateClearBound) return;
+    form.dataset.editInvalidStateClearBound = '1';
+    const onFieldChange = (e) => {
+        const field = e.target?.closest?.('.form-field');
+        if (field && form.contains(field)) {
+            field.classList.remove('has-field-error');
+        }
+    };
+    form.addEventListener('input', onFieldChange, true);
+    form.addEventListener('change', onFieldChange, true);
+}
+
+function initIntakeFormInvalidStateClearing(form) {
+    if (!form || form.dataset.invalidStateClearBound) return;
+    form.dataset.invalidStateClearBound = '1';
+    const onFieldChange = (e) => {
+        const field = e.target?.closest?.('.form-field');
+        if (field && form.contains(field)) {
+            field.classList.remove('has-field-error');
+        }
+    };
+    form.addEventListener('input', onFieldChange, true);
+    form.addEventListener('change', onFieldChange, true);
+}
+
+function clearFormMessage(elementId) {
+    const msg = document.getElementById(elementId);
+    if (!msg) return;
+    msg.textContent = '';
+    msg.classList.remove('error', 'success');
+}
+
+/** formRoot: <form> або контейнер з полями */
+function formClearFieldHighlights(formRoot) {
+    if (!formRoot) return;
+    const sel = '.form-field.has-field-error, .fc-payment-money__field.has-field-error, .fc-section.has-field-error, .fcp-section.has-field-error, tr.contract-item-row.has-field-error, .grain-pay-card.has-field-error';
+    formRoot.querySelectorAll(sel).forEach(el => el.classList.remove('has-field-error'));
+}
+
+function formMarkFieldHighlights(formRoot, elementIds) {
+    if (!formRoot || !elementIds || !elementIds.length) return;
+    elementIds.forEach((id) => {
+        const el = document.getElementById(id);
+        if (!el || !formRoot.contains(el)) return;
+        let wrap = el.closest('.form-field');
+        if (!wrap) wrap = el.closest('.fc-payment-money__field');
+        if (!wrap && el.matches?.('.fc-section, .fcp-section')) wrap = el;
+        if (!wrap) wrap = el.closest('.fc-section') || el.closest('.fcp-section');
+        if (!wrap) wrap = el.closest('.grain-pay-card');
+        if (wrap) wrap.classList.add('has-field-error');
+    });
+}
+
+function formBindInvalidHighlightClearing(formRoot) {
+    if (!formRoot || formRoot.dataset.invalidHighlightClearBound) return;
+    formRoot.dataset.invalidHighlightClearBound = '1';
+    const onFieldChange = (e) => {
+        const field = e.target?.closest?.('.form-field');
+        if (field && formRoot.contains(field)) field.classList.remove('has-field-error');
+        const pm = e.target?.closest?.('.fc-payment-money__field');
+        if (pm && formRoot.contains(pm)) pm.classList.remove('has-field-error');
+        const sec = e.target?.closest?.('.fc-section, .fcp-section');
+        if (sec && formRoot.contains(sec)) sec.classList.remove('has-field-error');
+        const row = e.target?.closest?.('tr.contract-item-row');
+        if (row && formRoot.contains(row)) row.classList.remove('has-field-error');
+        const card = e.target?.closest?.('.grain-pay-card');
+        if (card && formRoot.contains(card)) card.classList.remove('has-field-error');
+    };
+    formRoot.addEventListener('input', onFieldChange, true);
+    formRoot.addEventListener('change', onFieldChange, true);
+}
+
+function clearFormValidationState(formRoot, messageId) {
+    formClearFieldHighlights(formRoot);
+    if (messageId) clearFormMessage(messageId);
+}
+
+/**
+ * Показати текст помилки біля кнопки та підсвітити поля (і додаткові елементи extraErrorHosts).
+ * @param {HTMLElement} formRoot
+ * @param {string|null} messageId
+ * @param {string} message
+ * @param {string[]} fieldIds
+ * @param {HTMLElement[]} [extraErrorHosts]
+ */
+function formShowValidationError(formRoot, messageId, message, fieldIds = [], extraErrorHosts = []) {
+    if (!formRoot) {
+        if (messageId) setFormMessage(messageId, message, true);
+        return;
+    }
+    formClearFieldHighlights(formRoot);
+    if (messageId) setFormMessage(messageId, message, true);
+    formMarkFieldHighlights(formRoot, fieldIds);
+    (extraErrorHosts || []).forEach((host) => {
+        if (host && formRoot.contains(host)) host.classList.add('has-field-error');
+    });
+    const firstId = fieldIds.length ? fieldIds[0] : null;
+    const first = firstId ? document.getElementById(firstId) : null;
+    if (first && formRoot.contains(first)) {
+        first.focus();
+    } else if (extraErrorHosts && extraErrorHosts[0] && formRoot.contains(extraErrorHosts[0])) {
+        const focusable = extraErrorHosts[0].querySelector('input, select, textarea, button');
+        focusable?.focus();
+    }
+}
+
 function initIntakeForm() {
     const form = document.getElementById('intake-form');
+    if (form) {
+        initIntakeFormInvalidStateClearing(form);
+    }
     const ownGrainCheckbox = document.getElementById('intake-own-grain');
     const ownerSearch = document.getElementById('owner-search');
     const ownerPhone = document.getElementById('owner-phone');
@@ -6000,6 +6423,7 @@ function initIntakeForm() {
         });
         if (response.ok) {
             showToast('Картку збережено', 'success');
+            clearIntakeFormFieldErrors();
             form.reset();
             document.getElementById('accepted-weight').value = '';
             document.getElementById('net-weight').value = '';
@@ -6036,6 +6460,7 @@ function initIntakeCreateModal() {
     }
 
     openBtn.addEventListener('click', () => {
+        clearIntakeFormFieldErrors();
         modal.classList.remove('hidden');
         updateIntakeFieldSelect();
         initCustomSelects();
@@ -6050,6 +6475,7 @@ function closeIntakeCreateModal() {
     if (!modal) {
         return;
     }
+    clearIntakeFormFieldErrors();
     modal.classList.add('hidden');
     // Сбрасываем бейдж при закрытии модального окна
     const ownerBadge = document.getElementById('owner-badge');
@@ -6089,7 +6515,10 @@ function initIntakeEditModal() {
         return;
     }
 
+    initEditIntakeFormInvalidStateClearing(form);
+
     const closeModal = () => {
+        clearEditIntakeFormFieldErrors();
         modal.classList.add('hidden');
         editingIntakeId = null;
     };
@@ -6130,8 +6559,6 @@ function openIntakeView(intakeId) {
     if (!intake || !modal) {
         return;
     }
-    const ownerName = intake.is_own_grain ? 'Підприємство' : (intake.owner_full_name || '-');
-    const ownerPhone = intake.is_own_grain ? '-' : (intake.owner_phone || '-');
     const driverTypeLabel = intake.is_internal_driver ? 'Наш водій' : 'Інший водій';
     const driverName = intake.is_internal_driver
         ? getDriverName(intake.driver_id)
@@ -6147,20 +6574,48 @@ function openIntakeView(intakeId) {
     const viewFieldWrap = document.getElementById('view-field-wrap');
     const viewField = document.getElementById('view-field');
     if (viewFieldWrap) viewFieldWrap.classList.toggle('hidden', !intake.is_own_grain || !intake.field_id);
-    if (viewField) viewField.textContent = intake.is_own_grain && intake.field_id ? getFieldName(intake.field_id) : '-';
-    document.getElementById('view-owner').textContent = ownerName;
-    document.getElementById('view-owner-phone').textContent = ownerPhone;
+    if (viewField) {
+        if (intake.is_own_grain && intake.field_id) viewField.textContent = getFieldName(intake.field_id);
+        else viewField.innerHTML = emptyValueHtml();
+    }
+    const viewOwner = document.getElementById('view-owner');
+    if (viewOwner) {
+        if (intake.is_own_grain) viewOwner.textContent = 'Підприємство';
+        else if (intake.owner_full_name) viewOwner.textContent = intake.owner_full_name;
+        else viewOwner.innerHTML = emptyValueHtml();
+    }
+    const viewOwnerPhone = document.getElementById('view-owner-phone');
+    if (viewOwnerPhone) {
+        if (intake.is_own_grain) viewOwnerPhone.innerHTML = emptyValueHtml();
+        else if (intake.owner_phone) viewOwnerPhone.textContent = intake.owner_phone;
+        else viewOwnerPhone.innerHTML = emptyValueHtml();
+    }
     document.getElementById('view-driver-type').textContent = driverTypeLabel;
-    document.getElementById('view-driver').textContent = driverName;
+    const viewDriver = document.getElementById('view-driver');
+    if (viewDriver) {
+        if (intake.is_internal_driver && (driverName === '-' || !intake.driver_id)) {
+            viewDriver.innerHTML = emptyValueHtml();
+        } else {
+            viewDriver.textContent = driverName;
+        }
+    }
     document.getElementById('view-gross').textContent = formatWeight(intake.gross_weight_kg);
-    document.getElementById('view-tare').textContent = formatWeight(intake.tare_weight_kg);
-    document.getElementById('view-net').textContent = formatWeight(intake.net_weight_kg);
+    document.getElementById('view-tare').textContent = intake.pending_tare ? '—' : formatWeight(intake.tare_weight_kg);
+    document.getElementById('view-net').textContent = intake.pending_tare ? '—' : formatWeight(intake.net_weight_kg);
     document.getElementById('view-impurity').textContent = `${formatWeight(intake.impurity_percent || 0)}%`;
     document.getElementById('view-pending').textContent = intake.pending_quality ? 'Так' : 'Ні';
-    document.getElementById('view-accepted').textContent = intake.pending_quality
-        ? '-'
-        : formatWeight(intake.accepted_weight_kg || 0);
-    document.getElementById('view-note').textContent = intake.note ? intake.note : '-';
+    const viewPendingTare = document.getElementById('view-pending-tare');
+    if (viewPendingTare) viewPendingTare.textContent = intake.pending_tare ? 'Так' : 'Ні';
+    const viewAccepted = document.getElementById('view-accepted');
+    if (viewAccepted) {
+        if (!intakeOnStock(intake)) viewAccepted.innerHTML = emptyValueHtml();
+        else viewAccepted.textContent = formatWeight(intake.accepted_weight_kg || 0);
+    }
+    const viewNote = document.getElementById('view-note');
+    if (viewNote) {
+        if (intake.note) viewNote.textContent = intake.note;
+        else viewNote.innerHTML = emptyValueHtml();
+    }
 
     modal.classList.remove('hidden');
 }
@@ -6196,53 +6651,107 @@ function updateEditFieldSelect() {
 }
 
 function buildEditPayload() {
+    clearEditIntakeFormFieldErrors();
+
+    const cultureEl = document.getElementById('edit-culture');
+    const vehicleEl = document.getElementById('edit-vehicle');
+    const cultureId = parseInt(cultureEl?.value, 10);
+    const vehicleId = parseInt(vehicleEl?.value, 10);
+
+    if (Number.isNaN(cultureId) || cultureId <= 0) {
+        setFormMessage('edit-message', 'Оберіть культуру', true);
+        markEditIntakeFormFieldError('edit-culture');
+        cultureEl?.focus();
+        return null;
+    }
+    if (Number.isNaN(vehicleId) || vehicleId <= 0) {
+        setFormMessage('edit-message', 'Оберіть тип транспорту', true);
+        markEditIntakeFormFieldError('edit-vehicle');
+        vehicleEl?.focus();
+        return null;
+    }
+
     const isOwnGrain = document.getElementById('edit-own-grain').checked;
-    const payload = {
-        culture_id: parseInt(document.getElementById('edit-culture').value, 10),
-        vehicle_type_id: parseInt(document.getElementById('edit-vehicle').value, 10),
-        has_trailer: document.getElementById('edit-trailer').checked,
-        is_own_combine: document.getElementById('edit-own-combine').checked,
-        is_own_grain: isOwnGrain,
-        field_id: isOwnGrain ? (parseInt(document.getElementById('edit-field').value, 10) || null) : null,
-        is_internal_driver: document.getElementById('edit-internal-driver').checked,
-        gross_weight_kg: parseFloat(document.getElementById('edit-gross').value),
-        tare_weight_kg: parseFloat(document.getElementById('edit-tare').value),
-        impurity_percent: parseFloat(document.getElementById('edit-impurity').value || '0'),
-        pending_quality: document.getElementById('edit-pending').checked,
-        note: document.getElementById('edit-note').value.trim() || null
-    };
+    const pendingTare = document.getElementById('edit-pending-tare')?.checked ?? false;
+    const gross = parseFloat(document.getElementById('edit-gross').value);
+    const tare = parseFloat(document.getElementById('edit-tare').value);
 
-    if (Number.isNaN(payload.gross_weight_kg) || Number.isNaN(payload.tare_weight_kg)) {
-        showToast('Вкажіть брутто та тару', 'error');
+    if (Number.isNaN(gross) || gross <= 0) {
+        setFormMessage('edit-message', 'Вкажіть брутто', true);
+        markEditIntakeFormFieldError('edit-gross');
+        document.getElementById('edit-gross')?.focus();
         return null;
     }
-    if (isOwnGrain && !payload.field_id) {
-        showToast('Оберіть поле, з якого привезли зерно', 'error');
+    let tareOut = tare;
+    if (pendingTare) {
+        tareOut = 0;
+    } else if (Number.isNaN(tare) || tare <= 0) {
+        setFormMessage('edit-message', 'Вкажіть тару або позначте «Очікує тару»', true);
+        markEditIntakeFormFieldError('edit-tare');
+        document.getElementById('edit-tare')?.focus();
         return null;
     }
-    if (payload.gross_weight_kg < payload.tare_weight_kg) {
-        showToast('Брутто не може бути менше тари', 'error');
+    if (!pendingTare && gross < tareOut) {
+        setFormMessage('edit-message', 'Брутто не може бути менше тари', true);
+        markEditIntakeFormFieldError('edit-gross');
+        markEditIntakeFormFieldError('edit-tare');
+        document.getElementById('edit-gross')?.focus();
         return null;
     }
 
-    if (!payload.is_own_grain) {
+    const fieldId = isOwnGrain ? (parseInt(document.getElementById('edit-field').value, 10) || null) : null;
+    if (isOwnGrain && !fieldId) {
+        setFormMessage('edit-message', 'Оберіть поле, з якого привезли зерно', true);
+        markEditIntakeFormFieldError('edit-field');
+        document.getElementById('edit-field')?.focus();
+        return null;
+    }
+
+    if (!isOwnGrain) {
         const ownerName = document.getElementById('edit-owner-name').value.trim();
         const ownerPhone = document.getElementById('edit-owner-phone').value.trim();
         if (!ownerName) {
-            showToast('Вкажіть власника зерна', 'error');
+            setFormMessage('edit-message', 'Вкажіть власника зерна', true);
+            markEditIntakeFormFieldError('edit-owner-name');
+            document.getElementById('edit-owner-name')?.focus();
             return null;
         }
-        payload.owner_full_name = ownerName;
-        payload.owner_phone = ownerPhone || null;
+    }
+
+    const isInternalDriver = document.getElementById('edit-internal-driver').checked;
+    if (isInternalDriver) {
+        const driverId = document.getElementById('edit-driver').value;
+        if (!driverId) {
+            setFormMessage('edit-message', 'Вкажіть водія підприємства', true);
+            markEditIntakeFormFieldError('edit-driver');
+            document.getElementById('edit-driver')?.focus();
+            return null;
+        }
+    }
+
+    const payload = {
+        culture_id: cultureId,
+        vehicle_type_id: vehicleId,
+        has_trailer: document.getElementById('edit-trailer').checked,
+        is_own_combine: document.getElementById('edit-own-combine').checked,
+        is_own_grain: isOwnGrain,
+        field_id: fieldId,
+        is_internal_driver: isInternalDriver,
+        gross_weight_kg: gross,
+        tare_weight_kg: tareOut,
+        impurity_percent: parseFloat(document.getElementById('edit-impurity').value || '0'),
+        pending_quality: document.getElementById('edit-pending').checked,
+        pending_tare: pendingTare,
+        note: document.getElementById('edit-note').value.trim() || null
+    };
+
+    if (!payload.is_own_grain) {
+        payload.owner_full_name = document.getElementById('edit-owner-name').value.trim();
+        payload.owner_phone = document.getElementById('edit-owner-phone').value.trim() || null;
     }
 
     if (payload.is_internal_driver) {
-        const driverId = document.getElementById('edit-driver').value;
-        if (!driverId) {
-            showToast('Вкажіть водія підприємства', 'error');
-            return null;
-        }
-        payload.driver_id = parseInt(driverId, 10);
+        payload.driver_id = parseInt(document.getElementById('edit-driver').value, 10);
     } else {
         payload.external_driver_name = 'Інший водій';
     }
@@ -6261,8 +6770,26 @@ function updateIntakeFieldSelect() {
 }
 
 function buildIntakePayload() {
-    const cultureId = parseInt(document.getElementById('intake-culture').value, 10);
-    const vehicleId = parseInt(document.getElementById('intake-vehicle').value, 10);
+    clearIntakeFormFieldErrors();
+
+    const cultureEl = document.getElementById('intake-culture');
+    const vehicleEl = document.getElementById('intake-vehicle');
+    const cultureId = parseInt(cultureEl?.value, 10);
+    const vehicleId = parseInt(vehicleEl?.value, 10);
+
+    if (Number.isNaN(cultureId) || cultureId <= 0) {
+        setFormMessage('intake-message', 'Оберіть культуру', true);
+        markIntakeFormFieldError('intake-culture');
+        cultureEl?.focus();
+        return null;
+    }
+    if (Number.isNaN(vehicleId) || vehicleId <= 0) {
+        setFormMessage('intake-message', 'Оберіть тип транспорту', true);
+        markIntakeFormFieldError('intake-vehicle');
+        vehicleEl?.focus();
+        return null;
+    }
+
     const hasTrailer = document.getElementById('intake-trailer').checked;
     const isOwnCombine = document.getElementById('intake-own-combine').checked;
     const isOwnGrain = document.getElementById('intake-own-grain').checked;
@@ -6275,34 +6802,53 @@ function buildIntakePayload() {
     const tare = parseFloat(document.getElementById('tare-weight').value);
     const impurity = parseFloat(document.getElementById('impurity-percent').value || '0');
     const pendingQuality = document.getElementById('pending-quality').checked;
+    const pendingTare = document.getElementById('pending-tare').checked;
     const note = document.getElementById('intake-note').value.trim();
 
-    if (Number.isNaN(gross) || Number.isNaN(tare)) {
-        setFormMessage('intake-message', 'Вкажіть брутто та тару', true);
+    if (Number.isNaN(gross) || gross <= 0) {
+        setFormMessage('intake-message', 'Вкажіть брутто', true);
+        markIntakeFormFieldError('gross-weight');
+        document.getElementById('gross-weight')?.focus();
         return null;
     }
-    if (gross < tare) {
-        setFormMessage('intake-message', 'Брутто не може бути менше тари', true);
-        return null;
+    if (!pendingTare) {
+        if (Number.isNaN(tare) || tare <= 0) {
+            setFormMessage('intake-message', 'Вкажіть тару або позначте «Очікує тару»', true);
+            markIntakeFormFieldError('tare-weight');
+            document.getElementById('tare-weight')?.focus();
+            return null;
+        }
+        if (gross < tare) {
+            setFormMessage('intake-message', 'Брутто не може бути менше тари', true);
+            markIntakeFormFieldError('gross-weight');
+            markIntakeFormFieldError('tare-weight');
+            document.getElementById('gross-weight')?.focus();
+            return null;
+        }
     }
 
     if (!isOwnGrain && !ownerId && !ownerName) {
         setFormMessage('intake-message', 'Вкажіть власника зерна', true);
+        markIntakeFormFieldError('owner-search');
+        document.getElementById('owner-search')?.focus();
         return null;
     }
     if (isOwnGrain) {
         const fieldId = document.getElementById('intake-field')?.value;
         if (!fieldId) {
             setFormMessage('intake-message', 'Оберіть поле, з якого привезли зерно', true);
+            markIntakeFormFieldError('intake-field');
+            document.getElementById('intake-field')?.focus();
             return null;
         }
     }
 
     if (isInternalDriver && !driverId) {
         setFormMessage('intake-message', 'Вкажіть водія підприємства', true);
+        markIntakeFormFieldError('intake-driver');
+        document.getElementById('intake-driver')?.focus();
         return null;
     }
-
 
     const payload = {
         culture_id: cultureId,
@@ -6312,9 +6858,10 @@ function buildIntakePayload() {
         is_own_grain: isOwnGrain,
         is_internal_driver: isInternalDriver,
         gross_weight_kg: gross,
-        tare_weight_kg: tare,
+        tare_weight_kg: pendingTare ? 0 : tare,
         impurity_percent: impurity,
         pending_quality: pendingQuality,
+        pending_tare: pendingTare,
         note: note || null
     };
 
@@ -6344,16 +6891,17 @@ function initDriverForm() {
     if (!form) {
         return;
     }
+    formBindInvalidHighlightClearing(form);
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
         if (!isSuperAdmin) {
-            setFormMessage('driver-message', 'Доступно лише супер адміну', true);
+            formShowValidationError(form, 'driver-message', 'Доступно лише супер адміну', ['driver-name']);
             return;
         }
         const name = document.getElementById('driver-name').value.trim();
         const phone = document.getElementById('driver-phone').value.trim();
         if (!name) {
-            setFormMessage('driver-message', 'Вкажіть ПІБ водія', true);
+            formShowValidationError(form, 'driver-message', 'Вкажіть ПІБ водія', ['driver-name']);
             return;
         }
         const response = await apiFetch('/grain/drivers', {
@@ -6362,6 +6910,7 @@ function initDriverForm() {
         });
         if (response.ok) {
             setFormMessage('driver-message', 'Водія додано', false);
+            formClearFieldHighlights(form);
             form.reset();
             await loadDrivers();
             closeDriverAddModal();
@@ -6380,6 +6929,8 @@ function initDriverAddModal() {
         return;
     }
     openBtn.addEventListener('click', () => {
+        const df = document.getElementById('driver-form');
+        if (df) clearFormValidationState(df, 'driver-message');
         modal.classList.remove('hidden');
     });
     closeBtn.addEventListener('click', closeDriverAddModal);
@@ -6388,6 +6939,8 @@ function initDriverAddModal() {
 
 function closeDriverAddModal() {
     const modal = document.getElementById('driver-add-modal');
+    const df = document.getElementById('driver-form');
+    if (df) clearFormValidationState(df, 'driver-message');
     if (modal) {
         modal.classList.add('hidden');
     }
@@ -6424,8 +6977,11 @@ function initDriverEditModal() {
     const form = document.getElementById('driver-edit-form');
     if (!modal || !closeBtn || !overlay || !form) return;
 
+    formBindInvalidHighlightClearing(form);
+
     const closeModal = () => {
         editingDriverId = null;
+        clearFormValidationState(form, 'driver-edit-message');
         modal.classList.add('hidden');
     };
     closeBtn.addEventListener('click', closeModal);
@@ -6437,7 +6993,7 @@ function initDriverEditModal() {
         const name = document.getElementById('driver-edit-name').value.trim();
         const phone = document.getElementById('driver-edit-phone').value.trim();
         if (!name) {
-            setFormMessage('driver-edit-message', 'Вкажіть ПІБ водія', true);
+            formShowValidationError(form, 'driver-edit-message', 'Вкажіть ПІБ водія', ['driver-edit-name']);
             return;
         }
         const response = await apiFetch(`/grain/drivers/${editingDriverId}`, {
@@ -6446,6 +7002,7 @@ function initDriverEditModal() {
         });
         if (response.ok) {
             showToast('Водія оновлено', 'success');
+            clearFormValidationState(form, 'driver-edit-message');
             closeModal();
             await loadDrivers();
         } else {
@@ -6461,7 +7018,8 @@ function openDriverEditModal(driver) {
     editingDriverId = driver.id;
     document.getElementById('driver-edit-name').value = driver.full_name;
     document.getElementById('driver-edit-phone').value = driver.phone || '';
-    setFormMessage('driver-edit-message', '', false);
+    const df = document.getElementById('driver-edit-form');
+    if (df) clearFormValidationState(df, 'driver-edit-message');
     modal.classList.remove('hidden');
 }
 
@@ -6474,10 +7032,14 @@ function initUserAddModal() {
     if (!modal || !openBtn || !closeBtn || !overlay || !form) {
         return;
     }
-    const openModal = () => modal.classList.remove('hidden');
+    formBindInvalidHighlightClearing(form);
+    const openModal = () => {
+        clearFormValidationState(form, 'user-message');
+        modal.classList.remove('hidden');
+    };
     const closeModal = () => {
+        clearFormValidationState(form, 'user-message');
         form.reset();
-        setFormMessage('user-message', '', false);
         modal.classList.add('hidden');
     };
     openBtn.addEventListener('click', openModal);
@@ -6486,14 +7048,18 @@ function initUserAddModal() {
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
         if (!isSuperAdmin) {
-            showToast('Доступно лише супер адміну', 'error');
+            formShowValidationError(form, 'user-message', 'Доступно лише супер адміну', ['user-full-name']);
             return;
         }
         const fullName = document.getElementById('user-full-name').value.trim();
         const username = document.getElementById('user-username').value.trim();
         const password = document.getElementById('user-password').value.trim();
         if (!fullName || !username || !password) {
-            setFormMessage('user-message', 'Заповніть всі поля', true);
+            const ids = [];
+            if (!fullName) ids.push('user-full-name');
+            if (!username) ids.push('user-username');
+            if (!password) ids.push('user-password');
+            formShowValidationError(form, 'user-message', 'Заповніть всі поля', ids);
             return;
         }
         const response = await apiFetch('/users', {
@@ -6502,8 +7068,8 @@ function initUserAddModal() {
         });
         if (response.ok) {
             showToast('Користувача створено', 'success');
+            clearFormValidationState(form, 'user-message');
             form.reset();
-            setFormMessage('user-message', '', false);
             await loadUsers();
             closeModal();
         } else {
@@ -6518,10 +7084,11 @@ function initCashForm() {
     if (!form) {
         return;
     }
+    formBindInvalidHighlightClearing(form);
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
         if (!isSuperAdmin) {
-            setFormMessage('cash-message', 'Доступно лише супер адміну', true);
+            formShowValidationError(form, 'cash-message', 'Доступно лише супер адміну', ['cash-currency']);
             return;
         }
         const currency = document.getElementById('cash-currency').value;
@@ -6529,7 +7096,7 @@ function initCashForm() {
         const transactionType = document.getElementById('cash-type').value;
         const description = document.getElementById('cash-description').value.trim();
         if (Number.isNaN(amount) || amount <= 0) {
-            setFormMessage('cash-message', 'Вкажіть коректну суму', true);
+            formShowValidationError(form, 'cash-message', 'Вкажіть коректну суму', ['cash-amount']);
             return;
         }
         const response = await apiFetch('/cash/update-balance', {
@@ -6543,12 +7110,13 @@ function initCashForm() {
         });
         if (response.ok) {
             showToast('Операцію збережено', 'success');
+            clearFormValidationState(form, 'cash-message');
             form.reset();
             await loadCashBalance();
             await loadCashTransactions();
         } else {
             const error = await response.json().catch(() => null);
-            showToast(error?.detail || 'Помилка операції', 'error');
+            setFormMessage('cash-message', error?.detail || 'Помилка операції', true);
         }
     });
 }
@@ -7161,17 +7729,19 @@ function initPurchaseForm() {
         }
     });
 
+    formBindInvalidHighlightClearing(form);
+
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
         const isFree = isFreeCheckbox ? isFreeCheckbox.checked : false;
         const name = nameInput.value.trim();
         const qty = parseFloat(quantityInput.value);
         if (!name) {
-            showToast('Вкажіть назву позиції', 'error');
+            formShowValidationError(form, 'purchase-message', 'Вкажіть назву позиції', ['purchase-name']);
             return;
         }
         if (Number.isNaN(qty) || qty <= 0) {
-            showToast('Вкажіть коректну кількість', 'error');
+            formShowValidationError(form, 'purchase-message', 'Вкажіть коректну кількість', ['purchase-quantity']);
             return;
         }
 
@@ -7185,7 +7755,7 @@ function initPurchaseForm() {
         if (!isFree) {
             const price = parseFloat(priceInput.value);
             if (Number.isNaN(price) || price <= 0) {
-                showToast('Вкажіть коректну ціну', 'error');
+                formShowValidationError(form, 'purchase-message', 'Вкажіть коректну ціну', ['purchase-price']);
                 return;
             }
             payload.price_per_kg = price;
@@ -7198,6 +7768,7 @@ function initPurchaseForm() {
         });
         if (response.ok) {
             showToast(isFree ? 'Додано на склад' : 'Закупівлю збережено', 'success');
+            clearFormValidationState(form, 'purchase-message');
             form.reset();
             totalInput.value = '';
             nameHint.textContent = '';
@@ -7214,7 +7785,7 @@ function initPurchaseForm() {
             }
         } else {
             const error = await response.json().catch(() => null);
-            showToast(error?.detail || 'Помилка збереження', 'error');
+            setFormMessage('purchase-message', error?.detail || 'Помилка збереження', true);
         }
     });
 }
@@ -7236,32 +7807,31 @@ function initWeightCalculations() {
     const tare = document.getElementById('tare-weight');
     const impurity = document.getElementById('impurity-percent');
     const pending = document.getElementById('pending-quality');
+    const pendingTare = document.getElementById('pending-tare');
 
     [gross, tare, impurity].forEach(element => {
         element.addEventListener('input', calculateWeights);
         element.addEventListener('change', calculateWeights);
     });
 
-    // Обработчик для чекбокса "Очікує % втрат" - только клик на сам чекбокс
-    const pendingLabel = pending.closest('label');
-    if (pendingLabel) {
-        // Предотвращаем стандартное поведение label - чекбокс меняется только при клике на сам чекбокс
-        pendingLabel.addEventListener('click', (e) => {
-            // Если клик был на label (не на сам чекбокс), предотвращаем изменение
-            if (e.target !== pending && e.target.tagName !== 'INPUT') {
-                e.preventDefault();
-                e.stopPropagation();
-                // Программно переключаем чекбокс, чтобы зарегистрировать изменение
-                pending.checked = !pending.checked;
-                pending.dispatchEvent(new Event('change', { bubbles: true }));
-            }
-        });
-    }
+    const bindPillToggle = (checkbox) => {
+        if (!checkbox) return;
+        const pendingLabel = checkbox.closest('label');
+        if (pendingLabel) {
+            pendingLabel.addEventListener('click', (e) => {
+                if (e.target !== checkbox && e.target.tagName !== 'INPUT') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    checkbox.checked = !checkbox.checked;
+                    checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            });
+        }
+        checkbox.addEventListener('change', () => calculateWeights());
+    };
 
-    // Обработчик изменения состояния чекбокса
-    pending.addEventListener('change', () => {
-        calculateWeights();
-    });
+    bindPillToggle(pending);
+    bindPillToggle(pendingTare);
 
     calculateWeights();
 }
@@ -7272,17 +7842,23 @@ function calculateWeights() {
     const impurityInput = document.getElementById('impurity-percent');
     const impurity = parseFloat(impurityInput.value) || 0;
     const pending = document.getElementById('pending-quality').checked;
-    const net = gross - tare;
+    const pendingTare = document.getElementById('pending-tare')?.checked;
+    const tareInput = document.getElementById('tare-weight');
+    const net = pendingTare ? 0 : gross - tare;
 
-    // Блокируем инпут "Втрати, %" если чекбокс нажат
-    impurityInput.disabled = pending;
-    if (pending) {
+    impurityInput.disabled = pending || pendingTare;
+    if (pending || pendingTare) {
         impurityInput.value = '0';
     }
+    if (tareInput) {
+        tareInput.disabled = !!pendingTare;
+    }
 
-    document.getElementById('net-weight').value = net > 0 ? formatWeight(net) : '';
-    if (pending) {
-        document.getElementById('accepted-weight').value = 'Очікує';
+    document.getElementById('net-weight').value = pendingTare ? '' : (net > 0 ? formatWeight(net) : '');
+    if (pendingTare) {
+        document.getElementById('accepted-weight').value = 'Очікує тару';
+    } else if (pending) {
+        document.getElementById('accepted-weight').value = 'Очікує %';
     } else if (net > 0) {
         const accepted = net * (1 - impurity / 100);
         document.getElementById('accepted-weight').value = formatWeight(accepted);
@@ -7364,6 +7940,33 @@ function formatDate(value) {
     });
 }
 
+function formatDateOnly(value) {
+    const date = new Date(value);
+    return date.toLocaleDateString('uk-UA', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+    });
+}
+
+/** Календарна дата без часу (локально), для порівнянь */
+function toLocalDateOnly(value) {
+    const d = new Date(value);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function todayLocalDateOnly() {
+    const n = new Date();
+    return new Date(n.getFullYear(), n.getMonth(), n.getDate());
+}
+
+/** Перевипуск дозволений лише після останнього дня дії (включно з end_date ще діє) */
+function isLeaseContractTermEndedStrict(contract) {
+    if (!contract.end_date) return false;
+    const end = toLocalDateOnly(contract.end_date);
+    return todayLocalDateOnly().getTime() > end.getTime();
+}
+
 function getCultureName(cultureId) {
     const found = culturesCache.find(culture => culture.id === cultureId);
     return found ? found.name : '-';
@@ -7418,7 +8021,7 @@ function renderLandlordsTable() {
         const row = document.createElement('tr');
         row.innerHTML = `
             <td><strong>${landlord.full_name}</strong></td>
-            <td>${landlord.phone || '<span class="td-secondary">—</span>'}</td>
+            <td>${landlord.phone || emptyValueHtml()}</td>
             <td class="actions-cell">
                 <button class="btn-icon btn-icon-secondary" data-edit="${landlord.id}" title="Редагувати">${ICONS.edit}</button>
                 <button class="btn-icon btn-icon-danger" data-delete="${landlord.id}" title="Видалити">${ICONS.delete}</button>
@@ -7450,8 +8053,11 @@ function initLandlords() {
 function openLandlordAddModal() {
     editingLandlordId = null;
     document.getElementById('landlord-modal-title').textContent = 'Додати орендодавця';
-    document.getElementById('landlord-form').reset();
-    setFormMessage('landlord-message', '', false);
+    const lf = document.getElementById('landlord-form');
+    if (lf) {
+        clearFormValidationState(lf, 'landlord-message');
+        lf.reset();
+    }
     document.getElementById('landlord-modal').classList.remove('hidden');
 }
 
@@ -7460,7 +8066,8 @@ function openLandlordEditModal(landlord) {
     document.getElementById('landlord-modal-title').textContent = 'Редагувати орендодавця';
     document.getElementById('landlord-full-name').value = landlord.full_name;
     document.getElementById('landlord-phone').value = landlord.phone || '';
-    setFormMessage('landlord-message', '', false);
+    const lf = document.getElementById('landlord-form');
+    if (lf) clearFormValidationState(lf, 'landlord-message');
     document.getElementById('landlord-modal').classList.remove('hidden');
 }
 
@@ -7473,8 +8080,13 @@ function initLandlordModal() {
     if (!modal || !form || !closeBtn || !overlay) {
         return;
     }
+
+    formBindInvalidHighlightClearing(form);
     
-    const closeLandlordModal = () => modal.classList.add('hidden');
+    const closeLandlordModal = () => {
+        clearFormValidationState(form, 'landlord-message');
+        modal.classList.add('hidden');
+    };
 
     closeBtn.addEventListener('click', closeLandlordModal);
     overlay.addEventListener('click', closeLandlordModal);
@@ -7486,7 +8098,7 @@ function initLandlordModal() {
         const phone = document.getElementById('landlord-phone').value.trim();
         
         if (!fullName) {
-            setFormMessage('landlord-message', 'Вкажіть ПІБ', true);
+            formShowValidationError(form, 'landlord-message', 'Вкажіть ПІБ', ['landlord-full-name']);
             return;
         }
         
@@ -7507,6 +8119,7 @@ function initLandlordModal() {
         
         if (response.ok) {
             showToast(editingLandlordId ? 'Орендодавця оновлено' : 'Орендодавця додано', 'success');
+            clearFormValidationState(form, 'landlord-message');
             closeLandlordModal();
             await loadLandlords();
             await loadContracts(); // Обновляем контракты, так как там может быть автодополнение
@@ -7571,7 +8184,6 @@ async function loadContracts() {
     }
     contractsCache = await response.json();
     renderContractsTable();
-    updatePaymentContractSelect();
 }
 
 function renderContractsTable() {
@@ -7586,6 +8198,7 @@ function renderContractsTable() {
         if (filterLandlord && String(c.landlord_id) !== filterLandlord) return false;
         if (filterStatus === 'active' && !c.is_active) return false;
         if (filterStatus === 'inactive' && c.is_active) return false;
+        if (filterStatus === 'due' && !(c.has_debt || (c.remaining_cash_uah && c.remaining_cash_uah > 0.01))) return false;
         return true;
     });
     if (!filtered.length) {
@@ -7595,10 +8208,13 @@ function renderContractsTable() {
     filtered.forEach(contract => {
         const row = document.createElement('tr');
         if (!contract.is_active) row.classList.add('row-muted');
+        if (contract.is_overdue) row.classList.add('row-overdue');
 
         const expired = contract.is_expired;
         let statusBadge;
-        if (expired) {
+        if (contract.is_overdue) {
+            statusBadge = '<span class="status-badge danger">Не виплачено</span>';
+        } else if (expired) {
             statusBadge = '<span class="status-badge warning">Завершений</span>';
         } else if (contract.is_active) {
             statusBadge = '<span class="status-badge success">Активний</span>';
@@ -7606,16 +8222,28 @@ function renderContractsTable() {
             statusBadge = '<span class="status-badge muted">Неактивний</span>';
         }
 
-        const endDateStr = contract.end_date ? formatDate(contract.end_date) : '—';
-        const dateRange = `${formatDate(contract.contract_date)} — ${endDateStr}`;
+        const endDateStr = contract.end_date ? formatDateOnly(contract.end_date) : emptyValueHtml();
+        const dateRange = `${formatDateOnly(contract.contract_date)} — ${endDateStr}`;
+
+        const termEndedStrict = isLeaseContractTermEndedStrict(contract);
+        const canRenew = Boolean(contract.is_active && termEndedStrict);
+        let renewTitle = 'Перевипустити';
+        if (!contract.is_active) {
+            renewTitle = 'Контракт не активний';
+        } else if (!contract.end_date) {
+            renewTitle = 'Вкажіть дату закінчення контракту для перевипуску';
+        } else if (!termEndedStrict) {
+            renewTitle = 'Доступно після закінчення строку дії контракту';
+        }
+
+        const renewBtnClass = canRenew ? 'btn-icon-primary' : 'btn-icon-secondary';
+        const renewDisabled = canRenew ? '' : ' disabled';
 
         let actionsHtml = `
-            <button class="btn-icon btn-icon-secondary" data-view="${contract.id}" title="Переглянути">${ICONS.view}</button>
-            <button class="btn-icon btn-icon-secondary" data-edit="${contract.id}" title="Редагувати">${ICONS.edit}</button>`;
-        if (expired && contract.is_active) {
-            actionsHtml += `<button class="btn-icon btn-icon-primary" data-renew="${contract.id}" title="Перевипустити">↻</button>`;
-        }
-        actionsHtml += `<button class="btn-icon btn-icon-danger" data-delete="${contract.id}" title="Видалити">${ICONS.delete}</button>`;
+            <button type="button" class="btn-icon btn-icon-secondary" data-view="${contract.id}" title="Переглянути">${ICONS.view}</button>
+            <button type="button" class="btn-icon btn-icon-secondary" data-edit="${contract.id}" title="Редагувати">${ICONS.edit}</button>
+            <button type="button" class="btn-icon ${renewBtnClass}" data-renew="${contract.id}" title="${renewTitle}"${renewDisabled}>${ICONS.renew}</button>
+            <button type="button" class="btn-icon btn-icon-danger" data-delete="${contract.id}" title="Видалити">${ICONS.delete}</button>`;
 
         row.innerHTML = `
             <td><strong>${contract.landlord_full_name}</strong></td>
@@ -7631,7 +8259,7 @@ function renderContractsTable() {
             openContractEditModal(contract);
         });
         const renewBtn = row.querySelector(`[data-renew="${contract.id}"]`);
-        if (renewBtn) {
+        if (renewBtn && canRenew) {
             renewBtn.addEventListener('click', () => openContractRenewModal(contract));
         }
         row.querySelector(`[data-delete="${contract.id}"]`).addEventListener('click', () => {
@@ -7655,6 +8283,7 @@ function initContracts() {
     initContractLandlordSearch();
     initContractsFilter();
     initContractsReportModal();
+    initContractsDebtReportBtn();
     
     const addItemBtn = document.getElementById('contract-add-item');
     if (addItemBtn) {
@@ -7873,11 +8502,14 @@ function updateContractItemRemoveButtons() {
 function openContractAddModal() {
     editingContractId = null;
     document.getElementById('contract-modal-title').textContent = 'Додати контракт';
-    document.getElementById('contract-form').reset();
+    const cform = document.getElementById('contract-form');
+    if (cform) {
+        clearFormValidationState(cform, 'contract-message');
+        cform.reset();
+    }
     document.getElementById('contract-landlord-id').value = '';
     document.getElementById('contract-landlord-search').value = '';
     document.getElementById('contract-is-active').checked = true;
-    setFormMessage('contract-message', '', false);
     resetContractItems();
     updateContractLandlordBadge();
     document.getElementById('contract-modal').classList.remove('hidden');
@@ -7904,7 +8536,8 @@ function openContractEditModal(contract) {
     document.getElementById('contract-date').value = formatDateInput(contractDate);
     document.getElementById('contract-note').value = contract.note || '';
     document.getElementById('contract-is-active').checked = contract.is_active;
-    setFormMessage('contract-message', '', false);
+    const cform = document.getElementById('contract-form');
+    if (cform) clearFormValidationState(cform, 'contract-message');
     
     // Загружаем позиции контракта
     const tbody = document.getElementById('contract-items-tbody');
@@ -7962,15 +8595,19 @@ function initContractModal() {
     if (!modal || !form || !closeBtn || !overlay) {
         return;
     }
+
+    formBindInvalidHighlightClearing(form);
+
+    const contractItemsTableWrap = document.getElementById('contract-items-table')?.closest('.form-field');
     
     const closeModal = () => {
+        clearFormValidationState(form, 'contract-message');
         modal.classList.add('hidden');
         form.reset();
         document.getElementById('contract-landlord-id').value = '';
         document.getElementById('contract-landlord-search').value = '';
         resetContractItems();
         editingContractId = null;
-        setFormMessage('contract-message', '', false);
     };
     
     closeBtn.addEventListener('click', closeModal);
@@ -8053,6 +8690,7 @@ function initContractModal() {
         
         // Получаем позиции контракта из таблицы
         const contractItems = [];
+        const filledContractRows = [];
         const itemRows = document.querySelectorAll('#contract-items-tbody .contract-item-row');
         itemRows.forEach(row => {
             const cultureSelect = row.querySelector('.contract-item-culture');
@@ -8065,6 +8703,7 @@ function initContractModal() {
                     quantity_kg: parseFloat(quantityInput.value) || 0,
                     price_per_kg_uah: parseFloat(priceInput.value) || 0
                 });
+                filledContractRows.push(row);
             }
         });
         
@@ -8073,35 +8712,36 @@ function initContractModal() {
         const isActive = document.getElementById('contract-is-active').checked;
         
         if (!landlordId) {
-            setFormMessage('contract-message', 'Виберіть орендодавця', true);
+            formShowValidationError(form, 'contract-message', 'Виберіть орендодавця', ['contract-landlord-search']);
             return;
         }
         if (!fieldName) {
-            setFormMessage('contract-message', 'Вкажіть назву поля', true);
+            formShowValidationError(form, 'contract-message', 'Вкажіть назву поля', ['contract-field-name']);
             return;
         }
         if (contractItems.length === 0) {
-            setFormMessage('contract-message', 'Додайте хоча б одну позицію контракту', true);
+            formShowValidationError(form, 'contract-message', 'Додайте хоча б одну позицію контракту', [], contractItemsTableWrap ? [contractItemsTableWrap] : []);
             return;
         }
         // Проверяем валидность каждой позиции
         for (let i = 0; i < contractItems.length; i++) {
             const item = contractItems[i];
+            const errRow = filledContractRows[i];
             if (!item.culture_id || item.culture_id <= 0) {
-                setFormMessage('contract-message', `Виберіть культуру для позиції ${i + 1}`, true);
+                formShowValidationError(form, 'contract-message', `Виберіть культуру для позиції ${i + 1}`, [], errRow ? [errRow] : []);
                 return;
             }
             if (Number.isNaN(item.quantity_kg) || item.quantity_kg <= 0) {
-                setFormMessage('contract-message', `Вкажіть коректну кількість для позиції ${i + 1}`, true);
+                formShowValidationError(form, 'contract-message', `Вкажіть коректну кількість для позиції ${i + 1}`, [], errRow ? [errRow] : []);
                 return;
             }
             if (Number.isNaN(item.price_per_kg_uah) || item.price_per_kg_uah <= 0) {
-                setFormMessage('contract-message', `Вкажіть коректну ціну для позиції ${i + 1}`, true);
+                formShowValidationError(form, 'contract-message', `Вкажіть коректну ціну для позиції ${i + 1}`, [], errRow ? [errRow] : []);
                 return;
             }
         }
         if (!dateNative) {
-            setFormMessage('contract-message', 'Вкажіть дату контракту', true);
+            formShowValidationError(form, 'contract-message', 'Вкажіть дату контракту', ['contract-date']);
             return;
         }
         
@@ -8128,12 +8768,12 @@ function initContractModal() {
         
         if (response.ok) {
             showToast(editingContractId ? 'Контракт оновлено' : 'Контракт додано', 'success');
+            clearFormValidationState(form, 'contract-message');
             form.reset();
             document.getElementById('contract-landlord-id').value = '';
             document.getElementById('contract-landlord-search').value = '';
             resetContractItems();
             editingContractId = null;
-            setFormMessage('contract-message', '', false);
             modal.classList.add('hidden');
             await loadContracts();
             await loadPayments();
@@ -8283,12 +8923,25 @@ function initContractDeleteModal() {
 async function openContractViewModal(contract) {
     document.getElementById('view-contract-landlord').textContent = contract.landlord_full_name;
     document.getElementById('view-contract-field').textContent = contract.field_name;
-    document.getElementById('view-contract-date').textContent = formatDate(contract.contract_date);
-    const statusBadge = contract.is_active 
-        ? '<span class="status-badge success">Активний</span>'
-        : '<span class="status-badge muted">Неактивний</span>';
-    document.getElementById('view-contract-status').innerHTML = statusBadge;
-    document.getElementById('view-contract-note').textContent = contract.note || '-';
+    document.getElementById('view-contract-date').textContent = formatDateOnly(contract.contract_date);
+    const setStatusBadge = (html) => {
+        const el = document.getElementById('view-contract-status');
+        if (el) el.innerHTML = html;
+    };
+    // Початковий статус — з кешу (потім оновимо за актуальним балансом).
+    if (contract.is_overdue) {
+        setStatusBadge('<span class="status-badge danger">Не виплачено</span>');
+    } else if (contract.is_expired) {
+        setStatusBadge('<span class="status-badge warning">Завершений</span>');
+    } else if (contract.is_active) {
+        setStatusBadge('<span class="status-badge success">Активний</span>');
+    } else {
+        setStatusBadge('<span class="status-badge muted">Неактивний</span>');
+    }
+    const noteEl = document.getElementById('view-contract-note');
+    if (noteEl) {
+        noteEl.innerHTML = contract.note ? escapeHtml(contract.note) : emptyValueHtml();
+    }
     
     // Заполняем позиции контракта
     const itemsTbody = document.getElementById('view-contract-items-tbody');
@@ -8297,7 +8950,7 @@ async function openContractViewModal(contract) {
         contract.contract_items.forEach(item => {
             const row = document.createElement('tr');
             row.innerHTML = `
-                <td>${item.culture_name || '-'}</td>
+                <td>${item.culture_name ? escapeHtml(item.culture_name) : emptyValueHtml()}</td>
                 <td>${formatWeight(item.quantity_kg)}</td>
                 <td>${item.price_per_kg_uah.toFixed(2)}</td>
             `;
@@ -8321,6 +8974,19 @@ async function openContractViewModal(contract) {
         if (!response.ok) throw new Error();
         const balance = await response.json();
         renderContractViewBalance(balance);
+
+        // Оновлюємо статус у модалці за актуальним залишком/прострочкою.
+        const totalRemainingUah = (balance.items || []).reduce((acc, it) => acc + (parseFloat(it.remaining_cash_uah) || 0), 0);
+        const hasDebt = totalRemainingUah > 0.01;
+        if (balance.is_expired && hasDebt) {
+            setStatusBadge('<span class="status-badge danger">Не виплачено</span>');
+        } else if (balance.is_expired) {
+            setStatusBadge('<span class="status-badge warning">Завершений</span>');
+        } else if (contract.is_active) {
+            setStatusBadge('<span class="status-badge success">Активний</span>');
+        } else {
+            setStatusBadge('<span class="status-badge muted">Неактивний</span>');
+        }
     } catch (e) {
         console.error('Помилка завантаження балансу контракту', e);
         balanceEl.innerHTML = '<div style="color:var(--text-secondary);font-size:13px;">Не вдалося завантажити баланс</div>';
@@ -8427,7 +9093,6 @@ async function loadPayments() {
     }
     paymentsCache = await response.json();
     renderPaymentsTable();
-    updatePaymentContractSelect();
 }
 
 function renderPaymentsTable() {
@@ -8453,10 +9118,10 @@ function renderPaymentsTable() {
         if (payment.is_cancelled) {
             row.classList.add('row-cancelled');
         }
-        let sumText = '<span class="td-secondary">—</span>';
+        let sumText = emptyValueHtml();
         if (payment.grain_items && payment.grain_items.length > 0) {
             const grainParts = payment.grain_items.map(item =>
-                `<span class="inline-badge grain">${formatWeight(item.quantity_kg)} ${item.culture_name || ''}</span>`
+                `<span class="inline-badge grain">${formatWeight(item.quantity_kg)} ${item.culture_name ? escapeHtml(item.culture_name) : emptyValueHtml()}</span>`
             ).join(' ');
             if (payment.payment_type === 'cash') {
                 sumText = `<strong>${formatAmount(payment.amount || 0)} ${payment.currency || '₴'}</strong> ${grainParts}`;
@@ -8481,8 +9146,8 @@ function renderPaymentsTable() {
 
         row.innerHTML = `
             <td>${formatDate(payment.payment_date)}</td>
-            <td><strong>${payment.landlord_full_name || '—'}</strong></td>
-            <td>${payment.contract_field_name || '—'}</td>
+            <td><strong>${payment.landlord_full_name ? escapeHtml(payment.landlord_full_name) : emptyValueHtml()}</strong></td>
+            <td>${payment.contract_field_name ? escapeHtml(payment.contract_field_name) : emptyValueHtml()}</td>
             <td>${typeBadge}${statusBadge}</td>
             <td>${sumText}</td>
             <td class="actions-cell">${cancelBtn}</td>
@@ -8577,8 +9242,19 @@ function initPayments() {
 }
 
 function openPaymentAddModal() {
-    document.getElementById('payment-form').reset();
-    document.getElementById('payment-contract').value = '';
+    const paymentForm = document.getElementById('payment-form');
+    if (paymentForm) {
+        clearFormValidationState(paymentForm, 'payment-message');
+        paymentForm.reset();
+    }
+    document.getElementById('payment-landlord-search').value = '';
+    document.getElementById('payment-landlord-id').value = '';
+    const contractSel = document.getElementById('payment-contract');
+    if (contractSel) {
+        contractSel.value = '';
+        contractSel.disabled = true;
+        contractSel.innerHTML = '<option value="">Спочатку оберіть орендодавця</option>';
+    }
     document.getElementById('payment-type').value = 'grain';
     document.getElementById('payment-currency').value = 'UAH';
     document.getElementById('payment-rate').value = '';
@@ -8588,8 +9264,6 @@ function openPaymentAddModal() {
     document.getElementById('payment-grain-items-list').innerHTML =
         '<div class="grain-items-placeholder">Оберіть контракт</div>';
     updatePaymentFields();
-    setFormMessage('payment-message', '', false);
-    updatePaymentContractSelect();
 
     document.getElementById('payment-modal').classList.remove('hidden');
 
@@ -8599,6 +9273,121 @@ function openPaymentAddModal() {
         if (contractSelect && typeof initCustomSelects === 'function') initCustomSelects(contractSelect);
         if (typeSelect && typeof initCustomSelects === 'function') initCustomSelects(typeSelect);
     }, 100);
+}
+
+let paymentLandlordContractsCache = [];
+
+function updatePaymentContractSelectForLandlord() {
+    const select = document.getElementById('payment-contract');
+    if (!select) return;
+    if (!paymentLandlordContractsCache.length) {
+        select.disabled = true;
+        select.innerHTML = '<option value="">Немає контрактів з боргом</option>';
+        if (typeof refreshCustomSelect === 'function') refreshCustomSelect(select);
+        return;
+    }
+    select.disabled = false;
+    select.innerHTML = '<option value="">Оберіть контракт</option>' +
+        paymentLandlordContractsCache
+            .map(c => {
+                const inactive = !c.is_active ? ' [старий]' : '';
+                const debt = (c.remaining_cash_uah && c.remaining_cash_uah > 0.01)
+                    ? ` — борг ${formatAmount(c.remaining_cash_uah)} грн`
+                    : '';
+                return `<option value="${c.id}">${c.landlord_full_name} — ${c.field_name}${inactive}${debt}</option>`;
+            })
+            .join('');
+    if (typeof refreshCustomSelect === 'function') refreshCustomSelect(select);
+}
+
+async function onPaymentLandlordChange(landlordId) {
+    paymentLandlordContractsCache = [];
+    const contractSel = document.getElementById('payment-contract');
+    if (contractSel) {
+        contractSel.value = '';
+        contractSel.disabled = true;
+        contractSel.innerHTML = '<option value="">Завантаження…</option>';
+        if (typeof refreshCustomSelect === 'function') refreshCustomSelect(contractSel);
+    }
+    paymentBalance = null;
+    document.getElementById('payment-balance-card').classList.add('hidden');
+    document.getElementById('payment-grain-items-list').innerHTML =
+        '<div class="grain-items-placeholder">Оберіть контракт</div>';
+    if (!landlordId) {
+        if (contractSel) {
+            contractSel.innerHTML = '<option value="">Спочатку оберіть орендодавця</option>';
+            if (typeof refreshCustomSelect === 'function') refreshCustomSelect(contractSel);
+        }
+        return;
+    }
+
+    try {
+        const resp = await apiFetch(`/leases/contracts?landlord_id=${encodeURIComponent(landlordId)}&due_only=true`);
+        if (!resp.ok) throw new Error();
+        paymentLandlordContractsCache = await resp.json();
+    } catch (e) {
+        paymentLandlordContractsCache = [];
+    }
+    updatePaymentContractSelectForLandlord();
+}
+
+function initPaymentLandlordSearch() {
+    const nameInput = document.getElementById('payment-landlord-search');
+    const idInput = document.getElementById('payment-landlord-id');
+    const suggestionsDiv = document.getElementById('payment-landlord-suggestions');
+    if (!nameInput || !idInput || !suggestionsDiv) return;
+
+    let timer = null;
+    let lastSelectedName = '';
+
+    const clearSelection = () => {
+        idInput.value = '';
+        lastSelectedName = '';
+        onPaymentLandlordChange('');
+    };
+
+    nameInput.addEventListener('input', () => {
+        const value = nameInput.value.trim();
+        if (idInput.value && value !== lastSelectedName) {
+            clearSelection();
+        }
+        suggestionsDiv.innerHTML = '';
+        suggestionsDiv.classList.add('hidden');
+        if (timer) clearTimeout(timer);
+        if (value.length < 2) return;
+
+        timer = setTimeout(async () => {
+            try {
+                const response = await apiFetch(`/leases/landlords?q=${encodeURIComponent(value)}`);
+                if (!response.ok) return;
+                const landlords = await response.json();
+                if (!landlords.length) return;
+                suggestionsDiv.innerHTML = '';
+                landlords.forEach(l => {
+                    const item = document.createElement('div');
+                    item.className = 'suggestion-item';
+                    item.textContent = l.full_name;
+                    item.addEventListener('click', async () => {
+                        nameInput.value = l.full_name;
+                        idInput.value = l.id;
+                        lastSelectedName = l.full_name;
+                        suggestionsDiv.classList.add('hidden');
+                        await onPaymentLandlordChange(l.id);
+                    });
+                    suggestionsDiv.appendChild(item);
+                });
+                suggestionsDiv.classList.remove('hidden');
+            } catch {
+                // ignore
+            }
+        }, 150);
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!suggestionsDiv.contains(e.target) && e.target !== nameInput) {
+            suggestionsDiv.classList.add('hidden');
+        }
+    });
 }
 
 async function onPaymentContractChange() {
@@ -8638,7 +9427,7 @@ function renderPaymentBalance() {
         const d = new Date(s);
         return d.toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: 'numeric' });
     };
-    periodEl.textContent = `${fmtDate(paymentBalance.period_start)} — ${fmtDate(paymentBalance.period_end)} (рік ${paymentBalance.period_number})`;
+    periodEl.textContent = `${fmtDate(paymentBalance.period_start)} — ${fmtDate(paymentBalance.period_end)}`;
 
     itemsEl.innerHTML = paymentBalance.items.map(item => {
         const pct = item.annual_quantity_kg > 0
@@ -8804,8 +9593,16 @@ function initPaymentModal() {
     const currencySelect = document.getElementById('payment-currency');
     if (!modal || !form || !closeBtn || !overlay) return;
 
-    closeBtn.addEventListener('click', () => modal.classList.add('hidden'));
-    overlay.addEventListener('click', () => modal.classList.add('hidden'));
+    formBindInvalidHighlightClearing(form);
+
+    const closePaymentModal = () => {
+        clearFormValidationState(form, 'payment-message');
+        modal.classList.add('hidden');
+    };
+    closeBtn.addEventListener('click', closePaymentModal);
+    overlay.addEventListener('click', closePaymentModal);
+
+    initPaymentLandlordSearch();
 
     // При выборе контракта — загрузить баланс
     if (contractSelect) {
@@ -8848,11 +9645,11 @@ function initPaymentModal() {
         const note = document.getElementById('payment-note').value.trim();
 
         if (!contractId) {
-            setFormMessage('payment-message', 'Виберіть контракт', true);
+            formShowValidationError(form, 'payment-message', 'Виберіть контракт', ['payment-contract']);
             return;
         }
         if (!paymentBalance) {
-            setFormMessage('payment-message', 'Зачекайте, завантажується залишок', true);
+            formShowValidationError(form, 'payment-message', 'Зачекайте, завантажується залишок', ['payment-contract']);
             return;
         }
 
@@ -8874,8 +9671,8 @@ function initPaymentModal() {
 
                 const maxQty = parseFloat(input.dataset.max);
                 if (qty > maxQty + 0.01) {
-                    setFormMessage('payment-message',
-                        `Перевищено залишок: макс. ${maxQty} кг`, true);
+                    formShowValidationError(form, 'payment-message',
+                        `Перевищено залишок: макс. ${maxQty} кг`, [], [row]);
                     return;
                 }
                 payload.grain_items.push({
@@ -8884,8 +9681,9 @@ function initPaymentModal() {
                 });
             }
             if (payload.grain_items.length === 0) {
-                setFormMessage('payment-message',
-                    'Вкажіть кількість хоча б для однієї культури', true);
+                const grainBlock = document.getElementById('payment-grain-fields');
+                formShowValidationError(form, 'payment-message',
+                    'Вкажіть кількість хоча б для однієї культури', [], [grainBlock].filter(Boolean));
                 return;
             }
         } else {
@@ -8896,15 +9694,15 @@ function initPaymentModal() {
             const rate = parseFloat(document.getElementById('payment-rate').value) || 0;
 
             if (!cultureId) {
-                setFormMessage('payment-message', 'Виберіть культуру', true);
+                formShowValidationError(form, 'payment-message', 'Виберіть культуру', ['payment-cash-culture']);
                 return;
             }
             if (isNaN(amount) || amount <= 0) {
-                setFormMessage('payment-message', 'Вкажіть суму', true);
+                formShowValidationError(form, 'payment-message', 'Вкажіть суму', ['payment-amount']);
                 return;
             }
             if (currency !== 'UAH' && (!rate || rate <= 0)) {
-                setFormMessage('payment-message', `Вкажіть курс ${currency} до грн`, true);
+                formShowValidationError(form, 'payment-message', `Вкажіть курс ${currency} до грн`, ['payment-rate']);
                 return;
             }
 
@@ -8912,7 +9710,7 @@ function initPaymentModal() {
 
             const balItem = paymentBalance.items.find(i => i.culture_id == cultureId);
             if (!balItem) {
-                setFormMessage('payment-message', 'Культуру не знайдено', true);
+                formShowValidationError(form, 'payment-message', 'Культуру не знайдено', ['payment-cash-culture']);
                 return;
             }
             const equivKg = balItem.price_per_kg_uah > 0
@@ -8921,8 +9719,8 @@ function initPaymentModal() {
                 const maxMsg = currency === 'UAH'
                     ? `макс. ${balItem.remaining_cash_uah} грн`
                     : `макс. ${(balItem.remaining_cash_uah / rate).toFixed(2)} ${currency}`;
-                setFormMessage('payment-message',
-                    `Сума перевищує залишок: ${maxMsg}`, true);
+                formShowValidationError(form, 'payment-message',
+                    `Сума перевищує залишок: ${maxMsg}`, ['payment-amount']);
                 return;
             }
 
@@ -8943,6 +9741,7 @@ function initPaymentModal() {
             showToast('Виплату додано', 'success');
             paymentBalance = null;
             document.getElementById('payment-balance-card').classList.add('hidden');
+            clearFormValidationState(form, 'payment-message');
             modal.classList.add('hidden');
             await loadPayments();
             // Оновити склад та касу, бо виплата списує з них
@@ -8975,15 +9774,7 @@ function updatePaymentFields() {
     }
 }
 
-function updatePaymentContractSelect() {
-    const select = document.getElementById('payment-contract');
-    if (!select || !contractsCache.length) return;
-    select.innerHTML = '<option value="">Оберіть контракт</option>' +
-        contractsCache
-            .filter(c => c.is_active)
-            .map(c => `<option value="${c.id}">${c.landlord_full_name} — ${c.field_name}</option>`)
-            .join('');
-}
+// NOTE: список контрактів для виплат формується після вибору орендодавця (див. initPaymentLandlordSearch).
 
 
 function formatDateInput(date) {
@@ -9143,6 +9934,29 @@ function initLandlordsReportModal() {
         window.URL.revokeObjectURL(url);
         showToast('Звіт сформовано', 'success');
         closeModal();
+    });
+}
+
+function initContractsDebtReportBtn() {
+    const btn = document.getElementById('contracts-debt-report-btn');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+        const response = await apiFetchBlob('/leases/contracts/debt-export');
+        if (!response.ok) {
+            const error = await response.json().catch(() => null);
+            showToast(error?.detail || 'Не вдалося сформувати звіт по боргу', 'error');
+            return;
+        }
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `lease_debt_${new Date().toISOString().slice(0, 10)}.xlsx`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+        showToast('Звіт по боргу сформовано', 'success');
     });
 }
 
@@ -9333,7 +10147,9 @@ function renderVouchersTable() {
     }
     vouchersCache.forEach(v => {
         const tr = document.createElement('tr');
-        const dateStr = v.created_at ? new Date(v.created_at).toLocaleDateString('uk-UA') : '—';
+        const dateCell = v.created_at
+            ? new Date(v.created_at).toLocaleDateString('uk-UA')
+            : emptyValueHtml();
         tr.innerHTML = `
             <td class="td-mono">${v.id}</td>
             <td><a href="#" class="td-link link-contract" data-contract-id="${v.farmer_contract_id}">#${v.farmer_contract_id}</a></td>
@@ -9341,7 +10157,7 @@ function renderVouchersTable() {
             <td class="td-weight">${formatAmount(v.quantity_kg)} кг</td>
             <td class="td-mono">${formatAmount(v.price_per_kg)} ₴/кг</td>
             <td class="td-weight">${formatAmount(v.total_value_uah)} ₴</td>
-            <td>${dateStr}</td>
+            <td>${dateCell}</td>
         `;
         tbody.appendChild(tr);
     });
@@ -9358,18 +10174,20 @@ function renderVoucherPaymentsTable() {
     voucherPaymentsCache.forEach(p => {
         const tr = document.createElement('tr');
         if (p.is_cancelled) tr.classList.add('row-cancelled');
-        const dateStr = p.created_at ? new Date(p.created_at).toLocaleDateString('uk-UA') : '—';
+        const dateCell = p.created_at
+            ? new Date(p.created_at).toLocaleDateString('uk-UA')
+            : emptyValueHtml();
         const currSymbols = { UAH: '₴', USD: '$', EUR: '€' };
         const currSymbol = currSymbols[p.currency] || p.currency;
         tr.innerHTML = `
             <td class="td-mono">${p.id}</td>
             <td><strong>${p.currency}</strong></td>
             <td class="td-weight">${formatAmount(p.amount)} ${currSymbol}</td>
-            <td class="td-mono">${p.exchange_rate != 1 ? formatAmount(p.exchange_rate) : '—'}</td>
+            <td class="td-mono">${p.exchange_rate != 1 ? formatAmount(p.exchange_rate) : emptyValueHtml()}</td>
             <td class="td-weight">${formatAmount(p.amount_uah)} ₴</td>
-            <td>${p.description || '<span class="td-secondary">—</span>'}</td>
-            <td>${p.created_by}</td>
-            <td>${dateStr}</td>
+            <td>${p.description ? escapeHtml(p.description) : emptyValueHtml()}</td>
+            <td>${p.created_by ? escapeHtml(p.created_by) : emptyValueHtml()}</td>
+            <td>${dateCell}</td>
             <td class="actions-cell">
                 ${!p.is_cancelled
                     ? `<button class="btn-icon btn-icon-danger vp-cancel-btn" data-payment-id="${p.id}" title="Скасувати">${ICONS.cancel}</button>`

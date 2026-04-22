@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E '\\\\.\\(html|css|js|py|json|md\\)$')",
+      "Bash(awk '/display:\\\\s*grid/,/^[^ ]/ {print NR\": \"$0}' \"/c/projects/zerno/frontend/static/css/style.css\")",
+      "Bash(awk '/^[^ ]/ && !/^$/ {section=$0; next} {if \\(section\\) print NR\": \"section\" | \"$0}' \"/c/projects/zerno/frontend/static/css/style.css\")",
+      "Bash(cat)",
+      "Bash(bash /tmp/extract_modals.sh)"
+    ]
+  }
+}

@@ -144,9 +144,14 @@ class GrainIntake(BaseModel, table=True):
 
     impurity_percent: float = Field(default=0.0, description="Відсоток втрат")
     pending_quality: bool = Field(default=False, description="Очікує % втрат")
+    pending_tare: bool = Field(default=False, description="Очікує тару (нетто не на склад)")
     accepted_weight_kg: float = Field(default=0.0, description="Прийнята вага, кг")
 
     note: Optional[str] = Field(default=None, description="Примітка")
+    is_farmer_transfer: bool = Field(
+        default=False,
+        description="Синтетична картка приходу при переказі між фермерами (не фізичний приїзд)",
+    )
     created_by_user_id: Optional[int] = Field(default=None, foreign_key="users.id")
 
 
@@ -429,6 +434,8 @@ class LeasePaymentGrainItem(BaseModel, table=True):
     payment_id: int = Field(foreign_key="lease_payments.id", description="ID виплати")
     culture_id: int = Field(foreign_key="grain_cultures.id", description="Культура")
     quantity_kg: float = Field(description="Кількість зерна, кг")
+    from_own_kg: float = Field(default=0.0, description="Списано з нашого зерна, кг")
+    from_farmer_kg: float = Field(default=0.0, description="Списано з зерна фермерів (не викупленого), кг")
 
 
 class GrainVoucher(BaseModel, table=True):

@@ -28,61 +28,41 @@ def init_db():
     """Инициализация базы данных (создание таблиц, супер админа и кассы)"""
     SQLModel.metadata.create_all(engine)
 
-    # Міграція: додаємо is_cancelled до lease_payments якщо колонки ще немає
+    # Міграції колонок: IF NOT EXISTS — без ERROR у логах Postgres при повторному init_db
     with engine.connect() as conn:
-        try:
-            conn.execute(text(
-                "ALTER TABLE lease_payments ADD COLUMN is_cancelled BOOLEAN DEFAULT FALSE"
-            ))
-            conn.commit()
-            print("✅ Додано колонку is_cancelled до lease_payments")
-        except Exception:
-            conn.rollback()  # Колонка вже існує
+        conn.execute(text(
+            "ALTER TABLE lease_payments ADD COLUMN IF NOT EXISTS is_cancelled BOOLEAN DEFAULT FALSE"
+        ))
+        conn.commit()
 
-        try:
-            conn.execute(text(
-                "ALTER TABLE grain_stock ADD COLUMN reserved_kg DOUBLE PRECISION DEFAULT 0"
-            ))
-            conn.commit()
-            print("✅ Додано колонку reserved_kg до grain_stock")
-        except Exception:
-            conn.rollback()
+        conn.execute(text(
+            "ALTER TABLE lease_payment_grain_items ADD COLUMN IF NOT EXISTS from_own_kg DOUBLE PRECISION DEFAULT 0"
+        ))
+        conn.execute(text(
+            "ALTER TABLE lease_payment_grain_items ADD COLUMN IF NOT EXISTS from_farmer_kg DOUBLE PRECISION DEFAULT 0"
+        ))
+        conn.commit()
 
-        try:
-            conn.execute(text(
-                "ALTER TABLE farmer_contract_items ADD COLUMN direction VARCHAR(32) DEFAULT 'from_company'"
-            ))
-            conn.commit()
-            print("✅ Додано колонку direction до farmer_contract_items")
-        except Exception:
-            conn.rollback()
+        conn.execute(text(
+            "ALTER TABLE grain_stock ADD COLUMN IF NOT EXISTS reserved_kg DOUBLE PRECISION DEFAULT 0"
+        ))
+        conn.commit()
 
-        try:
-            conn.execute(text(
-                "ALTER TABLE farmer_contract_items ADD COLUMN delivered_kg DOUBLE PRECISION DEFAULT 0"
-            ))
-            conn.commit()
-            print("✅ Додано колонку delivered_kg до farmer_contract_items")
-        except Exception:
-            conn.rollback()
+        conn.execute(text(
+            "ALTER TABLE farmer_contract_items ADD COLUMN IF NOT EXISTS direction VARCHAR(32) DEFAULT 'from_company'"
+        ))
+        conn.execute(text(
+            "ALTER TABLE farmer_contract_items ADD COLUMN IF NOT EXISTS delivered_kg DOUBLE PRECISION DEFAULT 0"
+        ))
+        conn.commit()
 
-        try:
-            conn.execute(text(
-                "ALTER TABLE farmer_contract_payments ADD COLUMN contract_item_id INTEGER"
-            ))
-            conn.commit()
-            print("✅ Додано колонку contract_item_id до farmer_contract_payments")
-        except Exception:
-            conn.rollback()
-
-        try:
-            conn.execute(text(
-                "ALTER TABLE farmer_contract_payments ADD COLUMN item_name VARCHAR(255)"
-            ))
-            conn.commit()
-            print("✅ Додано колонку item_name до farmer_contract_payments")
-        except Exception:
-            conn.rollback()
+        conn.execute(text(
+            "ALTER TABLE farmer_contract_payments ADD COLUMN IF NOT EXISTS contract_item_id INTEGER"
+        ))
+        conn.execute(text(
+            "ALTER TABLE farmer_contract_payments ADD COLUMN IF NOT EXISTS item_name VARCHAR(255)"
+        ))
+        conn.commit()
 
         # Міграція: конвертуємо enum-колонки в VARCHAR(32) для уникнення проблем з PostgreSQL enum
         for tbl, col in [
@@ -110,73 +90,39 @@ def init_db():
             conn.rollback()
 
         # Міграції для нових полів farmer_contracts (4 типи контрактів)
-        try:
-            conn.execute(text(
-                "ALTER TABLE farmer_contracts ADD COLUMN currency VARCHAR(8)"
-            ))
-            conn.commit()
-            print("✅ Додано колонку currency до farmer_contracts")
-        except Exception:
-            conn.rollback()
-
-        try:
-            conn.execute(text(
-                "ALTER TABLE farmer_contracts ADD COLUMN exchange_rate DOUBLE PRECISION"
-            ))
-            conn.commit()
-            print("✅ Додано колонку exchange_rate до farmer_contracts")
-        except Exception:
-            conn.rollback()
-
-        try:
-            conn.execute(text(
-                "ALTER TABLE farmer_contracts ADD COLUMN was_reserve BOOLEAN DEFAULT FALSE"
-            ))
-            conn.commit()
-            print("✅ Додано колонку was_reserve до farmer_contracts")
-        except Exception:
-            conn.rollback()
+        conn.execute(text(
+            "ALTER TABLE farmer_contracts ADD COLUMN IF NOT EXISTS currency VARCHAR(8)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE farmer_contracts ADD COLUMN IF NOT EXISTS exchange_rate DOUBLE PRECISION"
+        ))
+        conn.execute(text(
+            "ALTER TABLE farmer_contracts ADD COLUMN IF NOT EXISTS was_reserve BOOLEAN DEFAULT FALSE"
+        ))
+        conn.commit()
 
         for col_def in [
             ("payment_format", "VARCHAR(32) DEFAULT 'none'"),
             ("driver_id", "INTEGER"),
             ("vehicle_type_id", "INTEGER"),
         ]:
-            try:
-                conn.execute(text(
-                    f"ALTER TABLE grain_shipments ADD COLUMN {col_def[0]} {col_def[1]}"
-                ))
-                conn.commit()
-                print(f"✅ Додано колонку {col_def[0]} до grain_shipments")
-            except Exception:
-                conn.rollback()
-
-        try:
             conn.execute(text(
-                "ALTER TABLE purchase_records ADD COLUMN is_free BOOLEAN DEFAULT FALSE"
+                f"ALTER TABLE grain_shipments ADD COLUMN IF NOT EXISTS {col_def[0]} {col_def[1]}"
             ))
-            conn.commit()
-            print("✅ Додано колонку is_free до purchase_records")
-        except Exception:
-            conn.rollback()
+        conn.commit()
 
-        try:
-            conn.execute(text(
-                "ALTER TABLE lease_contracts ADD COLUMN end_date TIMESTAMP"
-            ))
-            conn.commit()
-            print("✅ Додано колонку end_date до lease_contracts")
-        except Exception:
-            conn.rollback()
+        conn.execute(text(
+            "ALTER TABLE purchase_records ADD COLUMN IF NOT EXISTS is_free BOOLEAN DEFAULT FALSE"
+        ))
+        conn.commit()
 
-        try:
-            conn.execute(text(
-                "ALTER TABLE lease_contracts ADD COLUMN parent_contract_id INTEGER REFERENCES lease_contracts(id)"
-            ))
-            conn.commit()
-            print("✅ Додано колонку parent_contract_id до lease_contracts")
-        except Exception:
-            conn.rollback()
+        conn.execute(text(
+            "ALTER TABLE lease_contracts ADD COLUMN IF NOT EXISTS end_date TIMESTAMP"
+        ))
+        conn.execute(text(
+            "ALTER TABLE lease_contracts ADD COLUMN IF NOT EXISTS parent_contract_id INTEGER REFERENCES lease_contracts(id)"
+        ))
+        conn.commit()
 
         # Заповнення end_date для існуючих контрактів (contract_date + 1 рік)
         try:
@@ -188,32 +134,36 @@ def init_db():
         except Exception:
             conn.rollback()
 
-        try:
-            conn.execute(text(
-                "ALTER TABLE grain_intakes ADD COLUMN is_own_combine BOOLEAN DEFAULT FALSE"
-            ))
-            conn.commit()
-            print("✅ Додано колонку is_own_combine до grain_intakes")
-        except Exception:
-            conn.rollback()
+        conn.execute(text(
+            "ALTER TABLE grain_intakes ADD COLUMN IF NOT EXISTS is_own_combine BOOLEAN DEFAULT FALSE"
+        ))
+        conn.execute(text(
+            "ALTER TABLE grain_intakes ADD COLUMN IF NOT EXISTS field_id INTEGER REFERENCES agri_fields(id)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE grain_intakes ADD COLUMN IF NOT EXISTS is_farmer_transfer BOOLEAN DEFAULT FALSE"
+        ))
+        conn.commit()
 
         try:
             conn.execute(text(
-                "ALTER TABLE grain_intakes ADD COLUMN field_id INTEGER REFERENCES agri_fields(id)"
+                "UPDATE grain_intakes SET is_farmer_transfer = TRUE "
+                "WHERE note IS NOT NULL AND note ILIKE 'Трансфер від%'"
             ))
             conn.commit()
-            print("✅ Додано колонку field_id до grain_intakes")
+            print("✅ Позначено існуючі трансфери між фермерами в grain_intakes")
         except Exception:
             conn.rollback()
 
-        try:
-            conn.execute(text(
-                "ALTER TABLE farmer_contract_items ADD COLUMN currency VARCHAR(8) DEFAULT 'UAH'"
-            ))
-            conn.commit()
-            print("✅ Додано колонку currency до farmer_contract_items")
-        except Exception:
-            conn.rollback()
+        conn.execute(text(
+            "ALTER TABLE grain_intakes ADD COLUMN IF NOT EXISTS pending_tare BOOLEAN DEFAULT FALSE"
+        ))
+        conn.commit()
+
+        conn.execute(text(
+            "ALTER TABLE farmer_contract_items ADD COLUMN IF NOT EXISTS currency VARCHAR(8) DEFAULT 'UAH'"
+        ))
+        conn.commit()
 
     with Session(engine) as session:
         # Создание супер админа, если его еще нет

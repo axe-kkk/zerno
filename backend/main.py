@@ -1,10 +1,14 @@
+import asyncio
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from pathlib import Path
+from sqlalchemy.exc import OperationalError
 
-from backend.database import engine, init_db
+from backend.database import init_db
 from backend.api import router
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Zerno Web3 App",
@@ -30,8 +34,28 @@ app.include_router(router, prefix="/api")
 
 @app.on_event("startup")
 async def startup_event():
-    """Инициализация базы данных при запуске"""
-    init_db()
+    """Инициализация базы данных при запуске (с повторами — DNS Docker «db» не всегда готов сразу)."""
+    max_retries = 15
+    delay_sec = 2.0
+    last_error: Exception | None = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            await asyncio.to_thread(init_db)
+            if attempt > 1:
+                logger.info("База данных доступна з %s-ї спроби", attempt)
+            return
+        except OperationalError as e:
+            last_error = e
+            logger.warning(
+                "БД ще недоступна (спроба %s/%s): %s",
+                attempt,
+                max_retries,
+                e.orig if getattr(e, "orig", None) else e,
+            )
+            if attempt < max_retries:
+                await asyncio.sleep(delay_sec)
+    assert last_error is not None
+    raise last_error
 
 
 @app.get("/")

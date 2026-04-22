@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select, func
-from sqlalchemy import and_
+from sqlalchemy import and_, or_
 from backend.database import get_session
 from backend.models import (
     CashRegister, GrainStock, GrainCulture, GrainIntake, GrainShipment,
@@ -155,13 +155,19 @@ async def get_dashboard_stats(
         select(func.count(GrainIntake.id))
         .where(and_(
             GrainIntake.created_at >= today_start,
-            GrainIntake.created_at < today_end
+            GrainIntake.created_at < today_end,
+            GrainIntake.is_farmer_transfer == False,
         ))
     ).one() or 0
     
     intakes_pending = session.exec(
         select(func.count(GrainIntake.id))
-        .where(GrainIntake.pending_quality == True)
+        .where(
+            or_(
+                GrainIntake.pending_quality == True,
+                GrainIntake.pending_tare == True,
+            )
+        )
     ).one() or 0
     
     shipments_today = session.exec(
@@ -234,10 +240,15 @@ async def get_dashboard_stats(
         select(GrainIntake)
         .where(and_(
             GrainIntake.created_at >= today_start,
-            GrainIntake.created_at < today_end
+            GrainIntake.created_at < today_end,
+            GrainIntake.is_farmer_transfer == False,
         ))
     ).all()
-    intakes_today_kg = sum(i.net_weight_kg for i in today_intakes if i.net_weight_kg)
+    intakes_today_kg = sum(
+        (i.accepted_weight_kg or 0.0)
+        for i in today_intakes
+        if not i.pending_quality and not i.pending_tare
+    )
     
     today_shipments = session.exec(
         select(GrainShipment)

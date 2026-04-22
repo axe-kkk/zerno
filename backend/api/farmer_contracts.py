@@ -44,20 +44,25 @@ from backend.auth import get_current_user
 
 router = APIRouter()
 
-# Типи виплат, що зменшують залишок боргу
+# Типи операцій, що зменшують залишок боргу (реальна оплата боргу фермером).
+# Видача товару/талону фермеру НЕ є оплатою і не повинна зменшувати борг.
 _BALANCE_REDUCING_PAYMENT_TYPES = (
     FarmerContractPaymentType.CASH.value,
     FarmerContractPaymentType.GRAIN.value,
-    FarmerContractPaymentType.VOUCHER.value,
 )
 
 
 def _compute_contract_balance_uah(session: Session, contract_id: int, total_value_uah: float) -> float:
-    """Залишок боргу = сума контракту мінус сума виплат (гроші, зерно, талони). Коректно для контрактів, створених до включення талонів у борг."""
+    """Залишок боргу = сума контракту мінус сума оплат боргу (гроші, зерно).
+
+    Видача товарів/талонів фермеру є виконанням зобов'язання компанії, а не оплатою боргу,
+    тому не повинна зменшувати balance_uah.
+    """
     payments = session.exec(
         select(FarmerContractPayment).where(
             FarmerContractPayment.contract_id == contract_id,
             FarmerContractPayment.payment_type.in_(_BALANCE_REDUCING_PAYMENT_TYPES),
+            FarmerContractPayment.is_cancelled == False,
         )
     ).all()
     paid = sum(p.amount_uah or 0 for p in payments)
@@ -94,7 +99,8 @@ def _get_farmer_balance(session: Session, owner_id: int, culture_id: int) -> flo
             GrainIntake.owner_id == owner_id,
             GrainIntake.culture_id == culture_id,
             GrainIntake.is_own_grain == False,
-            GrainIntake.pending_quality == False
+            GrainIntake.pending_quality == False,
+            GrainIntake.pending_tare == False,
         )
     ).first() or 0.0
     deductions = session.exec(
@@ -192,12 +198,13 @@ async def list_farmer_contracts(
     contracts = session.exec(query).all()
     if not contracts:
         return []
-    # Залишок боргу рахуємо з виплат (коректно для контрактів лише з талонами)
+    # Залишок боргу рахуємо з оплат боргу (гроші/зерно)
     contract_ids = [c.id for c in contracts]
     payments = session.exec(
         select(FarmerContractPayment).where(
             FarmerContractPayment.contract_id.in_(contract_ids),
             FarmerContractPayment.payment_type.in_(_BALANCE_REDUCING_PAYMENT_TYPES),
+            FarmerContractPayment.is_cancelled == False,
         )
     ).all()
     paid_by_id = {}
@@ -649,7 +656,7 @@ async def get_farmer_contract(
     items = session.exec(
         select(FarmerContractItem).where(FarmerContractItem.contract_id == contract_id)
     ).all()
-    # Залишок боргу рахуємо з виплат (коректно для старих контрактів, де талони не входили в balance_uah)
+    # Залишок боргу рахуємо з оплат боргу (гроші/зерно)
     balance_uah = _compute_contract_balance_uah(session, contract_id, contract.total_value_uah)
     data = contract.model_dump() if hasattr(contract, "model_dump") else contract.dict()
     data["balance_uah"] = balance_uah
@@ -1160,13 +1167,9 @@ def _check_contract_completion(session: Session, contract: FarmerContract):
         contract.status = FarmerContractStatus.CLOSED.value
         return
 
-    non_voucher_items = [i for i in items if i.item_type != FarmerContractItemType.VOUCHER.value]
-    if not non_voucher_items:
-        # Контракт тільки з талонами; борг уже 0 — закриваємо
-        contract.status = FarmerContractStatus.CLOSED.value
-        return
-
-    all_delivered = all(item.delivered_kg >= item.quantity_kg - 0.01 for item in non_voucher_items)
+    # Закриваємо тільки коли ВСІ позиції фактично виконані.
+    # Для талонів це теж "виконання": delivered_kg має дорівнювати quantity_kg.
+    all_delivered = all(item.delivered_kg >= item.quantity_kg - 0.01 for item in items)
     if all_delivered:
         contract.status = FarmerContractStatus.CLOSED.value
 
@@ -1521,8 +1524,7 @@ async def create_farmer_contract_payment(
         )
         session.add(voucher)
 
-        # Видача талону зменшує залишок боргу по контракту
-        contract.balance_uah = max(0.0, contract.balance_uah - amount_uah)
+        # Видача талону НЕ є оплатою боргу фермера, тому не змінює balance_uah.
 
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Невідомий тип операції")
@@ -1697,9 +1699,7 @@ async def cancel_farmer_contract_payment(
                 voucher_item.delivered_kg = max(0.0, voucher_item.delivered_kg - qty)
                 session.add(voucher_item)
 
-        # Повертаємо суму талону до залишку боргу
-        contract.balance_uah += payment.amount_uah or 0.0
-        session.add(contract)
+        # Видача талону не змінює balance_uah, тому й при скасуванні борг не коригуємо.
 
         # Видаляємо або закриваємо пов'язаний талон
         voucher = session.exec(

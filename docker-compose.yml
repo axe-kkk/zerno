@@ -11,7 +11,8 @@ services:
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      # Явно вказуємо БД zerno_db: без -d pg_isready підключається до БД з іменем користувача → FATAL у логах
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d zerno_db"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -20,7 +21,8 @@ services:
     build: .
     container_name: zerno_backend
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      # Якщо DATABASE_URL не задано в .env — підставляємо хост db (ім’я сервісу), інакше бекенд у контейнері часто шукає localhost і не бачить PostgreSQL.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/zerno_db}
       DEBUG: ${DEBUG}
       SECRET_KEY: ${SECRET_KEY}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}

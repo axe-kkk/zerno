@@ -53,6 +53,12 @@ body {
     --scrollbar-thumb: rgba(71, 85, 105, 0.65);
     --scrollbar-thumb-hover: rgba(34, 197, 94, 0.75);
     --scrollbar-track: rgba(15, 23, 42, 0.08);
+
+    /* Aliases — використовуються в компонентах */
+    --white: #ffffff;
+    --border-color: #e2e8f0;
+    --primary-color: #22c55e;
+    --bg-light: #f8fafc;
 }
 
 body {
@@ -588,9 +594,10 @@ body {
 }
 
 .main-header h2 {
-    font-size: 24px;
+    font-size: 22px;
     font-weight: 700;
     color: var(--text-primary);
+    letter-spacing: -0.3px;
 }
 
 .header-actions {
@@ -610,7 +617,7 @@ body {
 
 .content-area {
     flex: 1;
-    padding: 12px 20px 20px;
+    padding: 16px 24px 24px;
     overflow: auto;
     background: var(--bg-primary);
     min-height: 0;
@@ -651,7 +658,7 @@ body {
     gap: 8px;
     padding: 10px 16px;
     border-radius: 12px;
-    background: #fff;
+    background: var(--white);
     border: 1px solid var(--border);
     min-width: 0;
 }
@@ -660,7 +667,7 @@ body {
     font-weight: 800;
     line-height: 1;
 }
-.db-cash-uah .db-cash-cur { color: #16a34a; }
+.db-cash-uah .db-cash-cur { color: var(--primary-dark); }
 .db-cash-usd .db-cash-cur { color: #2563eb; }
 .db-cash-eur .db-cash-cur { color: #7c3aed; }
 
@@ -677,7 +684,7 @@ body {
     gap: 5px;
     padding: 10px 14px;
     border-radius: 12px;
-    background: #fff;
+    background: var(--white);
     border: 1px solid var(--border);
 }
 .db-mini-num {
@@ -698,7 +705,7 @@ body {
     flex-shrink: 0;
     border-radius: 10px;
     border: 1px solid var(--border);
-    background: #fff;
+    background: var(--white);
     color: var(--text-secondary);
     display: flex; align-items: center; justify-content: center;
     cursor: pointer;
@@ -707,7 +714,7 @@ body {
 }
 .db-refresh:hover {
     background: var(--primary);
-    color: #fff;
+    color: var(--white);
     border-color: var(--primary);
 }
 .db-refresh.spinning svg { animation: spin .8s linear infinite; }
@@ -797,21 +804,21 @@ body {
     color: var(--text-secondary);
     margin-top: 2px;
 }
-.db-m-green { color: #16a34a; }
-.db-m-blue  { color: #2563eb; }
+.db-m-green  { color: var(--primary-dark); }
+.db-m-blue   { color: #2563eb; }
 .db-m-orange { color: #d97706; }
-.db-m-red   { color: #dc2626; }
+.db-m-red    { color: var(--danger); }
 .db-m-bar {
     height: 6px;
     border-radius: 3px;
-    background: #e2e8f0;
+    background: var(--border);
     display: flex;
     overflow: hidden;
     margin-top: 6px;
 }
 .db-m-bar-a {
     height: 100%;
-    background: #22c55e;
+    background: var(--primary);
     transition: width .4s ease;
 }
 .db-m-bar-b {
@@ -853,7 +860,7 @@ body {
     font-size: 12px;
     font-weight: 700;
     color: var(--text-primary);
-    background: #f1f5f9;
+    background: var(--border-light);
     padding: 2px 8px;
     border-radius: 10px;
 }
@@ -867,7 +874,7 @@ body {
     text-align: center;
     padding: 6px;
     border-radius: 8px;
-    background: #f8fafc;
+    background: var(--bg-light);
 }
 .db-gf-yes { background: #f0fdf4; }
 .db-gf-no  { background: #fffbeb; }
@@ -877,7 +884,7 @@ body {
     font-weight: 700;
     line-height: 1.2;
 }
-.db-gf-yes .db-gf-num { color: #16a34a; }
+.db-gf-yes .db-gf-num { color: var(--primary-dark); }
 .db-gf-no .db-gf-num  { color: #d97706; }
 .db-gf-lbl {
     font-size: 11px;
@@ -886,13 +893,13 @@ body {
 .db-gf-bar-wrap {
     height: 6px;
     border-radius: 3px;
-    background: #e2e8f0;
+    background: var(--border);
     overflow: hidden;
 }
 .db-gf-bar-fill {
     height: 100%;
     border-radius: 3px;
-    background: linear-gradient(90deg, #22c55e, #4ade80);
+    background: linear-gradient(90deg, var(--primary), var(--primary-light));
     transition: width .4s ease;
 }
 .db-gf-bar-farmers {
@@ -901,7 +908,7 @@ body {
 .db-gf-pct {
     font-size: 12px;
     font-weight: 700;
-    color: #16a34a;
+    color: var(--primary-dark);
     text-align: right;
     margin-top: 3px;
 }
@@ -966,18 +973,18 @@ body {
 }
 
 .db-card-title {
-    font-size: 13px;
-    font-weight: 700;
-    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
     text-transform: uppercase;
-    letter-spacing: .3px;
+    letter-spacing: .5px;
 }
 
 .db-card-badge {
     font-size: 12px;
     font-weight: 700;
-    color: var(--primary);
-    background: rgba(37,99,235,.08);
+    color: var(--primary-dark);
+    background: rgba(34, 197, 94, 0.1);
     padding: 3px 10px;
     border-radius: 20px;
 }
@@ -1038,7 +1045,7 @@ body {
 
 .db-stock-bar-own {
     height: 100%;
-    background: linear-gradient(90deg, #22c55e, #16a34a);
+    background: linear-gradient(90deg, var(--primary), var(--primary-dark));
     transition: width .5s ease;
     min-width: 0;
 }
@@ -1073,7 +1080,7 @@ body {
     gap: 4px;
 }
 
-.db-stock-sub .dot-own { color: #16a34a; font-weight: 700; }
+.db-stock-sub .dot-own { color: var(--primary-dark); font-weight: 700; }
 .db-stock-sub .dot-farmer { color: #2563eb; font-weight: 700; }
 
 .db-stock-legend {
@@ -1113,21 +1120,21 @@ body {
     gap: 10px;
     padding: 8px 10px;
     border-radius: 8px;
-    background: #f8fafc;
+    background: var(--bg-light);
     border-left: 3px solid transparent;
     transition: background .15s;
 }
-.db-tx-item:hover { background: #f1f5f9; }
-.db-tx-item.tx-add { border-left-color: #22c55e; }
-.db-tx-item.tx-sub { border-left-color: #ef4444; }
+.db-tx-item:hover { background: var(--border-light); }
+.db-tx-item.tx-add { border-left-color: var(--primary); }
+.db-tx-item.tx-sub { border-left-color: var(--danger); }
 
 .db-tx-amount {
     font-size: 13px;
     font-weight: 700;
     white-space: nowrap;
 }
-.db-tx-amount.tx-positive { color: #16a34a; }
-.db-tx-amount.tx-negative { color: #dc2626; }
+.db-tx-amount.tx-positive { color: var(--primary-dark); }
+.db-tx-amount.tx-negative { color: var(--danger); }
 
 .db-tx-details { flex: 1; min-width: 0; }
 .db-tx-desc {
@@ -1151,10 +1158,6 @@ body {
     font-size: 13px;
 }
 
-@keyframes spin {
-    from { transform: rotate(0deg); }
-    to   { transform: rotate(360deg); }
-}
 
 /* Sections and Cards */
 .page-section {
@@ -1269,6 +1272,26 @@ body {
     border-top: 1px solid var(--border);
 }
 
+.intake-modal .form-actions.sticky-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.intake-modal .sticky-actions #intake-message:empty {
+    display: none;
+}
+
+.intake-modal .intake-edit-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.intake-modal .intake-edit-actions #edit-message:empty {
+    display: none;
+}
+
 .intake-modal .modal-header {
     border-bottom: 1px solid var(--border);
     padding-bottom: 12px;
@@ -1348,6 +1371,87 @@ body {
     background: #ffffff;
     border-color: var(--primary);
     box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.12);
+}
+
+.intake-modal .form-field.has-field-error label {
+    color: #b91c1c;
+}
+
+.intake-modal .form-field.has-field-error input:not([readonly]),
+.intake-modal .form-field.has-field-error select,
+.intake-modal .form-field.has-field-error textarea {
+    border-color: #ef4444 !important;
+    background: #fef2f2 !important;
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+}
+
+/* Підсвітка помилок валідації в інших модалках і формах у картках */
+.modal-content:not(.intake-modal) .form-field.has-field-error label,
+.card .form-field.has-field-error label {
+    color: #b91c1c;
+}
+
+.modal-content:not(.intake-modal) .form-field.has-field-error input:not([readonly]),
+.modal-content:not(.intake-modal) .form-field.has-field-error select,
+.modal-content:not(.intake-modal) .form-field.has-field-error textarea,
+.card .form-field.has-field-error input:not([readonly]),
+.card .form-field.has-field-error select,
+.card .form-field.has-field-error textarea {
+    border-color: #ef4444 !important;
+    background: #fef2f2 !important;
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+}
+
+.modal-content .fc-payment-money__field.has-field-error .fc-payment-money__field-label {
+    color: #b91c1c;
+}
+
+.modal-content .fc-payment-money__field.has-field-error input,
+.modal-content .fc-payment-money__field.has-field-error select {
+    border-color: #ef4444 !important;
+    background: #fef2f2 !important;
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+}
+
+.modal-content tr.contract-item-row.has-field-error td {
+    background: #fef2f2;
+    box-shadow: inset 0 0 0 1px #fecaca;
+}
+
+.modal-content .fcp-section.has-field-error,
+.modal-content .fc-section.has-field-error {
+    border-radius: 8px;
+    box-shadow: inset 0 0 0 2px rgba(239, 68, 68, 0.35);
+}
+
+.modal-content .grain-pay-card.has-field-error {
+    border-color: #ef4444 !important;
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
+}
+
+.form-actions.full.form-actions-stack-msg {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+}
+
+.form-actions.full.form-actions-stack-msg .form-hint:empty {
+    display: none;
+}
+
+.modal-content .sticky-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+}
+
+.modal-content .sticky-actions .form-hint:empty {
+    display: none;
+}
+
+.modal-content .sticky-actions .btn {
+    align-self: flex-start;
 }
 
 .intake-modal .form-actions {
@@ -3016,16 +3120,12 @@ body {
     line-height: 1.5 !important;
     margin: 0 !important;
     vertical-align: middle !important;
-    height: 38px !important;
-    box-sizing: border-box !important;
-    line-height: 1.5 !important;
     border: 1px solid var(--border) !important;
     border-radius: var(--radius-sm) !important;
     background: var(--bg-card) !important;
     color: var(--text-primary) !important;
     transition: all 0.2s !important;
     font-family: inherit !important;
-    box-sizing: border-box !important;
 }
 
 /* Стили для select с кастомной стрелкой */
@@ -3171,7 +3271,7 @@ body {
     text-transform: uppercase;
     letter-spacing: 0.4px;
     color: var(--text-secondary);
-    background: #f1f7f3;
+    background: var(--bg-hover);
     position: sticky;
     top: 0;
     z-index: 2;
@@ -3238,6 +3338,22 @@ body {
     background: rgba(245, 158, 11, 0.18) !important;
 }
 
+.data-table tbody tr.row-pending-tare {
+    background: rgba(239, 68, 68, 0.1);
+}
+
+.data-table tbody tr.row-pending-tare td {
+    background: rgba(239, 68, 68, 0.1) !important;
+}
+
+.data-table tbody tr.row-pending-tare:hover {
+    background: rgba(239, 68, 68, 0.16);
+}
+
+.data-table tbody tr.row-pending-tare:hover td {
+    background: rgba(239, 68, 68, 0.16) !important;
+}
+
 /* Поля з контракту оренди — виділення */
 .data-table tbody tr.field-from-lease td:first-child {
     border-left: 3px solid var(--primary);
@@ -3269,16 +3385,16 @@ body {
 }
 
 #stock-adjustments-table th {
-    background: #e8f5e9;
-    color: #2e7d32;
+    background: rgba(34, 197, 94, 0.08);
+    color: var(--primary-dark);
 }
 
 #stock-adjustments-table tbody tr:nth-child(even) td {
-    background: #f1f8f4;
+    background: rgba(34, 197, 94, 0.03);
 }
 
 #stock-adjustments-table tbody tr:hover td {
-    background: rgba(76, 175, 80, 0.08);
+    background: rgba(34, 197, 94, 0.07);
 }
 
 .table-input {
@@ -3397,6 +3513,10 @@ body {
     margin-top: 8px;
 }
 
+#user-edit-form #user-edit-message:empty {
+    display: none;
+}
+
 .muted {
     color: var(--text-muted);
     font-size: 13px;
@@ -3408,12 +3528,18 @@ body {
 .status-badge {
     display: inline-flex;
     align-items: center;
-    padding: 4px 8px;
+    padding: 2px 6px;
     border-radius: 999px;
-    font-size: 11px;
+    font-size: 9px;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.15px;
+    line-height: 1.05;
+    max-width: 140px;
+    white-space: nowrap;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .status-badge.success {
@@ -3494,6 +3620,31 @@ body {
 .td-secondary {
     color: var(--text-secondary);
     font-size: 12px;
+}
+
+/* Відсутні / не вказані дані (узгоджена мітка «Пусто») */
+.empty-value {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    line-height: 1.25;
+    color: var(--text-secondary);
+    background: var(--bg-light);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+td .empty-value,
+.fcp-info__value .empty-value,
+.fcp-selected-item .empty-value,
+.fc-detail-note-row .empty-value {
+    margin-top: 1px;
 }
 
 .td-mono {
@@ -3721,16 +3872,17 @@ body {
     inset: 0;
     z-index: 3000;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
     padding: 24px;
+    overflow-y: auto;
 }
 
 .modal-overlay {
     position: absolute;
     inset: 0;
-    background: rgba(15, 23, 42, 0.4);
-    backdrop-filter: blur(2px);
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(3px);
 }
 
 .modal-content {
@@ -3738,12 +3890,13 @@ body {
     background: var(--bg-secondary);
     border-radius: var(--radius-lg);
     border: 1px solid var(--border);
-    box-shadow: var(--shadow-xl);
+    border-top: 3px solid var(--primary);
+    box-shadow: 0 20px 60px -12px rgba(0, 0, 0, 0.18), 0 4px 16px -4px rgba(0, 0, 0, 0.08);
     width: 100%;
     max-width: 520px;
     padding: 24px;
     z-index: 1;
-    max-height: 80vh;
+    margin: 24px auto;
     overflow: visible;
 }
 
@@ -3869,26 +4022,28 @@ body {
 
 .fc-payment-money {
     display: flex;
-    align-items: flex-end;
-    gap: 16px;
+    align-items: center;
     flex-wrap: wrap;
-    padding: 12px 14px;
-    background: var(--bg-secondary, #f5f5f5);
+    gap: 10px 16px;
+    padding: 10px 14px;
+    background: var(--bg-hover);
     border-radius: 8px;
-    border: 1px solid var(--border-color, #e0e0e0);
+    border: 1px solid var(--border);
 }
 
 .fc-payment-money__label {
     font-weight: 600;
     color: var(--text-primary);
     white-space: nowrap;
+    font-size: 14px;
 }
 
 .fc-payment-money__controls {
+    min-width: 0;
     display: flex;
-    align-items: flex-end;
-    gap: 12px;
+    align-items: center;
     flex-wrap: wrap;
+    gap: 10px;
     flex: 1;
 }
 
@@ -3896,6 +4051,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    min-width: 0;
 }
 
 .fc-payment-money__field-label {
@@ -3905,26 +4061,61 @@ body {
 }
 
 .fc-payment-money__field select {
-    min-width: 120px;
+    width: 100%;
     padding: 8px 10px;
-    border-radius: 6px;
-    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
     font-size: 14px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    transition: border-color 0.2s;
+}
+
+.fc-payment-money__field select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.1);
 }
 
 .fc-payment-money__field input[type="number"] {
-    width: 100px;
+    width: 100%;
     padding: 8px 10px;
-    border-radius: 6px;
-    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
     font-size: 14px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    transition: border-color 0.2s;
+}
+
+.fc-payment-money__field input[type="number"]:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.1);
 }
 
 .fc-payment-money__equiv {
     font-size: 13px;
-    color: var(--text-muted);
+    font-weight: 500;
+    color: var(--text-secondary);
     align-self: center;
-    margin-left: 8px;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+@media (max-width: 700px) {
+    .fc-payment-money {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .fc-payment-money__controls {
+        width: 100%;
+    }
+    .fc-payment-money__equiv {
+        white-space: normal;
+    }
 }
 
 .fc-rate-field.hidden {
@@ -4172,7 +4363,7 @@ body {
     font-size: 13px;
 }
 .fc-item-suggestions .suggestion-item:hover {
-    background: var(--bg-light, #f0f4ff);
+    background: var(--bg-light);
 }
 
 .fc-section__hint {
@@ -4463,9 +4654,9 @@ body {
     font-size: 13px;
     color: var(--text-muted);
     padding: 10px 12px;
-    background: var(--bg-secondary, #f5f5f5);
+    background: var(--bg-hover);
     border-radius: 8px;
-    border-left: 3px solid var(--primary, #2563eb);
+    border-left: 3px solid var(--primary);
 }
 
 .fcp-grain-recommend__block {
@@ -4474,9 +4665,9 @@ body {
     gap: 12px;
     flex-wrap: wrap;
     padding: 10px 12px;
-    background: var(--bg-secondary, #f5f5f5);
+    background: var(--bg-hover);
     border-radius: 8px;
-    border-left: 3px solid var(--primary, #2563eb);
+    border-left: 3px solid var(--primary);
 }
 
 .fcp-grain-recommend__text {
@@ -4510,10 +4701,10 @@ body {
     gap: 10px;
     flex-wrap: wrap;
     padding: 8px 12px;
-    background: var(--bg-secondary, #f5f5f5);
+    background: var(--bg-hover);
     border-radius: 6px;
     margin-bottom: 6px;
-    border-left: 3px solid var(--primary, #2563eb);
+    border-left: 3px solid var(--primary);
 }
 
 .fcp-grain-recommend__item:last-child {
@@ -4700,12 +4891,16 @@ body {
     align-items: center;
     justify-content: space-between;
     gap: 16px;
+    padding-bottom: 16px;
     margin-bottom: 16px;
+    border-bottom: 1px solid var(--border);
 }
 
 .modal-header h3 {
     font-size: 18px;
     font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
 }
 
 .modal-close {
@@ -4714,9 +4909,19 @@ body {
     width: 32px;
     height: 32px;
     border-radius: 50%;
-    font-size: 20px;
+    font-size: 18px;
     cursor: pointer;
     color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background 0.15s, color 0.15s;
+}
+
+.modal-close:hover {
+    background: var(--border);
+    color: var(--text-primary);
 }
 
 .modal-body {
@@ -4758,7 +4963,11 @@ body {
 .modal-actions {
     display: flex;
     justify-content: flex-end;
+    align-items: center;
     gap: 12px;
+    padding-top: 16px;
+    margin-top: 4px;
+    border-top: 1px solid var(--border);
 }
 
 /* Farmer balance modal spacing */
@@ -5442,6 +5651,16 @@ body {
     gap: 12px;
 }
 
+#payment-modal .form-actions.full.form-actions-stack-msg {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+}
+
+#payment-modal .form-actions.full.form-actions-stack-msg .form-hint:empty {
+    display: none;
+}
+
 #payment-modal .form-actions .btn {
     min-width: 140px;
     padding: 12px 24px;
@@ -6093,6 +6312,13 @@ body {
     opacity: 0.55;
 }
 
+.row-overdue td {
+    background: rgba(239, 68, 68, 0.06);
+}
+.row-overdue:hover td {
+    background: rgba(239, 68, 68, 0.09);
+}
+
 .fc-status-hint,
 .fc-balance-hint {
     font-size: 11px;
@@ -6102,7 +6328,7 @@ body {
 
 .fc-detail-hint {
     font-size: 12px;
-    color: var(--warning, #b45309);
+    color: var(--warning);
     margin-top: 4px;
 }
 
@@ -6143,6 +6369,15 @@ body {
     color: var(--text-primary);
     border-color: var(--primary-color);
     box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+.btn-icon:disabled,
+.btn-icon:disabled:hover {
+    opacity: 0.45;
+    cursor: not-allowed;
+    box-shadow: none;
+    background: var(--white);
+    color: var(--text-secondary);
+    border-color: var(--border-color);
 }
 .btn-icon-secondary {
     color: var(--text-secondary);
@@ -6382,4 +6617,158 @@ body {
 #reserve-activate-modal .reserve-activate-actions .btn-primary:hover {
     background: linear-gradient(180deg, var(--primary-light) 0%, var(--primary) 100%);
     box-shadow: 0 2px 8px rgba(34, 197, 94, 0.35);
+}
+
+/* ── Мобільний екран лише «Каса» (pocket-kassa.html) ── */
+.cash-pocket-page {
+    overflow: auto;
+    height: auto;
+    min-height: 100%;
+}
+
+.cash-pocket-page .cash-pocket-layout {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-hover);
+}
+
+.cash-pocket-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px 16px;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.96);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 200;
+    box-shadow: var(--shadow-sm);
+}
+
+.cash-pocket-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+}
+
+.cash-pocket-logo {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    background: rgba(34, 197, 94, 0.12);
+    border: 1px solid rgba(34, 197, 94, 0.28);
+    flex-shrink: 0;
+}
+
+.cash-pocket-brand-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.cash-pocket-brand-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.2px;
+}
+
+.cash-pocket-brand-sub {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+}
+
+.cash-pocket-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.cash-pocket-user-info {
+    margin-bottom: 0;
+    min-width: 0;
+}
+
+.cash-pocket-page .cash-pocket-header .user-name {
+    color: var(--text-primary);
+}
+
+.cash-pocket-page .cash-pocket-header .user-role {
+    color: var(--text-secondary);
+}
+
+.cash-pocket-main {
+    flex: 1;
+    width: 100%;
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 16px 16px 28px;
+}
+
+.cash-pocket-section.page-section {
+    display: block;
+}
+
+.cash-pocket-grid.grid-2 {
+    align-items: stretch;
+}
+
+.cash-pocket-table-card .card-header {
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.cash-pocket-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 -4px;
+    padding: 0 4px;
+}
+
+.cash-pocket-table-wrap .data-table {
+    min-width: 640px;
+}
+
+.cash-pocket-page #logout-btn .logout-icon {
+    width: 18px;
+    height: 18px;
+}
+
+.cash-pocket-page #logout-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+    .cash-pocket-main {
+        padding: 12px 12px 24px;
+    }
+
+    .cash-pocket-header {
+        padding: 10px 12px;
+    }
+
+    .cash-pocket-table-wrap .data-table {
+        font-size: 13px;
+    }
+
+    .cash-pocket-table-wrap .data-table th,
+    .cash-pocket-table-wrap .data-table td {
+        padding: 10px 8px;
+    }
 }

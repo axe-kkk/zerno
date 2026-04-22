@@ -3,40 +3,53 @@
 // При локальной разработке можно использовать 'http://localhost:8000/api'
 const API_BASE_URL = '/api';
 
+/** Дозволені цілі після входу (лише ім'я html-файлу, без шляху та протоколу). */
+function getLoginRedirectTarget() {
+    const raw = new URLSearchParams(window.location.search).get('next');
+    if (!raw || typeof raw !== 'string') {
+        return 'dashboard.html';
+    }
+    const name = raw.trim().split('/').pop() || '';
+    if (!/^[a-zA-Z0-9._-]+\.html$/.test(name)) {
+        return 'dashboard.html';
+    }
+    return name;
+}
+
 // Проверка авторизации при загрузке
 document.addEventListener('DOMContentLoaded', () => {
     const token = localStorage.getItem('token');
+    const nextUrl = getLoginRedirectTarget();
     if (token) {
-        // Если есть токен, перенаправляем на дашборд
-        window.location.href = 'dashboard.html';
+        window.location.href = nextUrl;
         return;
     }
-    
+
     // Инициализация формы входа
     const loginForm = document.getElementById('login-form');
     const loginBtn = document.getElementById('login-btn');
     const errorMessage = document.getElementById('error-message');
-    
+
     // Инициализация кнопки показа пароля
     initPasswordToggle();
-    
+
     loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        
+
         const username = document.getElementById('username').value.trim();
         const password = document.getElementById('password').value;
-        
+
         if (!username || !password) {
             showToast('Будь ласка, заповніть всі поля', 'error');
             return;
         }
-        
+
         // Показываем загрузку
         loginBtn.disabled = true;
         loginBtn.querySelector('.btn-text').classList.add('hidden');
         loginBtn.querySelector('.btn-loader').classList.remove('hidden');
         errorMessage.classList.add('hidden');
-        
+
         try {
             const response = await fetch(`${API_BASE_URL}/auth/login`, {
                 method: 'POST',
@@ -48,20 +61,19 @@ document.addEventListener('DOMContentLoaded', () => {
                     password: password
                 })
             });
-            
+
             if (!response.ok) {
                 const error = await response.json();
                 throw new Error(error.detail || 'Помилка входу');
             }
-            
+
             const data = await response.json();
-            
+
             // Сохраняем токен
             localStorage.setItem('token', data.access_token);
-            
-            // Перенаправляем на дашборд
-            window.location.href = 'dashboard.html';
-            
+
+            window.location.href = getLoginRedirectTarget();
+
         } catch (error) {
             console.error('Помилка входу:', error);
             showToast(error.message, 'error');
@@ -79,11 +91,11 @@ function initPasswordToggle() {
     const passwordToggle = document.getElementById('password-toggle');
     const eyeOpen = passwordToggle.querySelector('.eye-open');
     const eyeClosed = passwordToggle.querySelector('.eye-closed');
-    
+
     passwordToggle.addEventListener('click', () => {
         const type = passwordInput.getAttribute('type') === 'password' ? 'text' : 'password';
         passwordInput.setAttribute('type', type);
-        
+
         // Переключаем иконки
         if (type === 'text') {
             eyeOpen.classList.add('hidden');
@@ -125,4 +137,3 @@ function escapeHtml(value) {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
 }
-

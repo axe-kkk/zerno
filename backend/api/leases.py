@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from sqlmodel import Session, select
 from typing import Optional
 from datetime import datetime, date, time as dtime
@@ -86,15 +86,17 @@ def get_current_lease_period(contract_date):
 
 
 def get_paid_per_culture(contract_id: int, period_start: date, period_end: date, session: Session) -> dict:
-    """Порахувати скільки вже виплачено за кожною культурою за період (без скасованих)"""
-    period_start_dt = datetime.combine(period_start, dtime.min)
-    period_end_dt = datetime.combine(period_end, dtime.min)
+    """Порахувати скільки вже виплачено за кожною культурою (без скасованих).
 
+    Параметри period_start / period_end залишені для сумісності викликів, але
+    фільтрацію по датах не застосовуємо: один lease_contracts.id — один зобов'язання
+    по позиціях, виплати після end_date (погашення заборгованості) теж мають
+    зменшувати залишок. Раніше умова payment_date < period_end відсікала такі
+    виплати, і баланс / «закритість» контракту не оновлювались після виплати зерном.
+    """
     payments = session.exec(
         select(LeasePayment).where(
             LeasePayment.contract_id == contract_id,
-            LeasePayment.payment_date >= period_start_dt,
-            LeasePayment.payment_date < period_end_dt,
             LeasePayment.is_cancelled == False
         )
     ).all()
@@ -110,6 +112,46 @@ def get_paid_per_culture(contract_id: int, period_start: date, period_end: date,
             paid[item.culture_id] = paid.get(item.culture_id, 0) + item.quantity_kg
 
     return paid
+
+
+def build_lease_contract_response(session: Session, contract: LeaseContract) -> LeaseContractResponse:
+    """Зібрати LeaseContractResponse з позиціями та залишком до виплати (як у списку)."""
+    contract_items = session.exec(
+        select(LeaseContractItem).where(
+            LeaseContractItem.contract_id == contract.id
+        )
+    ).all()
+    items_list = []
+    for item in contract_items:
+        culture = session.get(GrainCulture, item.culture_id)
+        item_dict = item.model_dump()
+        item_dict["culture_name"] = culture.name if culture else None
+        items_list.append(LeaseContractItemResponse(**item_dict))
+
+    cd = contract.contract_date
+    period_start = cd.date() if isinstance(cd, datetime) else cd
+    if contract.end_date:
+        ed = contract.end_date
+        period_end = ed.date() if isinstance(ed, datetime) else ed
+    else:
+        period_end = add_one_year(period_start)
+
+    paid_per_culture = get_paid_per_culture(contract.id, period_start, period_end, session)
+    remaining_cash_uah = 0.0
+    for ci in contract_items:
+        paid = float(paid_per_culture.get(ci.culture_id, 0) or 0)
+        remaining_kg = max(0.0, float(ci.quantity_kg or 0) - paid)
+        remaining_cash_uah += remaining_kg * float(ci.price_per_kg_uah or 0)
+    remaining_cash_uah = round(remaining_cash_uah, 2)
+
+    expired = is_contract_expired(contract)
+    contract_dict = contract.model_dump()
+    contract_dict["contract_items"] = items_list
+    contract_dict["is_expired"] = expired
+    contract_dict["remaining_cash_uah"] = remaining_cash_uah
+    contract_dict["has_debt"] = remaining_cash_uah > 0.01
+    contract_dict["is_overdue"] = expired and remaining_cash_uah > 0.01
+    return LeaseContractResponse(**contract_dict)
 
 
 @router.get("/landlords", response_model=list[LandlordResponse])
@@ -221,7 +263,8 @@ async def list_contracts(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
     landlord_id: Optional[int] = Query(None, description="Фільтр за орендодавцем"),
-    is_active: Optional[bool] = Query(None, description="Фільтр за активністю")
+    is_active: Optional[bool] = Query(None, description="Фільтр за активністю"),
+    due_only: Optional[bool] = Query(None, description="Показати лише контракти з залишком до виплати")
 ):
     """Список контрактів оренди"""
     query = select(LeaseContract)
@@ -232,26 +275,13 @@ async def list_contracts(
     
     contracts = session.exec(query.order_by(LeaseContract.contract_date.desc())).all()
     
-    # Загружаем позиции контрактов
     result = []
     for contract in contracts:
-        contract_items = session.exec(
-            select(LeaseContractItem).where(
-                LeaseContractItem.contract_id == contract.id
-            )
-        ).all()
-        items_list = []
-        for item in contract_items:
-            culture = session.get(GrainCulture, item.culture_id)
-            item_dict = item.model_dump()
-            item_dict["culture_name"] = culture.name if culture else None
-            items_list.append(LeaseContractItemResponse(**item_dict))
-        
-        contract_dict = contract.model_dump()
-        contract_dict["contract_items"] = items_list
-        contract_dict["is_expired"] = is_contract_expired(contract)
-        result.append(LeaseContractResponse(**contract_dict))
-    
+        row = build_lease_contract_response(session, contract)
+        if due_only and row.remaining_cash_uah <= 0.01:
+            continue
+        result.append(row)
+
     return result
 
 
@@ -370,7 +400,8 @@ async def update_contract(
         )
     
     update_data = payload.model_dump(exclude_unset=True)
-    
+    contract_items_payload = update_data.pop("contract_items", None)
+
     if "landlord_id" in update_data:
         landlord = session.get(Landlord, update_data["landlord_id"])
         if not landlord:
@@ -379,15 +410,7 @@ async def update_contract(
                 detail="Орендодавця не знайдено"
             )
         update_data["landlord_full_name"] = landlord.full_name
-    
-    if "culture_id" in update_data:
-        culture = session.get(GrainCulture, update_data["culture_id"])
-        if not culture:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Культуру не знайдено"
-            )
-    
+
     if "field_name" in update_data:
         field_name = " ".join(update_data["field_name"].split()).strip()
         if not field_name:
@@ -399,35 +422,106 @@ async def update_contract(
     
     for field, value in update_data.items():
         setattr(contract, field, value)
-    
+
+    if contract_items_payload is not None:
+        if len(contract_items_payload) < 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Додайте хоча б одну позицію контракту"
+            )
+        for row in contract_items_payload:
+            cid = row.get("culture_id") if isinstance(row, dict) else getattr(row, "culture_id", None)
+            culture = session.get(GrainCulture, cid)
+            if not culture:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Культуру з ID {cid} не знайдено"
+                )
+        for old in session.exec(
+            select(LeaseContractItem).where(
+                LeaseContractItem.contract_id == contract_id
+            )
+        ).all():
+            session.delete(old)
+        session.flush()
+        for row in contract_items_payload:
+            if isinstance(row, dict):
+                cid = row["culture_id"]
+                q = row["quantity_kg"]
+                p = row["price_per_kg_uah"]
+            else:
+                cid = row.culture_id
+                q = row.quantity_kg
+                p = row.price_per_kg_uah
+            session.add(
+                LeaseContractItem(
+                    contract_id=contract.id,
+                    culture_id=cid,
+                    quantity_kg=q,
+                    price_per_kg_uah=p,
+                )
+            )
+
     contract.updated_at = datetime.utcnow()
     session.add(contract)
     session.commit()
     session.refresh(contract)
-    
-    culture = session.get(GrainCulture, contract.culture_id)
-    contract_dict = contract.model_dump()
-    contract_dict["culture_name"] = culture.name if culture else None
-    return LeaseContractResponse(**contract_dict)
+
+    return build_lease_contract_response(session, contract)
 
 
-@router.delete("/contracts/{contract_id}", response_model=LeaseContractResponse)
+@router.delete("/contracts/{contract_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_contract(
     contract_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
-    """Видалення контракту оренди"""
+    """Видалення контракту оренди (з позиціями, виплатами та прив'язкою поля)."""
     contract = session.get(LeaseContract, contract_id)
     if not contract:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Контракт не знайдено"
         )
-    
+
+    payments = session.exec(
+        select(LeasePayment).where(LeasePayment.contract_id == contract_id)
+    ).all()
+    for payment in payments:
+        grain_rows = session.exec(
+            select(LeasePaymentGrainItem).where(
+                LeasePaymentGrainItem.payment_id == payment.id
+            )
+        ).all()
+        for gi in grain_rows:
+            session.delete(gi)
+        session.delete(payment)
+
+    items = session.exec(
+        select(LeaseContractItem).where(
+            LeaseContractItem.contract_id == contract_id
+        )
+    ).all()
+    for ci in items:
+        session.delete(ci)
+
+    for field in session.exec(
+        select(AgriField).where(AgriField.lease_contract_id == contract_id)
+    ).all():
+        field.lease_contract_id = None
+        session.add(field)
+
+    for child in session.exec(
+        select(LeaseContract).where(
+            LeaseContract.parent_contract_id == contract_id
+        )
+    ).all():
+        child.parent_contract_id = None
+        session.add(child)
+
     session.delete(contract)
     session.commit()
-    return contract
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/contracts/{contract_id}/renew", response_model=LeaseContractResponse)
@@ -448,6 +542,24 @@ async def renew_contract(
     landlord = session.get(Landlord, old_contract.landlord_id)
     if not landlord:
         raise HTTPException(status_code=404, detail="Орендодавця не знайдено")
+
+    if not old_contract.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Контракт не активний — перевипуск недоступний"
+        )
+
+    if old_contract.end_date:
+        end = (
+            old_contract.end_date.date()
+            if isinstance(old_contract.end_date, datetime)
+            else old_contract.end_date
+        )
+        if date.today() <= end:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Перевипуск можливий лише після закінчення строку дії контракту",
+            )
 
     for item in payload.contract_items:
         culture = session.get(GrainCulture, item.culture_id)
@@ -738,6 +850,108 @@ async def export_contracts(
     return _to_response(wb, f"contracts_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx")
 
 
+@router.get("/contracts/debt-export")
+async def export_contracts_debt(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Excel: лише контракти оренди з невиплаченим залишком (ми винні орендодавцю). Повністю виплачені не потрапляють."""
+    contracts = session.exec(
+        select(LeaseContract).order_by(
+            LeaseContract.landlord_full_name,
+            LeaseContract.field_name,
+            LeaseContract.id,
+        )
+    ).all()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Борг оренди"
+    headers = [
+        "Орендодавець",
+        "Поле",
+        "№ контракту",
+        "Період дії",
+        "Залишок до виплати, грн",
+        "Активний",
+        "Деталізація (залишок по позиціях)",
+    ]
+    _apply_header(ws, headers)
+
+    debt_fill = PatternFill("solid", fgColor="FEF3C7")
+
+    for c in contracts:
+        cd = c.contract_date
+        period_start = cd.date() if isinstance(cd, datetime) else cd
+        if c.end_date:
+            ed = c.end_date
+            period_end = ed.date() if isinstance(ed, datetime) else ed
+        else:
+            period_end = add_one_year(period_start)
+
+        items = session.exec(
+            select(LeaseContractItem).where(LeaseContractItem.contract_id == c.id)
+        ).all()
+        paid_per = get_paid_per_culture(c.id, period_start, period_end, session)
+        remaining_cash_uah = 0.0
+        detail_parts: list[str] = []
+        for ci in items:
+            paid = float(paid_per.get(ci.culture_id, 0) or 0)
+            rem_kg = max(0.0, float(ci.quantity_kg or 0) - paid)
+            rem_uah = rem_kg * float(ci.price_per_kg_uah or 0)
+            remaining_cash_uah += rem_uah
+            if rem_kg > 0.001:
+                culture = session.get(GrainCulture, ci.culture_id)
+                cn = culture.name if culture else "?"
+                detail_parts.append(
+                    f"{cn}: {rem_kg:.2f} кг × {ci.price_per_kg_uah:.2f} грн/кг → {round(rem_uah, 2):.2f} грн"
+                )
+        remaining_cash_uah = round(remaining_cash_uah, 2)
+        if remaining_cash_uah <= 0.01:
+            continue
+
+        date_from = period_start.strftime("%d.%m.%Y")
+        date_to = period_end.strftime("%d.%m.%Y")
+        ws.append(
+            [
+                c.landlord_full_name,
+                c.field_name,
+                c.id,
+                f"{date_from} — {date_to}",
+                remaining_cash_uah,
+                "Так" if c.is_active else "Ні",
+                "; ".join(detail_parts) if detail_parts else "—",
+            ]
+        )
+
+    if ws.max_row == 1:
+        ws.append(
+            [
+                "Немає контрактів із невиплаченим залишком",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+            ]
+        )
+
+    for row in range(2, ws.max_row + 1):
+        debt_cell = ws.cell(row=row, column=5)
+        if isinstance(debt_cell.value, (int, float)) and float(debt_cell.value) > 0:
+            debt_cell.fill = debt_fill
+
+    _apply_body_style(ws, len(headers))
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = f"A1:G{ws.max_row}"
+    widths = [32, 22, 14, 22, 20, 12, 70]
+    for idx, w in enumerate(widths, 1):
+        ws.column_dimensions[chr(64 + idx)].width = w
+
+    return _to_response(wb, f"lease_debt_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx")
+
+
 @router.get("/payments/export")
 async def export_payments(
     session: Session = Depends(get_session),
@@ -917,12 +1131,6 @@ async def create_payment(
                 detail="Для виплати грошима вкажіть суму"
             )
 
-    if is_contract_expired(contract):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Контракт завершений. Перевипустіть контракт для нових виплат."
-        )
-
     cd = contract.contract_date
     period_start = cd.date() if isinstance(cd, datetime) else cd
     if contract.end_date:
@@ -940,6 +1148,17 @@ async def create_payment(
         )
     ).all()
     contract_items_map = {ci.culture_id: ci for ci in contract_items}
+
+    # Дозволяємо виплати навіть після завершення/перевипуску контракту,
+    # якщо залишок по цьому контракту ще є.
+    total_remaining_cash_uah = 0.0
+    for ci in contract_items:
+        paid = float(paid_per_culture.get(ci.culture_id, 0) or 0)
+        remaining = max(0.0, float(ci.quantity_kg or 0) - paid)
+        total_remaining_cash_uah += remaining * float(ci.price_per_kg_uah or 0)
+    total_remaining_cash_uah = round(total_remaining_cash_uah, 2)
+    if total_remaining_cash_uah <= 0.01:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="По контракту вже все виплачено")
 
     for item in payload.grain_items:
         culture = session.get(GrainCulture, item.culture_id)
@@ -1002,18 +1221,58 @@ async def create_payment(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"На складі немає культури '{culture.name if culture else '?'}'"
                 )
-            if stock.own_quantity_kg < item.quantity_kg:
+            # Можемо платити як нашим зерном, так і невикупленим у фермерів (farmer_quantity_kg),
+            # бо воно фізично є на складі. Якщо використовуємо farmer_quantity_kg — це створює
+            # зобов'язання перед фермерами викупити це зерно пізніше.
+            if stock.quantity_kg < item.quantity_kg:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Недостатньо '{culture.name}' на складі: "
-                           f"є {stock.own_quantity_kg:.2f} кг, потрібно {item.quantity_kg:.2f} кг"
+                           f"є {stock.quantity_kg:.2f} кг, потрібно {item.quantity_kg:.2f} кг"
                 )
             quantity_before = stock.quantity_kg
-            stock.own_quantity_kg -= item.quantity_kg
-            stock.quantity_kg -= item.quantity_kg
+            need = float(item.quantity_kg)
+            # Як при відправці: спочатку «віртуально» з зерна під зобов'язанням перед
+            # фермерами (farmer_quantity_kg лишається лічильником боргу — не зменшуємо),
+            # решту — з own_quantity_kg (лише в межах own, інакше дані складу неконсистентні).
+            remaining = need
+            farmer_virtual = 0.0
+            fq = float(stock.farmer_quantity_kg or 0.0)
+            if fq > 0:
+                farmer_virtual = min(remaining, fq)
+                remaining -= farmer_virtual
+            oq = float(stock.own_quantity_kg or 0.0)
+            take_own = min(remaining, oq)
+            if remaining - take_own > 0.01:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Недостатньо власного зерна '{culture.name}' на складі для цієї виплати "
+                           f"(після частки {farmer_virtual:.2f} кг під «невикуплене» потрібно ще "
+                           f"{remaining:.2f} кг з own, є {oq:.2f} кг). Перевірте розподіл own / "
+                           f"фізичний залишок."
+                )
+
+            stock.own_quantity_kg = max(0.0, oq - take_own)
+            stock.quantity_kg = max(0.0, float(stock.quantity_kg or 0.0) - need)
             session.add(stock)
 
+            # Зберігаємо фактичні дельти по колонках (для скасування). Частина з
+            # farmer_virtual не змінює farmer_quantity_kg — from_farmer_kg = 0.
+            gi = session.exec(
+                select(LeasePaymentGrainItem).where(
+                    LeasePaymentGrainItem.payment_id == payment.id,
+                    LeasePaymentGrainItem.culture_id == item.culture_id
+                )
+            ).first()
+            if gi:
+                gi.from_own_kg = round(take_own, 2)
+                gi.from_farmer_kg = 0.0
+                session.add(gi)
+
             # Лог зміни складу
+            dest = f"Виплата орендодавцю: {contract.landlord_full_name}"
+            if farmer_virtual > 0.01:
+                dest += f" (фізично з-під невикупленого у фермерів: {farmer_virtual:.2f} кг, борг лічильник не змінюється)"
             session.add(StockAdjustmentLog(
                 stock_type=StockAdjustmentType.GRAIN,
                 culture_id=item.culture_id,
@@ -1025,7 +1284,7 @@ async def create_payment(
                 user_id=current_user.id,
                 user_full_name=current_user.full_name,
                 source="lease_payment",
-                destination=f"Виплата орендодавцю: {contract.landlord_full_name}"
+                destination=dest
             ))
 
     elif payload.payment_type == "cash":
@@ -1130,8 +1389,17 @@ async def cancel_payment(
             ).first()
             if stock:
                 quantity_before = stock.quantity_kg
-                stock.own_quantity_kg += item.quantity_kg
-                stock.quantity_kg += item.quantity_kg
+                from_own = float(getattr(item, "from_own_kg", 0.0) or 0.0)
+                from_farmer = float(getattr(item, "from_farmer_kg", 0.0) or 0.0)
+                total = float(item.quantity_kg or 0.0)
+                # Якщо split ще не збережений (старі записи) — повертаємо в "our" як було раніше
+                if from_own <= 0 and from_farmer <= 0:
+                    from_own = total
+                    from_farmer = 0.0
+
+                stock.own_quantity_kg += from_own
+                stock.farmer_quantity_kg += from_farmer
+                stock.quantity_kg += total
                 session.add(stock)
 
                 # Лог повернення

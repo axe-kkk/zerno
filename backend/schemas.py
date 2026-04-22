@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, model_validator
 from typing import Optional
 from datetime import datetime
 from backend.models import UserRole, Currency, TransactionType, PurchaseCategory, StockAdjustmentType, FarmerContractType, FarmerContractStatus, FarmerContractItemType, FarmerContractPaymentType, FarmerContractItemDirection
@@ -328,12 +328,24 @@ class GrainIntakeCreate(BaseModel):
     external_driver_name: Optional[str] = Field(None, description="ПІБ стороннього водія")
     
     gross_weight_kg: float = Field(..., gt=0, description="Брутто, кг")
-    tare_weight_kg: float = Field(..., gt=0, description="Тара, кг")
-    
+    tare_weight_kg: float = Field(0.0, ge=0, description="Тара, кг (0 якщо «Очікує тару»)")
+
     impurity_percent: float = Field(0.0, ge=0, le=100, description="Відсоток втрат")
     pending_quality: bool = Field(False, description="Очікує % втрат")
-    
+    pending_tare: bool = Field(False, description="Очікує тару — нетто не на склад")
+
     note: Optional[str] = Field(None, description="Примітка")
+
+    @model_validator(mode="after")
+    def validate_tare_and_net(self):
+        if self.pending_tare:
+            return self
+        if self.tare_weight_kg <= 0:
+            raise ValueError("Тара має бути більше 0 або позначте «Очікує тару»")
+        net = self.gross_weight_kg - self.tare_weight_kg
+        if net <= 0:
+            raise ValueError("Нетто має бути більше 0")
+        return self
 
 
 class GrainReserveRequest(BaseModel):
@@ -397,8 +409,10 @@ class GrainIntakeResponse(BaseModel):
     net_weight_kg: float
     impurity_percent: float
     pending_quality: bool
+    pending_tare: bool = False
     accepted_weight_kg: float
     note: Optional[str]
+    is_farmer_transfer: bool = False
     created_at: datetime
     
     class Config:
@@ -499,9 +513,10 @@ class GrainIntakeUpdateRequest(BaseModel):
     driver_id: Optional[int] = None
     external_driver_name: Optional[str] = None
     gross_weight_kg: Optional[float] = Field(None, gt=0)
-    tare_weight_kg: Optional[float] = Field(None, gt=0)
+    tare_weight_kg: Optional[float] = Field(None, ge=0)
     impurity_percent: Optional[float] = Field(None, ge=0, le=100)
     pending_quality: Optional[bool] = None
+    pending_tare: Optional[bool] = None
     note: Optional[str] = None
 
 
@@ -608,6 +623,9 @@ class LeaseContractResponse(BaseModel):
     parent_contract_id: Optional[int] = None
     is_active: bool
     is_expired: bool = False
+    remaining_cash_uah: float = 0.0
+    has_debt: bool = False
+    is_overdue: bool = False
     note: Optional[str]
     created_at: datetime
     updated_at: Optional[datetime]
@@ -646,6 +664,8 @@ class LeasePaymentGrainItemResponse(BaseModel):
     culture_id: int
     culture_name: Optional[str] = None
     quantity_kg: float
+    from_own_kg: float = 0.0
+    from_farmer_kg: float = 0.0
 
     class Config:
         from_attributes = True
