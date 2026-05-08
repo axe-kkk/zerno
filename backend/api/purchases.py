@@ -57,7 +57,7 @@ async def update_purchase_stock_price(
     stock_id: int,
     payload: PurchaseStockPriceUpdate,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Оновлення ціни продажу для складу закупівель"""
     stock = session.get(PurchaseStock, stock_id)
@@ -352,7 +352,7 @@ async def export_purchase_stock(
 async def create_purchase(
     payload: PurchaseCreate,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Створення закупівлі або безкоштовного приходу на склад"""
     cleaned_name = " ".join(payload.item_name.split()).strip()

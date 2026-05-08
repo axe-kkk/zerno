@@ -83,40 +83,16 @@ let cancellingPaymentId = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     const token = localStorage.getItem('token');
-    const isCashPocket = document.body?.dataset?.app === 'cash-pocket';
     if (!token) {
-        const loginUrl = new URL('login.html', window.location.href);
-        const page = (window.location.pathname.split('/').pop() || '').toLowerCase();
-        loginUrl.searchParams.set('next', page === 'pocket-kassa.html' ? 'pocket-kassa.html' : 'dashboard.html');
-        window.location.href = loginUrl.toString();
+        window.location.href = 'login.html';
         return;
     }
 
-    if (isCashPocket) {
-        initializeCashPocket().catch((err) => {
-            console.error('Помилка ініціалізації каси:', err);
-            showToast('Не вдалося завантажити дані. Перезавантажте сторінку.', 'error');
-        });
-    } else {
-        initializeDashboard().catch((err) => {
-            console.error('Помилка ініціалізації дашборда:', err);
-            showToast('Не вдалося завантажити дані. Перезавантажте сторінку.', 'error');
-        });
-    }
+    initializeDashboard().catch((err) => {
+        console.error('Помилка ініціалізації дашборда:', err);
+        showToast('Не вдалося завантажити дані. Перезавантажте сторінку.', 'error');
+    });
 });
-
-/** Мобільний окремий екран лише «Каса» (сторінка pocket-kassa.html, без посилання з основного UI). */
-async function initializeCashPocket() {
-    await loadUserInfo();
-    initLogout();
-    initCashForm();
-    initCashReportModal();
-    initCustomSelects();
-    await Promise.all([
-        loadCashBalance(),
-        loadCashTransactions()
-    ]);
-}
 
 async function initializeDashboard() {
     await loadUserInfo();
@@ -168,6 +144,12 @@ async function initializeDashboard() {
     initContracts();
     initPayments();
     initVouchers();
+    initPeopleSection();
+    initDashboardReportControls();
+
+    // Показуємо скелетони у всіх таблицях, поки летять перші запити —
+    // дешеве відчуття «ось зараз буде» замість порожніх рядків.
+    showAllTableSkeletons();
 
     await Promise.all([
         loadCashBalance(),
@@ -188,6 +170,7 @@ async function initializeDashboard() {
     await loadStock();
     await loadAllIntakes();
     await loadOwnersList('');
+    await loadPeople();
     await loadFarmerMovements();
     await loadUsers();
     await loadCashTransactions();
@@ -202,6 +185,7 @@ async function initializeDashboard() {
     await loadPayments();
     await loadFields();
     initFieldsSection();
+    await loadPeopleActions();
 
     updateTime();
     setInterval(updateTime, 1000);
@@ -230,6 +214,283 @@ function apiFetchBlob(path) {
         },
         cache: 'no-store'
     });
+}
+
+/** Тригерить браузерне завантаження blob-відповіді як файлу. */
+async function downloadBlob(response, filename) {
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+}
+
+/**
+ * Перезавантаження даних після мутації. Викликається в success-handler
+ * замість одиничного await loadX(). Передавайте список скоупів — функція
+ * виконає лише ті loader'и, що дійсно зачеплені операцією, паралельно.
+ *
+ * Доступні скоупи: dashboard, cash, cashTransactions, stock, purchaseStock,
+ * stockAdjustments, allIntakes, shipments, owners, farmerMovements,
+ * farmerContracts, farmerContractPayments, contracts, payments,
+ * landlords, vouchers, fields, drivers, users, cultures, vehicleTypes,
+ * purchases.
+ *
+ * Скоуп `dashboard` оновлює статистику головної лише якщо вона зараз видима —
+ * щоб не плодити зайвих запитів при роботі в інших розділах.
+ */
+/**
+ * Kebab-меню на вузьких екранах: при кліку поза кнопкою у комірці .actions-cell
+ * (тобто по псевдо-кнопці ⋮ або порожньому місці) — toggle .open, що показує
+ * усі іконки у спливаючій панелі. CSS прибирає це на широких екранах.
+ */
+document.addEventListener('click', (event) => {
+    if (window.innerWidth > 720) return;
+    const cell = event.target.closest('.actions-cell');
+    // Клік по реальній кнопці-дії — пропускаємо, нехай спрацює;
+    // клік по самій комірці (порожньому місці або псевдо ⋮) — toggle.
+    if (!cell) {
+        document.querySelectorAll('.actions-cell.open').forEach(c => c.classList.remove('open'));
+        return;
+    }
+    const clickedAction = event.target.closest('.actions-cell > *, .actions-cell button, .actions-cell a');
+    if (clickedAction && clickedAction !== cell) return;
+    document.querySelectorAll('.actions-cell.open').forEach(c => {
+        if (c !== cell) c.classList.remove('open');
+    });
+    cell.classList.toggle('open');
+    event.stopPropagation();
+});
+
+/**
+ * Заповнити <select> опціями фермерів з ownersCache. Викликається після loadOwnersList()
+ * для всіх селектів, що показують довідник фермерів. Зберігає поточно обране значення.
+ */
+function populateOwnerSelect(selectId, { placeholder = '— Оберіть фермера —' } = {}) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+    const current = select.value;
+    const opts = [`<option value="">${placeholder}</option>`];
+    (ownersCache || []).forEach(o => {
+        const phone = o.phone ? ` (${o.phone})` : '';
+        opts.push(`<option value="${o.id}">${escapeHtml(o.full_name)}${escapeHtml(phone)}</option>`);
+    });
+    select.innerHTML = opts.join('');
+    if (current && (ownersCache || []).some(o => String(o.id) === current)) {
+        select.value = current;
+    }
+    if (typeof refreshCustomSelect === 'function') refreshCustomSelect(select);
+}
+
+function populateLandlordSelect(selectId, { placeholder = '— Оберіть орендодавця —' } = {}) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+    const current = select.value;
+    const opts = [`<option value="">${placeholder}</option>`];
+    (landlordsCache || []).forEach(l => {
+        const phone = l.phone ? ` (${l.phone})` : '';
+        opts.push(`<option value="${l.id}">${escapeHtml(l.full_name)}${escapeHtml(phone)}</option>`);
+    });
+    select.innerHTML = opts.join('');
+    if (current && (landlordsCache || []).some(l => String(l.id) === current)) {
+        select.value = current;
+    }
+    if (typeof refreshCustomSelect === 'function') refreshCustomSelect(select);
+}
+
+/** Універсальна quick-add модалка для довідників (фермер / орендодавець). */
+function setupQuickAddModal({
+    modalId, formId, nameId, phoneId, messageId, closeId, cancelId,
+    apiPath,                         // '/grain/owners' | '/leases/landlords'
+    cacheRef,                        // 'ownersCache' | 'landlordsCache'
+    refreshScope,                    // ім'я скоупу для refreshAfterMutation
+    onCreated                        // (createdItem) => void  — коли потрібно вибрати щойно створеного у конкретному селекті
+}) {
+    const modal = document.getElementById(modalId);
+    const form = document.getElementById(formId);
+    if (!modal || !form) return null;
+
+    const nameInput = document.getElementById(nameId);
+    const phoneInput = document.getElementById(phoneId);
+    const messageEl = document.getElementById(messageId);
+    const closeBtn = document.getElementById(closeId);
+    const cancelBtn = document.getElementById(cancelId);
+    const overlay = modal.querySelector('.modal-overlay');
+
+    let currentCallback = null;
+
+    const close = () => {
+        modal.classList.add('hidden');
+        if (form) form.reset();
+        if (messageEl) { messageEl.textContent = ''; messageEl.classList.remove('error', 'success'); }
+        currentCallback = null;
+    };
+
+    closeBtn?.addEventListener('click', close);
+    cancelBtn?.addEventListener('click', close);
+    overlay?.addEventListener('click', close);
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = nameInput.value.trim();
+        const phone = phoneInput.value.trim() || null;
+        if (!name) {
+            if (messageEl) { messageEl.textContent = 'Вкажіть ПІБ'; messageEl.classList.add('error'); }
+            return;
+        }
+        const response = await apiFetch(apiPath, {
+            method: 'POST',
+            body: JSON.stringify({ full_name: name, phone })
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => null);
+            if (messageEl) { messageEl.textContent = err?.detail || 'Помилка створення'; messageEl.classList.add('error'); }
+            return;
+        }
+        const created = await response.json();
+        // Оновлюємо локальний кеш одразу — щоб селект побачив новий запис до redownload'у
+        if (cacheRef === 'ownersCache') {
+            ownersCache = [...(ownersCache || []), created].sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''));
+        } else if (cacheRef === 'landlordsCache') {
+            landlordsCache = [...(landlordsCache || []), created].sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''));
+        }
+        const cb = currentCallback;
+        close();
+        if (typeof cb === 'function') cb(created);
+        // Refresh у фоні щоб синхронізуватись з сервером
+        if (refreshScope) {
+            refreshAfterMutation([refreshScope]).catch(() => {});
+        }
+    });
+
+    return {
+        open(callback) {
+            currentCallback = typeof callback === 'function' ? callback : null;
+            if (form) form.reset();
+            if (messageEl) { messageEl.textContent = ''; messageEl.classList.remove('error', 'success'); }
+            modal.classList.remove('hidden');
+            setTimeout(() => nameInput?.focus(), 30);
+        }
+    };
+}
+
+let _farmerQuickAdd = null;
+let _landlordQuickAdd = null;
+
+function getFarmerQuickAdd() {
+    if (!_farmerQuickAdd) {
+        _farmerQuickAdd = setupQuickAddModal({
+            modalId: 'farmer-quick-add-modal',
+            formId: 'farmer-quick-add-form',
+            nameId: 'farmer-quick-add-name',
+            phoneId: 'farmer-quick-add-phone',
+            messageId: 'farmer-quick-add-message',
+            closeId: 'farmer-quick-add-close',
+            cancelId: 'farmer-quick-add-cancel',
+            apiPath: '/grain/owners',
+            cacheRef: 'ownersCache',
+            refreshScope: 'owners'
+        });
+    }
+    return _farmerQuickAdd;
+}
+
+function getLandlordQuickAdd() {
+    if (!_landlordQuickAdd) {
+        _landlordQuickAdd = setupQuickAddModal({
+            modalId: 'landlord-quick-add-modal',
+            formId: 'landlord-quick-add-form',
+            nameId: 'landlord-quick-add-name',
+            phoneId: 'landlord-quick-add-phone',
+            messageId: 'landlord-quick-add-message',
+            closeId: 'landlord-quick-add-close',
+            cancelId: 'landlord-quick-add-cancel',
+            apiPath: '/leases/landlords',
+            cacheRef: 'landlordsCache',
+            refreshScope: 'landlords'
+        });
+    }
+    return _landlordQuickAdd;
+}
+
+/**
+ * Заповнити tbody таблиці плейсхолдер-скелетонами під час першого завантаження.
+ * Викликається лише до приходу даних: коли реальний рендер замінить tbody —
+ * скелетони підуть разом з ним.
+ */
+function showTableSkeleton(tbody, columnCount, rows = 5) {
+    if (!tbody || !columnCount) return;
+    const widths = ['85%', '60%', '70%', '55%', '90%', '45%'];
+    const cells = Array.from({ length: columnCount }, (_, i) =>
+        `<td><span class="skeleton" style="width:${widths[i % widths.length]};"></span></td>`
+    ).join('');
+    tbody.innerHTML = Array(rows).fill(`<tr class="skeleton-row">${cells}</tr>`).join('');
+}
+
+/** Один прохід по всіх .data-table — заповнюємо їх скелетонами. */
+function showAllTableSkeletons() {
+    document.querySelectorAll('.data-table').forEach(table => {
+        const tbody = table.querySelector('tbody');
+        if (!tbody || tbody.children.length > 0) return;
+        const colCount = table.querySelectorAll('thead th').length;
+        if (colCount > 0) showTableSkeleton(tbody, colCount, 5);
+    });
+}
+
+async function refreshAfterMutation(scopes) {
+    if (!Array.isArray(scopes) || scopes.length === 0) return;
+    const dashboardSection = document.getElementById('section-dashboard');
+    const dashboardVisible = !!(dashboardSection && !dashboardSection.classList.contains('hidden'));
+
+    const map = {
+        dashboard:              () => dashboardVisible && typeof loadDashboardStats === 'function' ? loadDashboardStats() : null,
+        cash:                   () => typeof loadCashBalance === 'function' ? loadCashBalance() : null,
+        cashTransactions:       () => typeof loadCashTransactions === 'function' ? loadCashTransactions() : null,
+        stock:                  () => typeof loadStock === 'function' ? loadStock() : null,
+        purchaseStock:          () => typeof loadPurchaseStock === 'function' ? loadPurchaseStock() : null,
+        stockAdjustments:       () => typeof loadStockAdjustments === 'function' ? loadStockAdjustments() : null,
+        allIntakes:             () => typeof loadAllIntakes === 'function' ? loadAllIntakes() : null,
+        shipments:              () => typeof loadShipments === 'function' ? loadShipments() : null,
+        owners:                 () => typeof loadOwnersList === 'function' ? loadOwnersList('') : null,
+        farmerMovements:        () => typeof loadFarmerMovements === 'function' ? loadFarmerMovements() : null,
+        farmerContracts:        () => typeof loadFarmerContracts === 'function' ? loadFarmerContracts() : null,
+        farmerContractPayments: () => typeof loadFarmerContractPayments === 'function' ? loadFarmerContractPayments() : null,
+        contracts:              () => typeof loadContracts === 'function' ? loadContracts() : null,
+        payments:               () => typeof loadPayments === 'function' ? loadPayments() : null,
+        landlords:              () => typeof loadLandlords === 'function' ? loadLandlords() : null,
+        vouchers:               () => typeof loadVouchersData === 'function' ? loadVouchersData() : null,
+        fields:                 () => typeof loadFields === 'function' ? loadFields() : null,
+        drivers:                () => typeof loadDrivers === 'function' ? loadDrivers() : null,
+        users:                  () => typeof loadUsers === 'function' ? loadUsers() : null,
+        cultures:               () => typeof loadCultures === 'function' ? loadCultures() : null,
+        vehicleTypes:           () => typeof loadVehicleTypes === 'function' ? loadVehicleTypes() : null,
+        purchases:              () => typeof loadPurchases === 'function' ? loadPurchases() : null,
+        people:                 () => typeof loadPeople === 'function' ? loadPeople() : null,
+        peopleActions:          () => typeof loadPeopleActions === 'function' ? loadPeopleActions() : null,
+    };
+
+    const tasks = [];
+    const seen = new Set();
+    for (const scope of scopes) {
+        if (seen.has(scope)) continue;
+        seen.add(scope);
+        const fn = map[scope];
+        if (!fn) {
+            console.warn('refreshAfterMutation: невідомий скоуп', scope);
+            continue;
+        }
+        const result = fn();
+        if (result && typeof result.then === 'function') {
+            tasks.push(result.catch(err => console.error(`refresh ${scope} failed:`, err)));
+        }
+    }
+    if (tasks.length) {
+        await Promise.allSettled(tasks);
+    }
 }
 
 async function loadUserInfo() {
@@ -266,162 +527,192 @@ async function loadUserInfo() {
     } catch (error) {
         console.error('Помилка завантаження даних користувача:', error);
         localStorage.removeItem('token');
-        const loginUrl = new URL('login.html', window.location.href);
-        if (document.body?.dataset?.app === 'cash-pocket') {
-            loginUrl.searchParams.set('next', 'pocket-kassa.html');
-        }
-        window.location.href = loginUrl.toString();
+        window.location.href = 'login.html';
     }
 }
 
 function updateAdminVisibility() {
+    document.body.classList.toggle('user-is-admin', !!isSuperAdmin);
+    document.body.classList.toggle('user-is-not-admin', !isSuperAdmin);
     document.querySelectorAll('[data-admin-only]').forEach(element => {
         element.classList.toggle('hidden', !isSuperAdmin);
     });
 }
 
 async function loadDashboardStats() {
+    // Звіт: завантажуємо за вибраним періодом (або весь час, якщо дати не задані).
+    const startEl = document.getElementById('report-start-date');
+    const endEl = document.getElementById('report-end-date');
+    const startVal = startEl?.value || '';
+    const endVal = endEl?.value || '';
+    const params = new URLSearchParams();
+    if (startVal) params.set('start_date', startVal);
+    if (endVal) params.set('end_date', endVal);
+    const path = `/dashboard/period-report${params.toString() ? `?${params}` : ''}`;
+
     try {
-        const response = await apiFetch('/dashboard/stats');
-        if (!response.ok) throw new Error('Помилка завантаження статистики');
+        const response = await apiFetch(path);
+        if (!response.ok) throw new Error('Помилка завантаження звіту');
+        const data = await response.json();
 
-        const stats = await response.json();
-
-        // ── Top strip: Cash ──
-        document.getElementById('dashboard-cash-uah').textContent = formatAmount(stats.cash_balances.uah);
-        document.getElementById('dashboard-cash-usd').textContent = formatAmount(stats.cash_balances.usd);
-        document.getElementById('dashboard-cash-eur').textContent = formatAmount(stats.cash_balances.eur);
-
-
-        // ── Panel 1: Today ──
-        document.getElementById('dashboard-intakes-today').textContent = stats.intakes_today;
-        document.getElementById('dashboard-shipments-today').textContent = stats.shipments_today;
-        document.getElementById('dashboard-intakes-today-kg').textContent = formatAmount(stats.intakes_today_kg || 0) + ' кг';
-        document.getElementById('dashboard-shipments-today-kg').textContent = formatAmount(stats.shipments_today_kg || 0) + ' кг';
-        document.getElementById('dashboard-intakes-pending').textContent = stats.intakes_pending || 0;
-
-        // ── Panel 1: Grain ownership ──
-        const ownKg = stats.own_stock_kg || 0;
-        const farmerKg = stats.farmer_stock_kg || 0;
-        document.getElementById('dashboard-own-stock').textContent = formatAmount(ownKg);
-        document.getElementById('dashboard-farmer-stock').textContent = formatAmount(farmerKg);
-        const ownershipTotal = ownKg + farmerKg;
-        const ownPctBar = ownershipTotal > 0 ? (ownKg / ownershipTotal * 100) : 50;
-        const farmerPctBar = ownershipTotal > 0 ? (farmerKg / ownershipTotal * 100) : 50;
-        document.getElementById('dashboard-own-bar').style.width = ownPctBar + '%';
-        document.getElementById('dashboard-farmer-bar').style.width = farmerPctBar + '%';
-
-        // ── Left panel: Stock by culture (horizontal bars) ──
-        const stockContainer = document.getElementById('dashboard-stock-cultures');
-        document.getElementById('dashboard-total-stock').textContent = formatAmount(stats.total_stock_kg) + ' кг';
-
-        if (stats.stock_by_culture && stats.stock_by_culture.length > 0) {
-            // Сортируем: сначала по количеству (убывание), затем по алфавиту
-            const sorted = [...stats.stock_by_culture].sort((a, b) => {
-                if (b.quantity_kg !== a.quantity_kg) {
-                    return b.quantity_kg - a.quantity_kg;
-                }
-                return a.name.localeCompare(b.name);
-            });
-            
-            const maxQty = Math.max(...sorted.map(c => c.quantity_kg), 0);
-            
-            stockContainer.innerHTML = sorted.map(c => {
-                const ownPct = maxQty > 0 ? ((c.own_quantity_kg || 0) / maxQty * 100) : 0;
-                const farmerPct = maxQty > 0 ? ((c.farmer_quantity_kg || 0) / maxQty * 100) : 0;
-                return `
-                    <div class="db-stock-item">
-                        <div class="db-stock-row">
-                            <span class="db-stock-name">${escapeHtml(c.name)}</span>
-                            <div class="db-stock-bar-wrap">
-                                <div class="db-stock-bar-own" style="width:${ownPct}%"></div>
-                                <div class="db-stock-bar-farmer" style="width:${farmerPct}%"></div>
-                            </div>
-                            <span class="db-stock-qty">${formatAmount(c.quantity_kg)}</span>
-                        </div>
-                        <div class="db-stock-sub">
-                            <span><span class="dot-own">${formatAmount(c.own_quantity_kg || 0)}</span> власне</span>
-                            <span><span class="dot-farmer">${formatAmount(c.farmer_quantity_kg || 0)}</span> фермер.</span>
-                        </div>
-                    </div>`;
-            }).join('');
+        // ── Заголовок: дата звіту ──
+        const dateEl = document.getElementById('report-date');
+        const periodHintEl = document.getElementById('report-period-hint');
+        const today = new Date().toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        dateEl.textContent = today;
+        if (startVal && endVal) {
+            periodHintEl.textContent = `Період: ${startVal} — ${endVal}`;
+        } else if (startVal) {
+            periodHintEl.textContent = `З ${startVal}`;
+        } else if (endVal) {
+            periodHintEl.textContent = `До ${endVal}`;
         } else {
-            stockContainer.innerHTML = '<div class="db-empty">Немає культур</div>';
+            periodHintEl.textContent = 'Дані за весь час';
         }
 
-        // ── Panel 1: Contracts ──
-        document.getElementById('dashboard-contracts-open-value').textContent = stats.contracts_open;
-        document.getElementById('dashboard-contracts-closed-value').textContent = stats.contracts_closed;
-        document.getElementById('dashboard-contracts-total-value').textContent = formatAmount(stats.contracts_total_value);
-        document.getElementById('dashboard-contracts-balance-value').textContent = formatAmount(stats.contracts_balance);
+        // ── Каса ──
+        document.getElementById('dashboard-cash-uah').textContent = formatAmount(data.cash_balances.uah);
+        document.getElementById('dashboard-cash-usd').textContent = formatAmount(data.cash_balances.usd);
+        document.getElementById('dashboard-cash-eur').textContent = formatAmount(data.cash_balances.eur);
 
-        // ── Panel 1: Vouchers ──
-        const vCountEl = document.getElementById('dashboard-vouchers-count');
-        const vOpenEl = document.getElementById('dashboard-vouchers-open');
-        const vTotalEl = document.getElementById('dashboard-vouchers-total');
-        const vRemainingEl = document.getElementById('dashboard-vouchers-remaining');
-        if (vCountEl) vCountEl.textContent = stats.vouchers_count || 0;
-        if (vOpenEl) vOpenEl.textContent = stats.vouchers_open_count || 0;
-        if (vTotalEl) vTotalEl.textContent = formatAmount(stats.vouchers_total_value_uah || 0);
-        if (vRemainingEl) vRemainingEl.textContent = formatAmount(stats.vouchers_remaining_uah || 0);
-
-        // ── Panel 2: Grain from farmers ──
-        const purchased = stats.grain_purchased_from_farmers_kg || 0;
-        const notPurchased = stats.grain_not_purchased_from_farmers_kg || 0;
-        document.getElementById('dashboard-grain-purchased').textContent = formatAmount(purchased);
-        document.getElementById('dashboard-grain-not-purchased').textContent = formatAmount(notPurchased);
-        const grainTotal = purchased + notPurchased;
-        const grainPct = grainTotal > 0 ? Math.round((purchased / grainTotal) * 100) : 0;
-        document.getElementById('dashboard-purchase-pct').textContent = grainPct + '%';
-        document.getElementById('dashboard-purchase-bar').style.width = grainPct + '%';
-
-        // ── Panel 2: Purchases by category ──
-        const purTotalEl = document.getElementById('dashboard-purchases-total');
-        const purContainer = document.getElementById('dashboard-purchases-by-cat');
-        if (purTotalEl) purTotalEl.textContent = formatAmount(stats.purchases_stock_total || 0) + ' кг';
-        if (purContainer) {
-            const cats = stats.purchases_by_category || [];
-            const catColors = ['#8b5cf6', '#6366f1', '#ec4899', '#f59e0b', '#14b8a6', '#f97316', '#06b6d4'];
-            const categoryLabel = (cat) => ({ fertilizer: 'Добрива', seed: 'Посівне зерно' }[cat] || cat);
-            if (cats.length > 0) {
-                purContainer.innerHTML = cats.map((c, i) => `
-                    <div class="db-gf-cat-row">
-                        <span class="db-gf-cat-dot" style="background:${catColors[i % catColors.length]}"></span>
-                        <span class="db-gf-cat-name">${escapeHtml(categoryLabel(c.category))}</span>
-                        <span class="db-gf-cat-val">${formatAmount(c.quantity_kg)} кг</span>
-                    </div>`).join('');
+        // ── 1. Рух зерна по складу ──
+        const movTbody = document.querySelector('#report-movements-table tbody');
+        if (movTbody) {
+            movTbody.innerHTML = '';
+            if (!data.movements || !data.movements.length) {
+                movTbody.innerHTML = '<tr><td colspan="13" class="empty-state">Немає культур</td></tr>';
             } else {
-                purContainer.innerHTML = '<div class="db-empty">Немає закупок</div>';
+                data.movements.forEach(row => {
+                    const lossPct = row.loss_percent || 0;
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td class="rt-sticky-col"><strong>${escapeHtml(row.culture_name)}</strong></td>
+                        <td class="rt-num">${fmtKg(row.received_from_farmers_kg)}</td>
+                        <td class="rt-num">${fmtKg(row.received_from_own_kg)}</td>
+                        <td class="rt-num"><strong>${fmtKg(row.received_total_kg)}</strong></td>
+                        <td class="rt-num">${fmtKg(row.losses_kg)}</td>
+                        <td class="rt-num">${lossPct > 0 ? lossPct.toFixed(2) + '%' : '—'}</td>
+                        <td class="rt-num">${fmtKg(row.shipped_cash_kg)}</td>
+                        <td class="rt-num">${fmtKg(row.shipped_cashless_kg)}</td>
+                        <td class="rt-num"><strong>${fmtKg(row.shipped_total_kg)}</strong></td>
+                        <td class="rt-num">${fmtKg(row.issued_via_contracts_kg)}</td>
+                        <td class="rt-num">${fmtKg(row.lease_payments_kg)}</td>
+                        <td class="rt-num">${fmtKg(row.transfer_to_people_kg)}</td>
+                        <td class="rt-num rt-balance">${fmtKg(row.balance_kg)}</td>
+                    `;
+                    movTbody.appendChild(tr);
+                });
             }
         }
 
-        // ── Right: Recent transactions ──
-        const txContainer = document.getElementById('dashboard-recent-transactions');
-        if (stats.recent_transactions && stats.recent_transactions.length > 0) {
-            txContainer.innerHTML = '<div class="db-tx-list">' + stats.recent_transactions.map(t => {
-                const isAdd = t.type === 'add';
-                const sign = isAdd ? '+' : '−';
-                const cls = isAdd ? 'tx-add' : 'tx-sub';
-                const amtCls = isAdd ? 'tx-positive' : 'tx-negative';
-                const date = t.created_at ? new Date(t.created_at).toLocaleString('uk-UA', {
-                    day: '2-digit', month: '2-digit',
-                    hour: '2-digit', minute: '2-digit'
-                }) : emptyValueHtml();
-                return `
-                    <div class="db-tx-item ${cls}">
-                        <div class="db-tx-amount ${amtCls}">${sign}${formatAmount(t.amount)} ${escapeHtml(t.currency)}</div>
-                        <div class="db-tx-details">
-                            <div class="db-tx-desc">${t.description ? escapeHtml(t.description) : emptyValueHtml()}</div>
-                            <div class="db-tx-date">${date}</div>
-                        </div>
-                    </div>`;
-            }).join('') + '</div>';
-        } else {
-            txContainer.innerHTML = '<div class="db-empty">Немає транзакцій</div>';
+        // ── 2. Розрахунки з фермерами ──
+        const settlTbody = document.querySelector('#report-farmer-settlements-table tbody');
+        if (settlTbody) {
+            settlTbody.innerHTML = '';
+            if (!data.farmer_settlements || !data.farmer_settlements.length) {
+                settlTbody.innerHTML = '<tr><td colspan="7" class="empty-state">Немає даних</td></tr>';
+            } else {
+                data.farmer_settlements.forEach(row => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td class="rt-sticky-col"><strong>${escapeHtml(row.culture_name)}</strong></td>
+                        <td class="rt-num">${fmtKg(row.received_from_farmers_kg)}</td>
+                        <td class="rt-num">${fmtKg(row.bought_back_kg)}</td>
+                        <td class="rt-num">${fmtKg(row.transfer_between_farmers_kg)}</td>
+                        <td class="rt-num">${fmtKg(row.transfer_to_people_kg)}</td>
+                        <td class="rt-num">${fmtKg(row.deduct_kg)}</td>
+                        <td class="rt-num rt-balance">${fmtKg(row.farmer_balance_kg)}</td>
+                    `;
+                    settlTbody.appendChild(tr);
+                });
+            }
+        }
+
+        // ── 3. Борги ──
+        const debtsTbody = document.querySelector('#report-debts-table tbody');
+        if (debtsTbody) {
+            debtsTbody.innerHTML = '';
+            if (!data.debts || !data.debts.length) {
+                debtsTbody.innerHTML = '<tr><td colspan="8" class="empty-state">Боргів немає</td></tr>';
+            } else {
+                const typeLabels = { debt: 'Борговий', payment: 'Виплата', reserve: 'Резерв', exchange: 'Обмін' };
+                data.debts.forEach(d => {
+                    const dateStr = d.created_at
+                        ? new Date(d.created_at).toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: 'numeric' })
+                        : '—';
+                    const nameLabel = d.is_person
+                        ? `${escapeHtml(d.name)} <span class="td-secondary">(людина)</span>`
+                        : `<strong>${escapeHtml(d.name)}</strong>`;
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td class="td-mono">#${d.contract_id}</td>
+                        <td>${nameLabel}</td>
+                        <td>${escapeHtml(typeLabels[d.type] || d.type)}</td>
+                        <td class="rt-num">${dateStr}</td>
+                        <td class="rt-num">${formatAmount(d.total_uah)}</td>
+                        <td class="rt-num">${formatAmount(d.paid_uah)}</td>
+                        <td class="rt-num rt-balance">${formatAmount(d.balance_uah)}</td>
+                        <td>${escapeHtml(d.note || '')}</td>
+                    `;
+                    debtsTbody.appendChild(tr);
+                });
+            }
         }
     } catch (error) {
-        console.error('Помилка завантаження статистики дашборда:', error);
+        console.error('Помилка завантаження звіту дашборда:', error);
     }
+}
+
+// Helper: форматуємо кг (0 → «—», інакше число з пробілами)
+function fmtKg(v) {
+    const n = Number(v) || 0;
+    if (Math.abs(n) < 0.005) return '<span class="rt-zero">—</span>';
+    return formatAmount(n);
+}
+
+/** Прив'язує контролі періоду на головному дашборді. */
+function initDashboardReportControls() {
+    const refreshBtn = document.getElementById('report-refresh-btn');
+    const resetBtn = document.getElementById('report-reset-btn');
+    const exportBtn = document.getElementById('report-export-btn');
+    const startEl = document.getElementById('report-start-date');
+    const endEl = document.getElementById('report-end-date');
+
+    refreshBtn?.addEventListener('click', () => {
+        loadDashboardStats();
+    });
+    resetBtn?.addEventListener('click', () => {
+        if (startEl) startEl.value = '';
+        if (endEl) endEl.value = '';
+        loadDashboardStats();
+    });
+    exportBtn?.addEventListener('click', async () => {
+        const params = new URLSearchParams();
+        if (startEl?.value) params.set('start_date', startEl.value);
+        if (endEl?.value) params.set('end_date', endEl.value);
+        const path = `/dashboard/period-report/export${params.toString() ? `?${params}` : ''}`;
+        exportBtn.disabled = true;
+        try {
+            const response = await apiFetchBlob(path);
+            if (!response.ok) {
+                showToast('Помилка завантаження звіту', 'error');
+                return;
+            }
+            const today = new Date().toISOString().slice(0, 10);
+            const periodLabel = (startEl?.value && endEl?.value)
+                ? `${startEl.value}_${endEl.value}`
+                : (startEl?.value ? `from_${startEl.value}` : (endEl?.value ? `to_${endEl.value}` : 'all_time'));
+            await downloadBlob(response, `dashboard_${periodLabel}_${today}.xlsx`);
+        } catch (err) {
+            console.error('Помилка експорту звіту дашборду:', err);
+            showToast('Помилка завантаження звіту', 'error');
+        } finally {
+            exportBtn.disabled = false;
+        }
+    });
+    [startEl, endEl].forEach(el => {
+        el?.addEventListener('change', () => loadDashboardStats());
+    });
 }
 
 async function loadCashBalance() {
@@ -581,8 +872,7 @@ async function updateCulturePrice(cultureId, priceValue) {
         body: JSON.stringify({ price_per_kg: price })
     });
     if (response.ok) {
-        await loadCultures();
-        await loadStock();
+        await refreshAfterMutation(['cultures', 'stock', 'farmerContracts', 'vouchers', 'dashboard']);
         return true;
     }
     return false;
@@ -626,16 +916,14 @@ async function loadDrivers() {
     if (!select) {
         return;
     }
-    select.innerHTML = driversCache
-        .map(driver => `<option value="${driver.id}">${driver.full_name}</option>`)
-        .join('');
+    select.innerHTML = '<option value="">Оберіть водія</option>'
+        + driversCache.map(driver => `<option value="${driver.id}">${driver.full_name}</option>`).join('');
     initCustomSelects(select);
 
     const editSelect = document.getElementById('edit-driver');
     if (editSelect) {
-        editSelect.innerHTML = driversCache
-            .map(driver => `<option value="${driver.id}">${driver.full_name}</option>`)
-            .join('');
+        editSelect.innerHTML = '<option value="">Оберіть водія</option>'
+            + driversCache.map(driver => `<option value="${driver.id}">${driver.full_name}</option>`).join('');
         initCustomSelects(editSelect);
     }
 
@@ -702,7 +990,7 @@ async function deleteDriver(driverId) {
         method: 'DELETE'
     });
     if (response.ok) {
-        await loadDrivers();
+        await refreshAfterMutation(['drivers']);
         showToast('Водія видалено', 'success');
     } else {
         const error = await response.json().catch(() => null);
@@ -780,9 +1068,7 @@ function initShipmentsForm() {
             clearFormValidationState(form, 'shipment-message');
             form.reset();
             closeShipmentCreateModal();
-            await loadShipments();
-            await loadStock();
-            await loadStockAdjustments();
+            await refreshAfterMutation(['shipments', 'stock', 'stockAdjustments', 'dashboard']);
         } else {
             const error = await response.json().catch(() => null);
             setFormMessage('shipment-message', error?.detail || 'Помилка збереження', true);
@@ -948,9 +1234,7 @@ function initShipmentsEditModal() {
         if (response.ok) {
             showToast('Відправку оновлено', 'success');
             clearFormValidationState(form, 'shipment-edit-message');
-            await loadShipments();
-            await loadStock();
-            await loadStockAdjustments();
+            await refreshAfterMutation(['shipments', 'stock', 'stockAdjustments', 'dashboard']);
             closeModal();
         } else {
             const error = await response.json().catch(() => null);
@@ -1154,7 +1438,7 @@ async function loadUsers() {
                 });
                 if (response.ok) {
                     showToast('Користувача оновлено', 'success');
-                    await loadUsers();
+                    await refreshAfterMutation(['users']);
                 } else {
                     showToast('Не вдалося оновити', 'error');
                     activeToggle.checked = !activeToggle.checked;
@@ -1288,7 +1572,7 @@ function initUserEditModal() {
         if (response.ok) {
             showToast('Користувача оновлено', 'success');
             clearFormValidationState(form, 'user-edit-message');
-            await loadUsers();
+            await refreshAfterMutation(['users']);
             closeModal();
         } else {
             const error = await response.json().catch(() => null);
@@ -1334,7 +1618,7 @@ function initUserDeleteModal() {
         const response = await apiFetch(`/users/${pendingUserDeleteId}`, { method: 'DELETE' });
         if (response.ok) {
             showToast('Користувача видалено', 'success');
-            await loadUsers();
+            await refreshAfterMutation(['users']);
             closeModal();
         } else {
             const error = await response.json().catch(() => null);
@@ -1346,7 +1630,7 @@ function initUserDeleteModal() {
 async function deleteUser(userId) {
     const response = await apiFetch(`/users/${userId}`, { method: 'DELETE' });
     if (response.ok) {
-        await loadUsers();
+        await refreshAfterMutation(['users']);
         showToast('Користувача видалено', 'success');
     } else {
         showToast('Не вдалося видалити', 'error');
@@ -1365,6 +1649,12 @@ async function loadOwnersList(query) {
         updateFarmerIntakeFilterOptions();
         updateFarmerContractsFilterOptions();
         updateFarmerMovementFilterOptions();
+        // Перезаповнюємо всі owner-селекти, що можуть бути на сторінці
+        ['intake-owner-select', 'farmer-contract-owner-select'].forEach(id => {
+            if (document.getElementById(id) && typeof populateOwnerSelect === 'function') {
+                populateOwnerSelect(id);
+            }
+        });
     }
     renderOwnersTable(owners);
 }
@@ -1491,7 +1781,7 @@ async function openReserveActivateModal(contractId) {
             }
             showToast('Контракт активовано', 'success');
             close();
-            await loadFarmerContracts();
+            await refreshAfterMutation(['farmerContracts', 'stock', 'purchaseStock', 'stockAdjustments', 'dashboard']);
         } finally {
             confirmBtn.disabled = false;
             confirmBtn.textContent = 'Активувати';
@@ -1538,9 +1828,7 @@ function openContractCloseModal(contractId) {
             }
             showToast('Контракт закрито', 'success');
             close();
-            await loadFarmerContracts();
-            await loadStock();
-            await loadPurchaseStock();
+            await refreshAfterMutation(['farmerContracts', 'stock', 'purchaseStock', 'stockAdjustments', 'dashboard']);
         } finally {
             confirmBtn.disabled = false;
             confirmBtn.textContent = 'Закрити контракт';
@@ -1597,11 +1885,12 @@ function openFcPaymentCancelModal(payment) {
             }
             showToast('Операцію скасовано', 'success');
             close();
-            await loadFarmerContracts();
-            await loadFarmerContractPayments();
-            await loadStock();
-            await loadPurchaseStock();
-            await loadCashBalance();
+            await refreshAfterMutation([
+                'farmerContracts', 'farmerContractPayments',
+                'stock', 'purchaseStock', 'stockAdjustments',
+                'cash', 'cashTransactions', 'vouchers', 'owners',
+                'people', 'peopleActions', 'dashboard'
+            ]);
         } finally {
             confirmBtn.disabled = false;
             confirmBtn.textContent = 'Так, скасувати';
@@ -1702,14 +1991,20 @@ async function openFcContractDetailModal(contractId) {
         itemsTbody.innerHTML = '';
         if (contract.items && contract.items.length) {
             contract.items.forEach(item => {
+                const isLand = item.item_type === 'land_service';
+                const isCash = item.item_type === 'cash';
+                const qty = (isCash || isLand) ? formatAmount(item.quantity_kg) : formatWeight(item.quantity_kg);
+                const delivered = (isCash || isLand) ? formatAmount(item.delivered_kg || 0) : formatWeight(item.delivered_kg || 0);
+                const unitSuffix = isLand ? ' га' : '';
+                const priceSuffix = isLand ? ' /га' : '';
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td>${dirLabels[item.direction] || item.direction}</td>
                     <td>${item.item_name ? escapeHtml(item.item_name) : emptyValueHtml()}</td>
-                    <td>${formatWeight(item.quantity_kg)}</td>
-                    <td>${formatAmount(item.price_per_kg)}</td>
+                    <td>${qty}${unitSuffix}</td>
+                    <td>${formatAmount(item.price_per_kg)}${priceSuffix}</td>
                     <td>${formatAmount(item.total_value_uah)}</td>
-                    <td>${formatWeight(item.delivered_kg)}</td>
+                    <td>${delivered}${unitSuffix}</td>
                 `;
                 itemsTbody.appendChild(tr);
             });
@@ -2090,6 +2385,7 @@ function renderFarmerContractsTable(contracts) {
     const tableBody = document.querySelector('#farmer-contracts-table tbody');
     if (!tableBody) return;
     const ownersMap = new Map(ownersCache.map(o => [o.id, o.full_name]));
+    const peopleMap = new Map((peopleCache || []).map(p => [p.id, p.full_name]));
     const typeLabels = {
         'payment': 'Виплата',
         'debt': 'Контракт',
@@ -2110,7 +2406,12 @@ function renderFarmerContractsTable(contracts) {
         const row = document.createElement('tr');
         if (contract.status === 'closed') row.classList.add('row-muted');
         if (contract.status === 'cancelled') row.classList.add('row-cancelled');
-        const ownerName = ownersMap.get(contract.owner_id) || `#${contract.owner_id}`;
+        let ownerName;
+        if (contract.person_id) {
+            ownerName = `${peopleMap.get(contract.person_id) || '#' + contract.person_id} (людина)`;
+        } else {
+            ownerName = ownersMap.get(contract.owner_id) || `#${contract.owner_id}`;
+        }
         const st = statusMap[contract.status] || { label: contract.status, cls: 'warning' };
         let typeLabel = typeLabels[contract.contract_type] || contract.contract_type;
         if (contract.was_reserve) typeLabel += ' (резерв)';
@@ -2274,9 +2575,8 @@ function initFarmerContractModal() {
     const addFarmerItemBtn = document.getElementById('farmer-contract-add-farmer-item');
     const addCompanyItemBtn = document.getElementById('farmer-contract-add-company-item');
     const overlay = modal?.querySelector('.modal-overlay');
-    const ownerInput = document.getElementById('farmer-contract-owner');
+    const ownerSelectFC = document.getElementById('farmer-contract-owner-select');
     const ownerIdInput = document.getElementById('farmer-contract-owner-id');
-    const ownerSuggestions = document.getElementById('farmer-contract-owner-suggestions');
     const typeSelect = document.getElementById('farmer-contract-type');
     const noteInput = document.getElementById('farmer-contract-note');
     const farmerItemsBody = document.getElementById('farmer-contract-items-farmer');
@@ -2284,7 +2584,7 @@ function initFarmerContractModal() {
     const farmerTotalLabel = document.getElementById('farmer-contract-total-farmer');
     const companyTotalLabel = document.getElementById('farmer-contract-total-company');
     const balanceTotalLabel = document.getElementById('farmer-contract-total-balance');
-    if (!modal || !openBtn || !saveBtn || !addFarmerItemBtn || !addCompanyItemBtn || !ownerInput || !ownerIdInput || !ownerSuggestions || !farmerItemsBody || !companyItemsBody || !farmerTotalLabel || !companyTotalLabel || !balanceTotalLabel) return;
+    if (!modal || !openBtn || !saveBtn || !addFarmerItemBtn || !addCompanyItemBtn || !ownerSelectFC || !ownerIdInput || !farmerItemsBody || !companyItemsBody || !farmerTotalLabel || !companyTotalLabel || !balanceTotalLabel) return;
 
     const fcFormRoot = modal.querySelector('.modal-body');
     if (fcFormRoot) formBindInvalidHighlightClearing(fcFormRoot);
@@ -2359,8 +2659,12 @@ function initFarmerContractModal() {
         const isPayment = type === 'payment';
         const isReserve = type === 'reserve';
 
-        // Farmer balance section — visible for payment and contract (debt)
-        fcFarmerBalanceSection.classList.toggle('hidden', !isPayment && !isDebt);
+        // Контрагент: для людини блок балансу зерна не має сенсу.
+        const cpChecked = modal.querySelector('input[name="fc-counterparty"]:checked');
+        const isPerson = cpChecked && cpChecked.value === 'person';
+
+        // Farmer balance section — visible for payment and contract (debt), but not for person
+        fcFarmerBalanceSection.classList.toggle('hidden', isPerson || (!isPayment && !isDebt));
 
         // Payment options (currency/rate) — only for payment type
         paymentOptions.classList.toggle('hidden', !isPayment);
@@ -2444,10 +2748,11 @@ function initFarmerContractModal() {
 
     const resetForm = () => {
         if (fcFormRoot) clearFormValidationState(fcFormRoot, 'farmer-contract-message');
-        ownerInput.value = '';
+        if (ownerSelectFC) {
+            ownerSelectFC.value = '';
+            if (typeof refreshCustomSelect === 'function') refreshCustomSelect(ownerSelectFC);
+        }
         ownerIdInput.value = '';
-        ownerSuggestions.innerHTML = '';
-        ownerSuggestions.classList.add('hidden');
         typeSelect.value = 'debt';
         initCustomSelects(typeSelect);
         noteInput.value = '';
@@ -2460,6 +2765,12 @@ function initFarmerContractModal() {
         if (fcPaymentEquiv) fcPaymentEquiv.textContent = '';
         if (fcFarmerBalanceCards) fcFarmerBalanceCards.innerHTML = '<div class="fcp-grain-empty">Оберіть фермера</div>';
         if (fcFarmerBalanceTotal) fcFarmerBalanceTotal.innerHTML = emptyValueHtml();
+        // Скинути радіо контрагента
+        const farmerRadio = modal.querySelector('input[name="fc-counterparty"][value="farmer"]');
+        if (farmerRadio) farmerRadio.checked = true;
+        const personSel = document.getElementById('farmer-contract-person');
+        if (personSel) personSel.value = '';
+        applyCounterparty?.();
         applyContractType();
     };
 
@@ -2480,6 +2791,60 @@ function initFarmerContractModal() {
     addCompanyItemBtn.addEventListener('click', () => addContractItemRow(companyItemsBody, 'company'));
     typeSelect.addEventListener('change', applyContractType);
 
+    // ── Counterparty toggle: фермер ↔ людина ──
+    const personSelect = document.getElementById('farmer-contract-person');
+    const fcOwnerField = document.getElementById('fc-owner-field');
+    const fcPersonField = document.getElementById('fc-person-field');
+    const fcPaymentTypeOption = typeSelect.querySelector('option[value="payment"]');
+    const fcReserveTypeOption = typeSelect.querySelector('option[value="reserve"]');
+
+    const getCounterparty = () => {
+        const checked = modal.querySelector('input[name="fc-counterparty"]:checked');
+        return checked ? checked.value : 'farmer';
+    };
+
+    const applyCounterparty = () => {
+        const kind = getCounterparty();
+        const isPerson = kind === 'person';
+        fcOwnerField?.classList.toggle('hidden', isPerson);
+        fcPersonField?.classList.toggle('hidden', !isPerson);
+        // Для людини доступний лише тип «Контракт» (debt) — не виплата і не резерв.
+        const restrictedOptions = [fcPaymentTypeOption, fcReserveTypeOption].filter(Boolean);
+        restrictedOptions.forEach(opt => {
+            opt.disabled = isPerson;
+            opt.hidden = isPerson;
+        });
+        // Якщо обрано заборонений тип — переключаємо на debt
+        if (isPerson && (typeSelect.value === 'payment' || typeSelect.value === 'reserve')) {
+            typeSelect.value = 'debt';
+        }
+        // ОБОВ'ЯЗКОВО перебудовуємо кастомний select, бо він кешує опції
+        // окремо від native <option>: hidden/disabled на native сам по собі
+        // не приховає кнопку у dropdown'і.
+        if (typeof refreshCustomSelect === 'function') refreshCustomSelect(typeSelect);
+        applyContractType();
+        // Блок балансу фермера повинен бути прихований для людини в усіх станах.
+        if (isPerson && fcFarmerBalanceSection) {
+            fcFarmerBalanceSection.classList.add('hidden');
+        }
+        // Очистити невикористане поле
+        if (isPerson) {
+            if (ownerSelectFC) {
+                ownerSelectFC.value = '';
+                if (typeof refreshCustomSelect === 'function') refreshCustomSelect(ownerSelectFC);
+            }
+            ownerIdInput.value = '';
+            paymentFarmerBalance = [];
+        } else if (personSelect) {
+            personSelect.value = '';
+            if (typeof refreshCustomSelect === 'function') refreshCustomSelect(personSelect);
+        }
+    };
+
+    modal.querySelectorAll('input[name="fc-counterparty"]').forEach(r => {
+        r.addEventListener('change', applyCounterparty);
+    });
+
     // Payment currency/rate
     if (fcPaymentCurrency) {
         fcPaymentCurrency.addEventListener('change', () => {
@@ -2494,12 +2859,30 @@ function initFarmerContractModal() {
     }
 
     saveBtn.addEventListener('click', async () => {
-        const ownerId = ownerIdInput.value ? parseInt(ownerIdInput.value, 10) : null;
-        if (!ownerId) {
-            formShowValidationError(fcFormRoot, 'farmer-contract-message', 'Оберіть фермера зі списку', ['farmer-contract-owner']);
-            return;
+        const counterparty = getCounterparty();
+        const isPersonContract = counterparty === 'person';
+        let ownerId = null;
+        let personId = null;
+        if (isPersonContract) {
+            personId = personSelect?.value ? parseInt(personSelect.value, 10) : null;
+            if (!personId) {
+                formShowValidationError(fcFormRoot, 'farmer-contract-message', 'Оберіть людину', ['farmer-contract-person']);
+                return;
+            }
+        } else {
+            const fromSelect = ownerSelectFC?.value;
+            ownerId = fromSelect ? parseInt(fromSelect, 10)
+                                 : (ownerIdInput.value ? parseInt(ownerIdInput.value, 10) : null);
+            if (!ownerId) {
+                formShowValidationError(fcFormRoot, 'farmer-contract-message', 'Оберіть фермера зі списку', ['farmer-contract-owner-select']);
+                return;
+            }
         }
         const type = typeSelect.value;
+        if (isPersonContract && type !== 'debt') {
+            formShowValidationError(fcFormRoot, 'farmer-contract-message', 'Для людини доступний лише тип «Контракт»', []);
+            return;
+        }
         const isPayment = type === 'payment';
         const isDebt = type === 'debt';
         const isReserve = type === 'reserve';
@@ -2525,6 +2908,7 @@ function initFarmerContractModal() {
 
         const payload = {
             owner_id: ownerId,
+            person_id: personId,
             contract_type: type,
             note: noteInput.value.trim() || null,
             farmer_items: farmerItems,
@@ -2559,11 +2943,12 @@ function initFarmerContractModal() {
             showToast(isPayment ? 'Контракт виплати створено та оплачено' : 'Контракт створено', 'success');
             if (fcFormRoot) clearFormValidationState(fcFormRoot, 'farmer-contract-message');
             closeModal();
-            await loadFarmerContracts();
-            await loadFarmerContractPayments();
-            await loadStock();
-            await loadPurchaseStock();
-            await loadCashBalance();
+            await refreshAfterMutation([
+                'farmerContracts', 'farmerContractPayments',
+                'stock', 'purchaseStock', 'stockAdjustments',
+                'cash', 'cashTransactions', 'farmerMovements', 'owners',
+                'people', 'peopleActions', 'dashboard'
+            ]);
         } finally {
             saveBtn.disabled = false;
             saveBtn.textContent = 'Створити';
@@ -2606,7 +2991,8 @@ function initFarmerContractModal() {
                 typeOptions = `<option value="grain">Зерно</option>
                            <option value="purchase">Товар</option>
                            <option value="cash">Гроші</option>
-                           <option value="voucher">Талон</option>`;
+                           <option value="voucher">Талон</option>
+                           <option value="land_service">Обробка землі</option>`;
             } else {
                 typeOptions = `<option value="grain">Зерно</option>
                            <option value="cash">Гроші</option>`;
@@ -2646,50 +3032,21 @@ function initFarmerContractModal() {
         updateContractTotal();
     }
 
-    // Autocomplete for farmer
-    let ownerTimeout;
-    ownerInput.addEventListener('input', () => {
-        clearTimeout(ownerTimeout);
-        ownerIdInput.value = '';
-        const value = ownerInput.value.trim();
-        if (!value) {
-            ownerSuggestions.innerHTML = '';
-            ownerSuggestions.classList.add('hidden');
-            return;
-        }
-        ownerTimeout = setTimeout(() => {
-            const matches = ownersCache.filter(o =>
-                o.full_name.toLowerCase().includes(value.toLowerCase())
-            );
-            ownerSuggestions.innerHTML = '';
-            if (!matches.length) {
-                ownerSuggestions.classList.add('hidden');
-                return;
+    // Owner picker (dropdown + search). Створення нових фермерів —
+    // лише через картку приходу (там кнопка «+ Новий»).
+    if (ownerSelectFC) {
+        populateOwnerSelect('farmer-contract-owner-select');
+        ownerSelectFC.addEventListener('change', () => {
+            const id = ownerSelectFC.value;
+            ownerIdInput.value = id || '';
+            if (id) {
+                const t = typeSelect.value;
+                if (t === 'payment' || t === 'debt') {
+                    loadFarmerBalanceForPayment(parseInt(id, 10));
+                }
             }
-            matches.forEach(o => {
-                const item = document.createElement('div');
-                item.className = 'suggestion-item';
-                item.textContent = o.full_name;
-                item.addEventListener('click', () => {
-                    ownerInput.value = o.full_name;
-                    ownerIdInput.value = String(o.id);
-                    ownerSuggestions.classList.add('hidden');
-                    // Load balance when type is payment or contract (debt)
-                    const t = typeSelect.value;
-                    if (t === 'payment' || t === 'debt') {
-                        loadFarmerBalanceForPayment(o.id);
-                    }
-                });
-                ownerSuggestions.appendChild(item);
-            });
-            ownerSuggestions.classList.remove('hidden');
-        }, 150);
-    });
-    document.addEventListener('click', (e) => {
-        if (!ownerSuggestions.contains(e.target) && e.target !== ownerInput) {
-            ownerSuggestions.classList.add('hidden');
-        }
-    });
+        });
+    }
 
     function wireItemRow(card, direction) {
         const typeSel = card.querySelector('.farmer-contract-item-type');
@@ -2706,9 +3063,13 @@ function initFarmerContractModal() {
             const type = typeSel.value;
             const isDebtContract = typeSelect && typeSelect.value === 'debt';
             if (direction === 'company' && cashWrap && posCell) {
+                // Початковий <select> загорнутий у .custom-select. Щоб справді
+                // приховати елемент — ховаємо wrapper, а не нативний select.
+                const innerSelect = posCell.querySelector('.farmer-contract-item-select');
+                const wrapperToHide = innerSelect ? (innerSelect.closest('.custom-select') || innerSelect) : null;
                 if (type === 'cash') {
                     card.classList.add('fc-item--cash');
-                    posCell.querySelector('.farmer-contract-item-select').classList.add('hidden');
+                    if (wrapperToHide) wrapperToHide.classList.add('hidden');
                     cashWrap.classList.remove('hidden');
                     const isForeign = currencySel && currencySel.value !== 'UAH';
                     if (rateInput) rateInput.classList.toggle('hidden', !isForeign);
@@ -2723,7 +3084,7 @@ function initFarmerContractModal() {
                 } else {
                     card.classList.remove('fc-item--cash');
                     cashWrap.classList.add('hidden');
-                    posCell.querySelector('.farmer-contract-item-select').classList.remove('hidden');
+                    if (wrapperToHide) wrapperToHide.classList.remove('hidden');
                 }
             }
             if (type === 'grain') {
@@ -2756,6 +3117,16 @@ function initFarmerContractModal() {
                     priceInput.value = '';
                 }
                 priceInput.readOnly = !isDebtContract;
+            } else if (type === 'land_service') {
+                // Обробка землі: ім'я фіксоване, qty = гектари, price = грн/га.
+                // Складських залишків не задіємо. Курсу теж не треба — ховаємо cash-блок.
+                if (itemSel) {
+                    itemSel.innerHTML = '<option value="land_service">Обробка землі</option>';
+                }
+                qtyInput.placeholder = 'га';
+                priceInput.placeholder = 'грн/га';
+                priceInput.value = '';
+                priceInput.readOnly = false;
             } else {
                 // Гроші
                 if (itemSel) itemSel.innerHTML = '<option value="cash">Готівка</option>';
@@ -2763,6 +3134,11 @@ function initFarmerContractModal() {
                     priceInput.value = '1';
                     priceInput.readOnly = false;
                 }
+            }
+            // Скидаємо placeholder у qty/price на дефолтний для не-land_service типів
+            if (type !== 'land_service') {
+                qtyInput.placeholder = '0';
+                priceInput.placeholder = '0.00';
             }
             if (itemSel) refreshCustomSelect(itemSel);
             updateRowTotal();
@@ -3161,18 +3537,21 @@ function initFarmerContractPaymentModal() {
             return;
         }
         container.innerHTML = '';
-        const typeLabels = { grain: 'Зерно', purchase: 'Товар', cash: 'Гроші', voucher: 'Талон' };
+        const typeLabels = { grain: 'Зерно', purchase: 'Товар', cash: 'Гроші', voucher: 'Талон', land_service: 'Обробка землі' };
         filtered.forEach(item => {
             const isVoucher = item.item_type === 'voucher';
+            const isLandService = item.item_type === 'land_service';
             const remaining = Math.max(0, item.quantity_kg - (item.delivered_kg || 0));
             const pct = item.quantity_kg > 0 ? ((item.delivered_kg || 0) / item.quantity_kg * 100) : 0;
             const done = remaining < 0.01;
             const isCash = item.item_type === 'cash';
             const currency = (isCash && item.currency) ? item.currency : (isCash ? 'UAH' : null);
-            const unit = isCash ? (currency || 'UAH') : 'кг';
-            const fmtQty = isCash ? formatAmount(item.quantity_kg) : formatWeight(item.quantity_kg);
-            const fmtRem = isCash ? formatAmount(remaining) : formatWeight(remaining);
-            const metaPrice = isCash && currency !== 'UAH' ? `курс ${formatAmount(item.price_per_kg)} грн` : (isCash ? '' : `${formatAmount(item.price_per_kg)} грн`);
+            const unit = isLandService ? 'га' : (isCash ? (currency || 'UAH') : 'кг');
+            const fmtQty = (isCash || isLandService) ? formatAmount(item.quantity_kg) : formatWeight(item.quantity_kg);
+            const fmtRem = (isCash || isLandService) ? formatAmount(remaining) : formatWeight(remaining);
+            const metaPrice = isCash && currency !== 'UAH'
+                ? `курс ${formatAmount(item.price_per_kg)} грн`
+                : (isCash ? '' : (isLandService ? `${formatAmount(item.price_per_kg)} грн/га` : `${formatAmount(item.price_per_kg)} грн`));
 
             if (isVoucher) {
                 // ── Voucher card: special layout with direct "Видати талон" button ──
@@ -3222,9 +3601,19 @@ function initFarmerContractPaymentModal() {
                             selectedIssueItemId = item.id;
                             issueSelectedEl.textContent = `${item.item_name} (залишок: ${fmtRem} ${unit})`;
                             issueQtyInput.max = remaining;
-                            issueQtyInput.placeholder = isCash ? `Сума, ${unit}` : '0.00';
+                            if (isCash) {
+                                issueQtyInput.placeholder = `Сума, ${unit}`;
+                            } else if (isLandService) {
+                                issueQtyInput.placeholder = 'Гектари';
+                            } else {
+                                issueQtyInput.placeholder = '0.00';
+                            }
                             const qtyLabel = document.getElementById('fcp-issue-qty-label');
-                            if (qtyLabel) qtyLabel.textContent = isCash ? `Сума, ${unit}` : 'Кількість';
+                            if (qtyLabel) {
+                                qtyLabel.textContent = isCash
+                                    ? `Сума, ${unit}`
+                                    : (isLandService ? 'Гектари' : 'Кількість');
+                            }
                             issueQtyInput.focus();
                         } else {
                             selectedReceiveItemId = item.id;
@@ -3289,9 +3678,10 @@ function initFarmerContractPaymentModal() {
                                 contractDetail = await cResp.json();
                             }
                             await loadContractData({ id: currentFarmerContractId, owner_id: contractDetail?.owner_id });
-                            await loadFarmerContracts();
-                            await loadFarmerContractPayments();
-                            await loadStock();
+                            await refreshAfterMutation([
+                                'farmerContracts', 'farmerContractPayments',
+                                'stock', 'vouchers', 'peopleActions', 'dashboard'
+                            ]);
                         } catch (err) {
                             showToast(err.message || 'Помилка', 'error');
                         } finally {
@@ -3316,12 +3706,16 @@ function initFarmerContractPaymentModal() {
                 if (currentPaymentType === 'grain') updateGrainRecommend();
             }
         } catch {}
-        // Load farmer balance
-        try {
-            const resp = await apiFetch(`/grain/owners/${contract.owner_id}/balance`);
-            if (resp.ok) { farmerBalanceData = await resp.json(); }
-            else { farmerBalanceData = []; }
-        } catch { farmerBalanceData = []; }
+        // Load farmer balance — лише для контрактів з фермером (у людини балансу немає)
+        if (contract.owner_id) {
+            try {
+                const resp = await apiFetch(`/grain/owners/${contract.owner_id}/balance`);
+                if (resp.ok) { farmerBalanceData = await resp.json(); }
+                else { farmerBalanceData = []; }
+            } catch { farmerBalanceData = []; }
+        } else {
+            farmerBalanceData = [];
+        }
 
         // Render grain cards
         if (!farmerBalanceData.length) {
@@ -3362,20 +3756,34 @@ function initFarmerContractPaymentModal() {
     // ── Open modal ──
     const openModal = (contract) => {
         currentFarmerContractId = contract.id;
-        const ownerName = ownersCache.find(o => o.id === contract.owner_id)?.full_name || `#${contract.owner_id}`;
+        const isPersonContract = !!contract.person_id;
+        let counterpartyName;
+        if (isPersonContract) {
+            const person = (peopleCache || []).find(p => p.id === contract.person_id);
+            counterpartyName = person ? `${person.full_name} (людина)` : `#${contract.person_id} (людина)`;
+        } else {
+            counterpartyName = ownersCache.find(o => o.id === contract.owner_id)?.full_name || `#${contract.owner_id}`;
+        }
         const typeLabels = { 'debt': 'Контракт', 'payment': 'Виплата', 'reserve': 'Резерв' };
 
         contractIdEl.textContent = `#${contract.id}`;
-        farmerNameEl.textContent = ownerName;
+        farmerNameEl.textContent = counterpartyName;
         contractTypeEl.textContent = typeLabels[contract.contract_type] || contract.contract_type;
         if (contract.was_reserve) contractTypeEl.textContent += ' (з резерву)';
         balanceEl.textContent = formatAmount(contract.balance_uah) + ' грн';
 
-        // Show/hide tabs based on contract type (debt: issue, cash, grain)
+        // Show/hide tabs.
+        // Звичайний контракт фермера: видача, гроші, зерно.
+        // Контракт з людиною: тільки видача й гроші — у людини немає свого зерна,
+        // прийом товару від неї теж заборонений.
         tabIssue.classList.remove('fcp-tab--hidden');
         tabReceive.classList.add('fcp-tab--hidden');
         tabCash.classList.remove('fcp-tab--hidden');
-        tabGrain.classList.remove('fcp-tab--hidden');
+        if (isPersonContract) {
+            tabGrain.classList.add('fcp-tab--hidden');
+        } else {
+            tabGrain.classList.remove('fcp-tab--hidden');
+        }
 
         resetForm();
         switchTab('goods_issue');
@@ -3410,7 +3818,9 @@ function initFarmerContractPaymentModal() {
         if (item && qty) {
             const remaining = item.quantity_kg - (item.delivered_kg || 0);
             const isCash = item.item_type === 'cash';
+            const isLandService = item.item_type === 'land_service';
             const curr = (isCash && item.currency) ? item.currency : 'UAH';
+            const unit = isLandService ? 'га' : (isCash ? curr : 'кг');
             const uahEquiv = qty * (item.price_per_kg || 1);
             let text;
             if (isCash && curr !== 'UAH') {
@@ -3418,8 +3828,8 @@ function initFarmerContractPaymentModal() {
             } else {
                 text = `= ${formatAmount(uahEquiv)} грн`;
             }
-            const fmtMax = isCash ? formatAmount(remaining) : formatWeight(remaining);
-            if (qty > remaining) text += ` (макс: ${fmtMax} ${curr})`;
+            const fmtMax = (isCash || isLandService) ? formatAmount(remaining) : formatWeight(remaining);
+            if (qty > remaining) text += ` (макс: ${fmtMax} ${unit})`;
             issueEquiv.textContent = text;
         } else { issueEquiv.textContent = ''; }
     });
@@ -3557,10 +3967,12 @@ function initFarmerContractPaymentModal() {
             showToast('Операцію збережено', 'success');
             if (fcpFormRoot) clearFormValidationState(fcpFormRoot, 'fcp-validation-message');
             closeModal();
-            await loadFarmerContracts();
-            await loadFarmerContractPayments();
-            await loadStock();
-            await loadCashBalance();
+            await refreshAfterMutation([
+                'farmerContracts', 'farmerContractPayments',
+                'stock', 'purchaseStock', 'stockAdjustments',
+                'cash', 'cashTransactions', 'vouchers', 'farmerMovements', 'owners',
+                'people', 'peopleActions', 'dashboard'
+            ]);
         } finally {
             saveBtn.disabled = false;
             saveBtn.textContent = 'Зберегти';
@@ -4217,7 +4629,7 @@ function initFarmerEditModal() {
             showToast('Фермера оновлено', 'success');
             clearFormValidationState(form, 'farmer-edit-message');
             closeModal();
-            await loadOwnersList('');
+            await refreshAfterMutation(['owners', 'allIntakes']);
         } else {
             const error = await response.json().catch(() => null);
             setFormMessage('farmer-edit-message', error?.detail || 'Не вдалося оновити', true);
@@ -4301,7 +4713,13 @@ function initFarmerDeductModal() {
             if (typeof openFarmerBalanceModal === 'function') {
                 openFarmerBalanceModal(ctx.ownerId);
             }
-            await loadFarmerMovements();
+            await refreshAfterMutation([
+                'farmerMovements',
+                'stock',
+                'stockAdjustments',
+                'owners',
+                'dashboard'
+            ]);
         } else {
             const error = await response.json().catch(() => null);
             showToast(error?.detail || 'Помилка списання', 'error');
@@ -4316,6 +4734,266 @@ async function loadFarmerMovements() {
     if (!response.ok) return;
     farmerMovementsCache = await response.json();
     renderFarmerMovementsTable(applyFarmerMovementFilters());
+}
+
+// ── People (звичайні клієнти, не фермери) ──
+
+let peopleCache = [];
+let personActionsCache = [];
+let editingPersonId = null;
+
+async function loadPeople() {
+    const response = await apiFetch('/people');
+    if (!response.ok) return;
+    peopleCache = await response.json();
+    renderPeopleTable();
+    refreshPeopleActionsFilterOptions();
+    refreshPeopleSelectors();
+}
+
+async function loadPeopleActions() {
+    // Завантажуємо дії по всіх людях паралельно та об'єднуємо.
+    if (!peopleCache.length) {
+        personActionsCache = [];
+        renderPeopleActionsTable();
+        return;
+    }
+    const results = await Promise.allSettled(
+        peopleCache.map(p =>
+            apiFetch(`/people/${p.id}/actions`)
+                .then(r => r.ok ? r.json() : [])
+                .then(arr => arr.map(a => ({ ...a, person_id: p.id, person_name: p.full_name })))
+        )
+    );
+    const merged = [];
+    for (const r of results) {
+        if (r.status === 'fulfilled') merged.push(...r.value);
+    }
+    merged.sort((a, b) => {
+        const da = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const db = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return db - da;
+    });
+    personActionsCache = merged;
+    renderPeopleActionsTable();
+}
+
+function renderPeopleTable() {
+    const tbody = document.querySelector('#people-table tbody');
+    if (!tbody) return;
+    const search = (document.getElementById('people-search')?.value || '').trim().toLowerCase();
+    const filtered = !search
+        ? peopleCache
+        : peopleCache.filter(p =>
+            (p.full_name || '').toLowerCase().includes(search) ||
+            (p.phone || '').toLowerCase().includes(search)
+        );
+    tbody.innerHTML = '';
+    if (!filtered.length) {
+        tbody.innerHTML = '<tr><td colspan="3" class="empty-state">Немає людей</td></tr>';
+        return;
+    }
+    filtered.forEach(p => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${escapeHtml(p.full_name)}</td>
+            <td>${escapeHtml(p.phone || '—')}</td>
+            <td>
+                <button class="btn-icon btn-icon-secondary" data-edit-person="${p.id}" title="Редагувати">${ICONS?.edit || '✎'}</button>
+            </td>
+        `;
+        tr.querySelector(`[data-edit-person="${p.id}"]`)?.addEventListener('click', () => openPersonEditModal(p));
+        tbody.appendChild(tr);
+    });
+}
+
+function applyPeopleActionsFilters() {
+    const personFilter = document.getElementById('people-actions-filter-person')?.value || '';
+    const typeFilter = document.getElementById('people-actions-filter-type')?.value || '';
+    let filtered = [...personActionsCache];
+    if (personFilter) {
+        const pid = parseInt(personFilter, 10);
+        filtered = filtered.filter(a => a.person_id === pid);
+    }
+    if (typeFilter) {
+        filtered = filtered.filter(a => a.action_type === typeFilter);
+    }
+    return filtered;
+}
+
+function actionTypeLabel(type) {
+    return ({
+        contract: 'Контракт',
+        contract_payment: 'Оплата',
+        transfer: 'Переказ зерна',
+    })[type] || type;
+}
+
+function renderPeopleActionsTable() {
+    const tbody = document.querySelector('#people-actions-table tbody');
+    const hint = document.getElementById('people-actions-hint');
+    if (!tbody) return;
+    const filtered = applyPeopleActionsFilters();
+    tbody.innerHTML = '';
+    if (!filtered.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Немає дій</td></tr>';
+        if (hint) hint.textContent = 'Поки що дій немає.';
+        return;
+    }
+    if (hint) hint.textContent = '';
+    filtered.forEach(a => {
+        const tr = document.createElement('tr');
+        const culture = a.culture_name ? ` (${escapeHtml(a.culture_name)})` : '';
+        const qty = a.quantity_kg != null ? formatAmount(a.quantity_kg) : '—';
+        const sum = a.amount_uah != null ? formatAmount(a.amount_uah) : '—';
+        tr.innerHTML = `
+            <td>${formatDate(a.created_at)}</td>
+            <td>${escapeHtml(a.person_name || '—')}</td>
+            <td>${escapeHtml(actionTypeLabel(a.action_type))}</td>
+            <td>${escapeHtml(a.description || '')}${culture}</td>
+            <td class="td-weight">${qty}</td>
+            <td class="td-amount">${sum}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function refreshPeopleActionsFilterOptions() {
+    const select = document.getElementById('people-actions-filter-person');
+    if (!select) return;
+    const currentValue = select.value;
+    select.innerHTML = '<option value="">Усі люди</option>'
+        + peopleCache.map(p => `<option value="${p.id}">${escapeHtml(p.full_name)}</option>`).join('');
+    if (currentValue && peopleCache.some(p => String(p.id) === currentValue)) {
+        select.value = currentValue;
+    }
+    if (typeof refreshCustomSelect === 'function') refreshCustomSelect(select);
+}
+
+/** Оновити опції людини в інших селектах (контракт, трансфер). */
+function refreshPeopleSelectors() {
+    const targets = [
+        'farmer-contract-person',
+        'farmer-transfer-person',
+    ];
+    for (const id of targets) {
+        const sel = document.getElementById(id);
+        if (!sel) continue;
+        const current = sel.value;
+        sel.innerHTML = '<option value="">— Оберіть людину —</option>'
+            + peopleCache.map(p => `<option value="${p.id}">${escapeHtml(p.full_name)}${p.phone ? ' (' + escapeHtml(p.phone) + ')' : ''}</option>`).join('');
+        if (current && peopleCache.some(p => String(p.id) === current)) sel.value = current;
+        if (typeof refreshCustomSelect === 'function') refreshCustomSelect(sel);
+    }
+}
+
+function openPersonAddModal() {
+    editingPersonId = null;
+    const modal = document.getElementById('person-modal');
+    if (!modal) return;
+    document.getElementById('person-modal-title').textContent = 'Додати людину';
+    document.getElementById('person-edit-id').value = '';
+    document.getElementById('person-name').value = '';
+    document.getElementById('person-phone').value = '';
+    const msg = document.getElementById('person-message');
+    if (msg) { msg.textContent = ''; msg.classList.remove('error', 'success'); }
+    modal.classList.remove('hidden');
+}
+
+function openPersonEditModal(person) {
+    editingPersonId = person.id;
+    const modal = document.getElementById('person-modal');
+    if (!modal) return;
+    document.getElementById('person-modal-title').textContent = 'Редагувати людину';
+    document.getElementById('person-edit-id').value = person.id;
+    document.getElementById('person-name').value = person.full_name || '';
+    document.getElementById('person-phone').value = person.phone || '';
+    const msg = document.getElementById('person-message');
+    if (msg) { msg.textContent = ''; msg.classList.remove('error', 'success'); }
+    modal.classList.remove('hidden');
+}
+
+function initPeopleSection() {
+    document.getElementById('person-add-btn')?.addEventListener('click', openPersonAddModal);
+
+    const modal = document.getElementById('person-modal');
+    const closeBtn = document.getElementById('person-modal-close');
+    const cancelBtn = document.getElementById('person-modal-cancel');
+    const overlay = modal?.querySelector('.modal-overlay');
+    const closeModal = () => { modal?.classList.add('hidden'); editingPersonId = null; };
+    closeBtn?.addEventListener('click', closeModal);
+    cancelBtn?.addEventListener('click', closeModal);
+    overlay?.addEventListener('click', closeModal);
+
+    const form = document.getElementById('person-form');
+    form?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = document.getElementById('person-edit-id').value;
+        const name = document.getElementById('person-name').value.trim();
+        const phone = document.getElementById('person-phone').value.trim() || null;
+        if (!name) {
+            const msg = document.getElementById('person-message');
+            if (msg) { msg.textContent = 'Вкажіть ПІБ'; msg.classList.add('error'); }
+            return;
+        }
+        const url = id ? `/people/${id}` : '/people';
+        const method = id ? 'PATCH' : 'POST';
+        const response = await apiFetch(url, {
+            method,
+            body: JSON.stringify({ full_name: name, phone })
+        });
+        if (response.ok) {
+            closeModal();
+            await refreshAfterMutation(['people', 'peopleActions']);
+            showToast(id ? 'Людину оновлено' : 'Людину додано', 'success');
+        } else {
+            const error = await response.json().catch(() => null);
+            const msg = document.getElementById('person-message');
+            if (msg) { msg.textContent = error?.detail || 'Помилка збереження'; msg.classList.add('error'); }
+        }
+    });
+
+    let searchTimer;
+    document.getElementById('people-search')?.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(renderPeopleTable, 150);
+    });
+    document.getElementById('people-actions-filter-person')?.addEventListener('change', renderPeopleActionsTable);
+    document.getElementById('people-actions-filter-type')?.addEventListener('change', renderPeopleActionsTable);
+
+    // Експорти
+    document.getElementById('people-list-export-btn')?.addEventListener('click', async () => {
+        try {
+            const resp = await apiFetchBlob('/people/export');
+            if (!resp.ok) {
+                showToast('Не вдалося згенерувати звіт', 'error');
+                return;
+            }
+            await downloadBlob(resp, `people_${new Date().toISOString().slice(0, 10)}.xlsx`);
+        } catch (e) {
+            showToast('Помилка експорту', 'error');
+        }
+    });
+
+    document.getElementById('people-actions-export-btn')?.addEventListener('click', async () => {
+        // Поважаємо поточні фільтри з UI
+        const personId = document.getElementById('people-actions-filter-person')?.value || '';
+        const actionType = document.getElementById('people-actions-filter-type')?.value || '';
+        const params = new URLSearchParams();
+        if (personId) params.set('person_id', personId);
+        if (actionType) params.set('action_type', actionType);
+        const path = `/people/actions/export${params.toString() ? `?${params}` : ''}`;
+        try {
+            const resp = await apiFetchBlob(path);
+            if (!resp.ok) {
+                showToast('Не вдалося згенерувати звіт', 'error');
+                return;
+            }
+            await downloadBlob(resp, `people_actions_${new Date().toISOString().slice(0, 10)}.xlsx`);
+        } catch (e) {
+            showToast('Помилка експорту', 'error');
+        }
+    });
 }
 
 function applyFarmerMovementFilters() {
@@ -4368,16 +5046,25 @@ function renderFarmerMovementsTable(data) {
     items.forEach(m => {
         const fromOwner = ownersCache.find(o => o.id === m.from_owner_id);
         const toOwner = m.to_owner_id ? ownersCache.find(o => o.id === m.to_owner_id) : null;
+        const toPerson = m.to_person_id ? (peopleCache || []).find(p => p.id === m.to_person_id) : null;
         const culture = culturesCache.find(c => c.id === m.culture_id);
         const typeBadge = m.movement_type === 'transfer'
             ? '<span class="inline-badge cash">Переміщення</span>'
             : '<span class="inline-badge receive">Списання</span>';
+        let toCell;
+        if (toOwner) {
+            toCell = `<strong>${escapeHtml(toOwner.full_name)}</strong>`;
+        } else if (toPerson) {
+            toCell = `<strong>${escapeHtml(toPerson.full_name)}</strong> <span class="status-badge info" style="font-size:10px;">людина</span>`;
+        } else {
+            toCell = emptyValueHtml();
+        }
         const row = document.createElement('tr');
         row.innerHTML = `
             <td>${formatDate(m.created_at)}</td>
             <td>${typeBadge}</td>
             <td><strong>${fromOwner ? escapeHtml(fromOwner.full_name) : emptyValueHtml()}</strong></td>
-            <td>${toOwner ? `<strong>${escapeHtml(toOwner.full_name)}</strong>` : emptyValueHtml()}</td>
+            <td>${toCell}</td>
             <td>${culture ? escapeHtml(culture.name) : emptyValueHtml()}</td>
             <td class="td-weight">${formatWeight(m.quantity_kg)} кг</td>
             <td>${m.note ? escapeHtml(m.note) : emptyValueHtml()}</td>
@@ -4606,6 +5293,34 @@ function initFarmerTransferModal() {
 
     fromSelect.addEventListener('change', loadFromBalance);
 
+    // ── Receiver toggle: фермер ↔ людина ──
+    const personSelect = document.getElementById('farmer-transfer-person');
+    const ftToFarmerField = document.getElementById('ft-to-farmer-field');
+    const ftToPersonField = document.getElementById('ft-to-person-field');
+
+    const getReceiverKind = () => {
+        const checked = modal.querySelector('input[name="ft-receiver"]:checked');
+        return checked ? checked.value : 'farmer';
+    };
+
+    const applyReceiverKind = () => {
+        const kind = getReceiverKind();
+        const isPerson = kind === 'person';
+        ftToFarmerField?.classList.toggle('hidden', isPerson);
+        ftToPersonField?.classList.toggle('hidden', !isPerson);
+        if (isPerson) {
+            toSelect.value = '';
+            if (typeof refreshCustomSelect === 'function') refreshCustomSelect(toSelect);
+        } else if (personSelect) {
+            personSelect.value = '';
+            if (typeof refreshCustomSelect === 'function') refreshCustomSelect(personSelect);
+        }
+    };
+
+    modal.querySelectorAll('input[name="ft-receiver"]').forEach(r => {
+        r.addEventListener('change', applyReceiverKind);
+    });
+
     openBtn?.addEventListener('click', () => {
         if (transferRoot) clearFormValidationState(transferRoot, 'farmer-transfer-message');
         populateOwners();
@@ -4616,27 +5331,42 @@ function initFarmerTransferModal() {
         if (hint) hint.textContent = '';
         if (balanceSection) balanceSection.classList.add('hidden');
         if (balanceCards) balanceCards.innerHTML = '';
+        // Скинути радіо отримувача
+        const farmerR = modal.querySelector('input[name="ft-receiver"][value="farmer"]');
+        if (farmerR) farmerR.checked = true;
+        if (personSelect) personSelect.value = '';
+        applyReceiverKind();
         modal.classList.remove('hidden');
     });
 
     confirmBtn.addEventListener('click', async () => {
         const fromId = parseInt(fromSelect.value);
-        const toId = parseInt(toSelect.value);
+        const receiverKind = getReceiverKind();
+        const isPersonReceiver = receiverKind === 'person';
+        const toId = isPersonReceiver ? null : parseInt(toSelect.value);
+        const personId = isPersonReceiver ? parseInt(personSelect?.value || '') : null;
         const cultureId = parseInt(cultureSelect.value);
         const qty = parseFloat(quantityInput.value);
         if (!fromId) {
             formShowValidationError(transferRoot, 'farmer-transfer-message', 'Оберіть фермера-відправника', ['farmer-transfer-from']);
             return;
         }
-        if (!toId) {
-            formShowValidationError(transferRoot, 'farmer-transfer-message', 'Оберіть фермера-отримувача', ['farmer-transfer-to']);
-            return;
-        }
-        if (fromId === toId) {
-            const ff = fromSelect.closest('.form-field');
-            const tf = toSelect.closest('.form-field');
-            formShowValidationError(transferRoot, 'farmer-transfer-message', 'Відправник і отримувач повинні бути різними', [], [ff, tf].filter(Boolean));
-            return;
+        if (isPersonReceiver) {
+            if (!personId) {
+                formShowValidationError(transferRoot, 'farmer-transfer-message', 'Оберіть людину', ['farmer-transfer-person']);
+                return;
+            }
+        } else {
+            if (!toId) {
+                formShowValidationError(transferRoot, 'farmer-transfer-message', 'Оберіть фермера-отримувача', ['farmer-transfer-to']);
+                return;
+            }
+            if (fromId === toId) {
+                const ff = fromSelect.closest('.form-field');
+                const tf = toSelect.closest('.form-field');
+                formShowValidationError(transferRoot, 'farmer-transfer-message', 'Відправник і отримувач повинні бути різними', [], [ff, tf].filter(Boolean));
+                return;
+            }
         }
         if (!cultureId) {
             formShowValidationError(transferRoot, 'farmer-transfer-message', 'Оберіть культуру', ['farmer-transfer-culture']);
@@ -4660,6 +5390,7 @@ function initFarmerTransferModal() {
             body: JSON.stringify({
                 from_owner_id: fromId,
                 to_owner_id: toId,
+                to_person_id: personId,
                 culture_id: cultureId,
                 quantity_kg: qty,
                 note: note || null
@@ -4668,7 +5399,16 @@ function initFarmerTransferModal() {
         if (response.ok) {
             showToast('Зерно переміщено', 'success');
             closeModal();
-            await loadFarmerMovements();
+            await refreshAfterMutation([
+                'farmerMovements',
+                'stock',
+                'stockAdjustments',
+                'allIntakes',
+                'owners',
+                'people',
+                'peopleActions',
+                'dashboard'
+            ]);
         } else {
             const error = await response.json().catch(() => null);
             setFormMessage('farmer-transfer-message', error?.detail || 'Помилка переміщення', true);
@@ -5511,7 +6251,7 @@ async function updatePurchaseStockPrice(stockId, priceValue) {
         body: JSON.stringify({ sale_price_per_kg: price })
     });
     if (response.ok) {
-        await loadPurchaseStock();
+        await refreshAfterMutation(['purchaseStock', 'farmerContracts', 'dashboard']);
         return true;
     }
     return false;
@@ -5569,8 +6309,8 @@ function initStockAdjustModal() {
         if (response.ok) {
             closeModal();
             amountInput.value = '';
-            stockAdjustContext.type === 'grain' ? await loadStock() : await loadPurchaseStock();
-            await loadStockAdjustments();
+            const scope = stockAdjustContext.type === 'grain' ? 'stock' : 'purchaseStock';
+            await refreshAfterMutation([scope, 'stockAdjustments', 'dashboard']);
         } else {
             const data = await response.json().catch(() => ({}));
             setFormMessage('stock-adjust-message', data.detail || 'Не вдалося оновити склад', true);
@@ -5624,7 +6364,7 @@ function initStockReserveModal() {
             setFormMessage('stock-reserve-message', error?.detail || 'Не вдалося змінити бронювання', true);
             return;
         }
-        await loadStock();
+        await refreshAfterMutation(['stock', 'dashboard']);
         showToast('Бронювання оновлено', 'success');
         closeModal();
     });
@@ -6083,7 +6823,7 @@ function initFieldsSection() {
 
         if (res.ok) {
             closeFieldModal();
-            await loadFields();
+            await refreshAfterMutation(['fields', 'allIntakes']);
             showNotification(editId ? 'Поле оновлено' : 'Поле додано', 'success');
         } else {
             const err = await res.json();
@@ -6121,7 +6861,7 @@ async function deleteField(fieldId) {
 
     const res = await apiFetch(`/fields/${fieldId}`, { method: 'DELETE' });
     if (res.ok) {
-        await loadFields();
+        await refreshAfterMutation(['fields', 'allIntakes']);
         showNotification('Поле видалено', 'success');
     } else {
         const err = await res.json();
@@ -6140,6 +6880,7 @@ function initNavigation() {
         'stock': 'Склад',
         'drivers': 'Водії',
         'owners': 'Фермери',
+        'people': 'Люди',
         'farmer-contracts': 'Контракти фермерів',
         'vouchers': 'Хлібний завод',
         'shipments': 'Відправки',
@@ -6212,11 +6953,7 @@ function initLogout() {
         } finally {
             localStorage.removeItem('token');
             localStorage.removeItem('lastPage');
-            const loginUrl = new URL('login.html', window.location.href);
-            if (document.body?.dataset?.app === 'cash-pocket') {
-                loginUrl.searchParams.set('next', 'pocket-kassa.html');
-            }
-            window.location.href = loginUrl.toString();
+            window.location.href = 'login.html';
         }
     });
 }
@@ -6370,7 +7107,6 @@ function initIntakeForm() {
         initIntakeFormInvalidStateClearing(form);
     }
     const ownGrainCheckbox = document.getElementById('intake-own-grain');
-    const ownerSearch = document.getElementById('owner-search');
     const ownerPhone = document.getElementById('owner-phone');
     const ownerId = document.getElementById('owner-id');
     const internalDriverCheckbox = document.getElementById('intake-internal-driver');
@@ -6379,11 +7115,14 @@ function initIntakeForm() {
 
     ownGrainCheckbox.addEventListener('change', () => {
         const isOwn = ownGrainCheckbox.checked;
-        ownerSearch.value = '';
+        const ownerSelect = document.getElementById('intake-owner-select');
+        const ownerNewName = document.getElementById('intake-owner-new-name');
+        if (ownerSelect) ownerSelect.value = '';
+        if (ownerNewName) ownerNewName.value = '';
         ownerPhone.value = '';
         ownerId.value = '';
-        ownerSearch.disabled = isOwn;
-        ownerPhone.disabled = isOwn;
+        document.getElementById('intake-owner-mode-select')?.classList.remove('hidden');
+        document.getElementById('intake-owner-mode-new')?.classList.add('hidden');
         document.querySelectorAll('.owner-field').forEach(field => {
             field.classList.toggle('hidden', isOwn);
         });
@@ -6428,20 +7167,14 @@ function initIntakeForm() {
             document.getElementById('accepted-weight').value = '';
             document.getElementById('net-weight').value = '';
             document.getElementById('owner-id').value = '';
-            document.getElementById('owner-suggestions').classList.add('hidden');
             const intakeField = document.getElementById('intake-field');
             if (intakeField) intakeField.value = '';
-            const ownerBadge = document.getElementById('owner-badge');
-            const ownerSearch = document.getElementById('owner-search');
-            if (ownerBadge) {
-                ownerBadge.classList.add('hidden');
+            const ownerSelect = document.getElementById('intake-owner-select');
+            if (ownerSelect) {
+                ownerSelect.value = '';
+                if (typeof refreshCustomSelect === 'function') refreshCustomSelect(ownerSelect);
             }
-            if (ownerSearch) {
-                ownerSearch.classList.remove('owner-selected');
-            }
-            await loadAllIntakes();
-            await loadStock();
-            await loadOwnersList('');
+            await refreshAfterMutation(['allIntakes', 'stock', 'stockAdjustments', 'owners', 'dashboard']);
             closeIntakeCreateModal();
         } else {
             const error = await response.json().catch(() => null);
@@ -6463,6 +7196,11 @@ function initIntakeCreateModal() {
         clearIntakeFormFieldErrors();
         modal.classList.remove('hidden');
         updateIntakeFieldSelect();
+        // Якщо в селекті ще немає опцій (відкриваємо модалку до того, як
+        // initOwnersSearch встиг його заповнити) — populate тут.
+        if (typeof populateOwnerSelect === 'function') {
+            populateOwnerSelect('intake-owner-select');
+        }
         initCustomSelects();
     });
 
@@ -6477,19 +7215,20 @@ function closeIntakeCreateModal() {
     }
     clearIntakeFormFieldErrors();
     modal.classList.add('hidden');
-    // Сбрасываем бейдж при закрытии модального окна
-    const ownerBadge = document.getElementById('owner-badge');
-    const ownerSearch = document.getElementById('owner-search');
     const ownerId = document.getElementById('owner-id');
-    if (ownerBadge) {
-        ownerBadge.classList.add('hidden');
+    if (ownerId) ownerId.value = '';
+    const ownerSelect = document.getElementById('intake-owner-select');
+    if (ownerSelect) {
+        ownerSelect.value = '';
+        if (typeof refreshCustomSelect === 'function') refreshCustomSelect(ownerSelect);
     }
-    if (ownerSearch) {
-        ownerSearch.classList.remove('owner-selected');
-    }
-    if (ownerId) {
-        ownerId.value = '';
-    }
+    // Повертаємось у режим вибору зі списку та чистимо поле введення нового
+    const newName = document.getElementById('intake-owner-new-name');
+    if (newName) newName.value = '';
+    const modeSelectWrap = document.getElementById('intake-owner-mode-select');
+    const modeNewWrap = document.getElementById('intake-owner-mode-new');
+    modeSelectWrap?.classList.remove('hidden');
+    modeNewWrap?.classList.add('hidden');
 }
 
 function initIntakeViewModal() {
@@ -6544,8 +7283,7 @@ function initIntakeEditModal() {
         if (response.ok) {
             showToast('Картку оновлено', 'success');
             closeModal();
-            await loadAllIntakes();
-            await loadStock();
+            await refreshAfterMutation(['allIntakes', 'stock', 'stockAdjustments', 'owners', 'dashboard']);
         } else {
             const error = await response.json().catch(() => null);
             showToast(error?.detail || 'Не вдалося оновити картку', 'error');
@@ -6793,8 +7531,20 @@ function buildIntakePayload() {
     const hasTrailer = document.getElementById('intake-trailer').checked;
     const isOwnCombine = document.getElementById('intake-own-combine').checked;
     const isOwnGrain = document.getElementById('intake-own-grain').checked;
-    const ownerId = document.getElementById('owner-id').value;
-    const ownerName = document.getElementById('owner-search').value.trim();
+    const ownerSelectEl = document.getElementById('intake-owner-select');
+    const ownerNewEl = document.getElementById('intake-owner-new-name');
+    const newWrap = document.getElementById('intake-owner-mode-new');
+    const isNewMode = newWrap && !newWrap.classList.contains('hidden');
+    let ownerId = '';
+    let ownerName = '';
+    if (isNewMode) {
+        // Режим введення нового фермера — id порожній, ім'я з input.
+        ownerName = (ownerNewEl?.value || '').trim();
+    } else {
+        ownerId = (ownerSelectEl?.value) || document.getElementById('owner-id').value || '';
+        const selectedOwnerObj = ownerId ? (ownersCache || []).find(o => String(o.id) === String(ownerId)) : null;
+        ownerName = selectedOwnerObj ? selectedOwnerObj.full_name : '';
+    }
     const ownerPhone = document.getElementById('owner-phone').value.trim();
     const isInternalDriver = document.getElementById('intake-internal-driver').checked;
     const driverId = document.getElementById('intake-driver').value;
@@ -6828,9 +7578,11 @@ function buildIntakePayload() {
     }
 
     if (!isOwnGrain && !ownerId && !ownerName) {
-        setFormMessage('intake-message', 'Вкажіть власника зерна', true);
-        markIntakeFormFieldError('owner-search');
-        document.getElementById('owner-search')?.focus();
+        const msg = isNewMode ? 'Введіть ПІБ нового фермера' : 'Оберіть фермера зі списку';
+        setFormMessage('intake-message', msg, true);
+        const focusId = isNewMode ? 'intake-owner-new-name' : 'intake-owner-select';
+        markIntakeFormFieldError(focusId);
+        document.getElementById(focusId)?.focus();
         return null;
     }
     if (isOwnGrain) {
@@ -6912,7 +7664,7 @@ function initDriverForm() {
             setFormMessage('driver-message', 'Водія додано', false);
             formClearFieldHighlights(form);
             form.reset();
-            await loadDrivers();
+            await refreshAfterMutation(['drivers']);
             closeDriverAddModal();
         } else {
             setFormMessage('driver-message', 'Не вдалося додати водія', true);
@@ -7004,7 +7756,7 @@ function initDriverEditModal() {
             showToast('Водія оновлено', 'success');
             clearFormValidationState(form, 'driver-edit-message');
             closeModal();
-            await loadDrivers();
+            await refreshAfterMutation(['drivers']);
         } else {
             const error = await response.json().catch(() => null);
             setFormMessage('driver-edit-message', error?.detail || 'Не вдалося оновити', true);
@@ -7070,7 +7822,7 @@ function initUserAddModal() {
             showToast('Користувача створено', 'success');
             clearFormValidationState(form, 'user-message');
             form.reset();
-            await loadUsers();
+            await refreshAfterMutation(['users']);
             closeModal();
         } else {
             const error = await response.json().catch(() => null);
@@ -7112,8 +7864,7 @@ function initCashForm() {
             showToast('Операцію збережено', 'success');
             clearFormValidationState(form, 'cash-message');
             form.reset();
-            await loadCashBalance();
-            await loadCashTransactions();
+            await refreshAfterMutation(['cash', 'cashTransactions', 'dashboard']);
         } else {
             const error = await response.json().catch(() => null);
             setFormMessage('cash-message', error?.detail || 'Помилка операції', true);
@@ -7356,6 +8107,15 @@ function initCustomSelects(targetSelect) {
         trigger.className = 'custom-select-trigger';
         trigger.addEventListener('click', () => {
             customWrapper.classList.toggle('open');
+            // При відкритті — скинути пошук, фокус у поле пошуку
+            if (customWrapper.classList.contains('open')) {
+                const searchInput = customWrapper.querySelector('.custom-select-search-input');
+                if (searchInput) {
+                    searchInput.value = '';
+                    filterCustomOptions(customWrapper, '');
+                    setTimeout(() => searchInput.focus(), 30);
+                }
+            }
             // Позиционирование випадаючого меню в модальних вікнах
             if (customWrapper.closest('#contract-modal') || customWrapper.closest('#farmer-contract-modal') || customWrapper.closest('#intake-create-modal')) {
                 setTimeout(() => {
@@ -7405,23 +8165,112 @@ function initCustomSelects(targetSelect) {
 function buildCustomOptions(select, wrapper) {
     const optionsContainer = wrapper.querySelector('.custom-options');
     optionsContainer.innerHTML = '';
+
+    // Поиск: если у select >8 опций или есть data-searchable, рендерим input.
+    const isSearchable = select.dataset.searchable === 'true' || select.options.length > 8;
+    if (isSearchable) {
+        const searchWrap = document.createElement('div');
+        searchWrap.className = 'custom-select-search';
+        const search = document.createElement('input');
+        search.type = 'text';
+        search.placeholder = 'Пошук...';
+        search.className = 'custom-select-search-input';
+        search.autocomplete = 'off';
+        search.addEventListener('input', () => filterCustomOptions(wrapper, search.value));
+        search.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                e.stopPropagation();
+                wrapper.classList.remove('open');
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                const list = wrapper.querySelector('.custom-options-list');
+                const visible = list && list.querySelector('.custom-option:not(.hidden)');
+                if (visible) visible.click();
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                const list = wrapper.querySelector('.custom-options-list');
+                const visible = list && list.querySelector('.custom-option:not(.hidden)');
+                if (visible) visible.focus();
+            }
+        });
+        // Не даём клику на input закрыть дропдаун.
+        search.addEventListener('click', (e) => e.stopPropagation());
+        searchWrap.appendChild(search);
+        optionsContainer.appendChild(searchWrap);
+    }
+
+    const list = document.createElement('div');
+    list.className = 'custom-options-list';
+    optionsContainer.appendChild(list);
+
+    // Перевіряємо, чи є хоч одна «справжня» опція (не placeholder з value="").
+    // Якщо немає — placeholder у dropdown'і не рендеримо, бо empty-state нижче
+    // вже передає той самий сенс. Дублювання заплутує користувача.
+    const realOptions = Array.from(select.options).filter(o => !o.hidden && o.value !== '');
+    const hasReal = realOptions.length > 0;
+    let placeholderOption = null;
+
     Array.from(select.options).forEach(option => {
+        if (option.hidden) return;
+        if (!hasReal && option.value === '') {
+            placeholderOption = option;
+            return; // не рендеримо placeholder, коли реальних опцій немає
+        }
         const item = document.createElement('button');
         item.type = 'button';
         item.className = 'custom-option';
         item.textContent = option.textContent;
         item.dataset.value = option.value;
+        item.dataset.searchText = (option.textContent || '').toLowerCase();
         if (option.value === select.value) {
             item.classList.add('selected');
         }
-        item.addEventListener('click', () => {
-            select.value = option.value;
-            select.dispatchEvent(new Event('change'));
-            updateCustomTrigger(select, wrapper);
-            wrapper.classList.remove('open');
-        });
-        optionsContainer.appendChild(item);
+        if (option.disabled) {
+            item.classList.add('disabled');
+            item.disabled = true;
+        } else {
+            item.addEventListener('click', () => {
+                select.value = option.value;
+                select.dispatchEvent(new Event('change'));
+                updateCustomTrigger(select, wrapper);
+                wrapper.classList.remove('open');
+            });
+        }
+        list.appendChild(item);
     });
+
+    if (!hasReal) {
+        // Пріоритет повідомлення: data-empty-message → текст placeholder'а → дефолт.
+        // Текст placeholder'а зазвичай вже містить контекстне «Немає контрактів...»,
+        // тож використовуємо його замість родового «Немає даних».
+        const msg = select.dataset.emptyMessage
+            || (placeholderOption && placeholderOption.textContent && placeholderOption.textContent.trim())
+            || 'Немає даних';
+        const empty = document.createElement('div');
+        empty.className = 'custom-select-empty';
+        empty.textContent = msg;
+        optionsContainer.appendChild(empty);
+    } else if (isSearchable) {
+        const empty = document.createElement('div');
+        empty.className = 'custom-select-empty hidden';
+        empty.textContent = 'Нічого не знайдено';
+        optionsContainer.appendChild(empty);
+    }
+}
+
+/** Фільтр опцій кастомного select по тексту. */
+function filterCustomOptions(wrapper, query) {
+    const q = (query || '').trim().toLowerCase();
+    const list = wrapper.querySelector('.custom-options-list');
+    if (!list) return;
+    const empty = wrapper.querySelector('.custom-select-empty');
+    let visible = 0;
+    list.querySelectorAll('.custom-option').forEach(item => {
+        const match = !q || (item.dataset.searchText || '').includes(q);
+        item.classList.toggle('hidden', !match);
+        if (match) visible++;
+    });
+    if (empty) empty.classList.toggle('hidden', visible > 0);
 }
 
 function updateCustomTrigger(select, wrapper) {
@@ -7492,93 +8341,53 @@ function initOwnersSearch() {
         }, 300);
     });
 
-    const ownerSearch = document.getElementById('owner-search');
-    const suggestions = document.getElementById('owner-suggestions');
-    const ownerBadge = document.getElementById('owner-badge');
+    // Двохрежимний пікер фермера в картці приходу:
+    //   режим A — обираємо існуючого зі списку (dropdown з пошуком)
+    //   режим B — вводимо ПІБ нового фермера у текстове поле; ownerId лишається порожнім,
+    //             бекенд створить власника по name+phone під час збереження картки.
+    const ownerSelect = document.getElementById('intake-owner-select');
     const ownerIdInput = document.getElementById('owner-id');
-    let ownerTimeout;
-    let lastSelectedOwnerName = ''; // Сохраняем имя выбранного фермера
-    
-    // Функция для обновления индикатора существующего фермера
-    function updateOwnerBadge() {
-        const hasOwnerId = ownerIdInput.value && ownerIdInput.value !== '';
-        const currentValue = ownerSearch.value.trim();
-        // Проверяем, совпадает ли текущее значение с выбранным фермером
-        const isStillSelected = hasOwnerId && currentValue === lastSelectedOwnerName;
-        
-        if (isStillSelected) {
-            ownerBadge.classList.remove('hidden');
-            ownerSearch.classList.add('owner-selected');
-        } else {
-            ownerBadge.classList.add('hidden');
-            ownerSearch.classList.remove('owner-selected');
-            // Если значение изменилось, сбрасываем owner-id
-            if (hasOwnerId && currentValue !== lastSelectedOwnerName) {
-                ownerIdInput.value = '';
+    const ownerPhoneInput = document.getElementById('owner-phone');
+    const ownerAddBtn = document.getElementById('intake-owner-add-btn');
+    const ownerBackBtn = document.getElementById('intake-owner-back-btn');
+    const ownerNewName = document.getElementById('intake-owner-new-name');
+    const modeSelectWrap = document.getElementById('intake-owner-mode-select');
+    const modeNewWrap = document.getElementById('intake-owner-mode-new');
+
+    function setIntakeOwnerMode(mode) {
+        const isNew = mode === 'new';
+        modeSelectWrap?.classList.toggle('hidden', isNew);
+        modeNewWrap?.classList.toggle('hidden', !isNew);
+        if (isNew) {
+            // Скидаємо вибір зі списку — стартуємо ввід нового
+            if (ownerSelect) {
+                ownerSelect.value = '';
+                if (typeof refreshCustomSelect === 'function') refreshCustomSelect(ownerSelect);
             }
+            ownerIdInput.value = '';
+            setTimeout(() => ownerNewName?.focus(), 30);
+        } else {
+            if (ownerNewName) ownerNewName.value = '';
         }
     }
-    
-    ownerSearch.addEventListener('input', () => {
-        clearTimeout(ownerTimeout);
-        const value = ownerSearch.value.trim();
-        
-        // Если значение изменилось по сравнению с выбранным фермером, сбрасываем owner-id
-        if (ownerIdInput.value && value !== lastSelectedOwnerName) {
-            ownerIdInput.value = '';
-            lastSelectedOwnerName = '';
-            updateOwnerBadge();
-        }
-        
-        if (!value) {
-            suggestions.classList.add('hidden');
-            suggestions.innerHTML = '';
-            ownerIdInput.value = '';
-            lastSelectedOwnerName = '';
-            updateOwnerBadge();
-            return;
-        }
-        ownerTimeout = setTimeout(async () => {
-            const response = await apiFetch(`/grain/owners?q=${encodeURIComponent(value)}`);
-            if (!response.ok) {
-                return;
-            }
-            const owners = await response.json();
-            suggestions.innerHTML = '';
-            if (!owners.length) {
-                suggestions.classList.add('hidden');
-                // Если нет совпадений, сбрасываем owner-id
-                ownerIdInput.value = '';
-                lastSelectedOwnerName = '';
-                updateOwnerBadge();
-                return;
-            }
-            owners.forEach(owner => {
-                const item = document.createElement('div');
-                item.className = 'suggestion-item';
-                item.textContent = owner.full_name;
-                item.addEventListener('click', () => {
-                    ownerSearch.value = owner.full_name;
-                    ownerIdInput.value = owner.id;
-                    lastSelectedOwnerName = owner.full_name; // Сохраняем выбранное имя
-                    document.getElementById('owner-phone').value = owner.phone || '';
-                    suggestions.classList.add('hidden');
-                    updateOwnerBadge();
-                });
-                suggestions.appendChild(item);
-            });
-            suggestions.classList.remove('hidden');
-        }, 300);
-    });
-    
-    // Проверяем при изменении owner-id (на случай ручного изменения)
-    ownerIdInput.addEventListener('change', updateOwnerBadge);
 
-    document.addEventListener('click', (event) => {
-        if (!suggestions.contains(event.target) && event.target !== ownerSearch) {
-            suggestions.classList.add('hidden');
-        }
-    });
+    if (ownerSelect && ownerIdInput) {
+        populateOwnerSelect('intake-owner-select');
+
+        ownerSelect.addEventListener('change', () => {
+            const id = ownerSelect.value;
+            ownerIdInput.value = id;
+            if (id) {
+                const owner = (ownersCache || []).find(o => String(o.id) === String(id));
+                if (owner && ownerPhoneInput && !ownerPhoneInput.value.trim()) {
+                    ownerPhoneInput.value = owner.phone || '';
+                }
+            }
+        });
+    }
+
+    ownerAddBtn?.addEventListener('click', () => setIntakeOwnerMode('new'));
+    ownerBackBtn?.addEventListener('click', () => setIntakeOwnerMode('select'));
 }
 
 function initPurchaseForm() {
@@ -7777,12 +8586,11 @@ function initPurchaseForm() {
                 isFreeCheckbox.checked = false;
                 toggleFreeMode();
             }
-            await loadPurchaseStock();
-            await loadPurchases();
+            const scopes = ['purchaseStock', 'purchases', 'stockAdjustments', 'dashboard'];
             if (!isFree) {
-                await loadCashBalance();
-                await loadCashTransactions();
+                scopes.push('cash', 'cashTransactions');
             }
+            await refreshAfterMutation(scopes);
         } else {
             const error = await response.json().catch(() => null);
             setFormMessage('purchase-message', error?.detail || 'Помилка збереження', true);
@@ -8000,6 +8808,12 @@ async function loadLandlords() {
     renderLandlordsTable();
     updateContractsFilterLandlords();
     updatePaymentsFilterLandlords();
+    // Перезаповнюємо всі landlord-селекти
+    ['contract-landlord-select', 'payment-landlord-select'].forEach(id => {
+        if (document.getElementById(id) && typeof populateLandlordSelect === 'function') {
+            populateLandlordSelect(id);
+        }
+    });
 }
 
 function renderLandlordsTable() {
@@ -8121,8 +8935,7 @@ function initLandlordModal() {
             showToast(editingLandlordId ? 'Орендодавця оновлено' : 'Орендодавця додано', 'success');
             clearFormValidationState(form, 'landlord-message');
             closeLandlordModal();
-            await loadLandlords();
-            await loadContracts(); // Обновляем контракты, так как там может быть автодополнение
+            await refreshAfterMutation(['landlords', 'contracts']);
         } else {
             const error = await response.json().catch(() => null);
             setFormMessage('landlord-message', error?.detail || 'Помилка збереження', true);
@@ -8160,8 +8973,7 @@ function initLandlordDeleteModal() {
         if (response.ok) {
             showToast('Орендодавця видалено', 'success');
             closeModal();
-            await loadLandlords();
-            await loadContracts();
+            await refreshAfterMutation(['landlords', 'contracts', 'fields', 'payments']);
         } else {
             const error = await response.json().catch(() => null);
             showToast(error?.detail || 'Помилка видалення', 'error');
@@ -8391,8 +9203,7 @@ function initContractRenewModal() {
             if (response.ok) {
                 showToast('Контракт перевипущено');
                 close();
-                await loadLeaseContracts();
-                await loadFields();
+                await refreshAfterMutation(['contracts', 'fields', 'landlords', 'dashboard']);
             } else {
                 const err = await response.json().catch(() => ({}));
                 setFormMessage('contract-renew-message', err.detail || 'Помилка перевипуску', true);
@@ -8508,10 +9319,14 @@ function openContractAddModal() {
         cform.reset();
     }
     document.getElementById('contract-landlord-id').value = '';
-    document.getElementById('contract-landlord-search').value = '';
+    const landlordSel = document.getElementById('contract-landlord-select');
+    if (landlordSel) {
+        if (typeof populateLandlordSelect === 'function') populateLandlordSelect('contract-landlord-select');
+        landlordSel.value = '';
+        if (typeof refreshCustomSelect === 'function') refreshCustomSelect(landlordSel);
+    }
     document.getElementById('contract-is-active').checked = true;
     resetContractItems();
-    updateContractLandlordBadge();
     document.getElementById('contract-modal').classList.remove('hidden');
     // Убеждаемся, что кастомные select инициализированы после открытия модального окна
     setTimeout(() => {
@@ -8528,7 +9343,12 @@ function openContractAddModal() {
 function openContractEditModal(contract) {
     editingContractId = contract.id;
     document.getElementById('contract-modal-title').textContent = 'Редагувати контракт';
-    document.getElementById('contract-landlord-search').value = contract.landlord_full_name;
+    const landlordSelE = document.getElementById('contract-landlord-select');
+    if (landlordSelE) {
+        if (typeof populateLandlordSelect === 'function') populateLandlordSelect('contract-landlord-select');
+        landlordSelE.value = String(contract.landlord_id || '');
+        if (typeof refreshCustomSelect === 'function') refreshCustomSelect(landlordSelE);
+    }
     document.getElementById('contract-landlord-id').value = contract.landlord_id;
     document.getElementById('contract-field-name').value = contract.field_name;
     const contractDate = new Date(contract.contract_date);
@@ -8605,7 +9425,11 @@ function initContractModal() {
         modal.classList.add('hidden');
         form.reset();
         document.getElementById('contract-landlord-id').value = '';
-        document.getElementById('contract-landlord-search').value = '';
+        const lsel = document.getElementById('contract-landlord-select');
+        if (lsel) {
+            lsel.value = '';
+            if (typeof refreshCustomSelect === 'function') refreshCustomSelect(lsel);
+        }
         resetContractItems();
         editingContractId = null;
     };
@@ -8665,8 +9489,7 @@ function initContractModal() {
                     
                     if (response.ok) {
                         showToast(isActive ? 'Контракт активовано' : 'Контракт деактивовано', 'success');
-                        await loadContracts();
-                        await loadPayments();
+                        await refreshAfterMutation(['contracts', 'payments', 'fields']);
                     } else {
                         // Откатываем изменение чекбокса при ошибке
                         event.target.checked = !isActive;
@@ -8685,7 +9508,9 @@ function initContractModal() {
     
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
-        const landlordId = document.getElementById('contract-landlord-id').value;
+        const landlordSelEl = document.getElementById('contract-landlord-select');
+        const landlordId = landlordSelEl?.value || document.getElementById('contract-landlord-id').value;
+        if (landlordId) document.getElementById('contract-landlord-id').value = landlordId;
         const fieldName = document.getElementById('contract-field-name').value.trim();
         
         // Получаем позиции контракта из таблицы
@@ -8712,7 +9537,7 @@ function initContractModal() {
         const isActive = document.getElementById('contract-is-active').checked;
         
         if (!landlordId) {
-            formShowValidationError(form, 'contract-message', 'Виберіть орендодавця', ['contract-landlord-search']);
+            formShowValidationError(form, 'contract-message', 'Виберіть орендодавця', ['contract-landlord-select']);
             return;
         }
         if (!fieldName) {
@@ -8771,13 +9596,15 @@ function initContractModal() {
             clearFormValidationState(form, 'contract-message');
             form.reset();
             document.getElementById('contract-landlord-id').value = '';
-            document.getElementById('contract-landlord-search').value = '';
+            const lsel2 = document.getElementById('contract-landlord-select');
+            if (lsel2) {
+                lsel2.value = '';
+                if (typeof refreshCustomSelect === 'function') refreshCustomSelect(lsel2);
+            }
             resetContractItems();
             editingContractId = null;
             modal.classList.add('hidden');
-            await loadContracts();
-            await loadPayments();
-            await loadFields();
+            await refreshAfterMutation(['contracts', 'payments', 'fields', 'landlords', 'dashboard']);
         } else {
             const error = await response.json().catch(() => null);
             setFormMessage('contract-message', error?.detail || 'Помилка збереження', true);
@@ -8786,99 +9613,20 @@ function initContractModal() {
 }
 
 function initContractLandlordSearch() {
-    const searchInput = document.getElementById('contract-landlord-search');
-    const suggestions = document.getElementById('contract-landlord-suggestions');
-    const badge = document.getElementById('contract-landlord-badge');
+    const select = document.getElementById('contract-landlord-select');
     const landlordIdInput = document.getElementById('contract-landlord-id');
-    let timeout;
-    let lastSelectedName = '';
-    
-    if (!searchInput || !suggestions || !badge || !landlordIdInput) {
-        return;
-    }
-    
-    function updateBadge() {
-        const hasId = landlordIdInput.value && landlordIdInput.value !== '';
-        const currentValue = searchInput.value.trim();
-        const isStillSelected = hasId && currentValue === lastSelectedName;
-        
-        if (isStillSelected) {
-            badge.classList.remove('hidden');
-            searchInput.classList.add('owner-selected');
-        } else {
-            badge.classList.add('hidden');
-            searchInput.classList.remove('owner-selected');
-            if (hasId && currentValue !== lastSelectedName) {
-                landlordIdInput.value = '';
-            }
-        }
-    }
-    
-    searchInput.addEventListener('input', () => {
-        clearTimeout(timeout);
-        const value = searchInput.value.trim();
-        
-        if (landlordIdInput.value && value !== lastSelectedName) {
-            landlordIdInput.value = '';
-            lastSelectedName = '';
-            updateBadge();
-        }
-        
-        if (!value) {
-            suggestions.classList.add('hidden');
-            suggestions.innerHTML = '';
-            landlordIdInput.value = '';
-            lastSelectedName = '';
-            updateBadge();
-            return;
-        }
-        
-        timeout = setTimeout(async () => {
-            const response = await apiFetch(`/leases/landlords?q=${encodeURIComponent(value)}`);
-            if (!response.ok) {
-                return;
-            }
-            const landlords = await response.json();
-            suggestions.innerHTML = '';
-            if (!landlords.length) {
-                suggestions.classList.add('hidden');
-                landlordIdInput.value = '';
-                lastSelectedName = '';
-                updateBadge();
-                return;
-            }
-            landlords.forEach(landlord => {
-                const item = document.createElement('div');
-                item.className = 'suggestion-item';
-                item.textContent = landlord.full_name;
-                item.addEventListener('click', () => {
-                    searchInput.value = landlord.full_name;
-                    landlordIdInput.value = landlord.id;
-                    lastSelectedName = landlord.full_name;
-                    suggestions.classList.add('hidden');
-                    updateBadge();
-                });
-                suggestions.appendChild(item);
-            });
-            suggestions.classList.remove('hidden');
-        }, 300);
-    });
-    
-    document.addEventListener('click', (event) => {
-        if (!suggestions.contains(event.target) && event.target !== searchInput) {
-            suggestions.classList.add('hidden');
-        }
+    if (!select || !landlordIdInput) return;
+
+    if (typeof populateLandlordSelect === 'function') populateLandlordSelect('contract-landlord-select');
+
+    select.addEventListener('change', () => {
+        landlordIdInput.value = select.value || '';
     });
 }
 
-
 function updateContractLandlordBadge() {
-    const landlordId = document.getElementById('contract-landlord-id').value;
-    const badge = document.getElementById('contract-landlord-badge');
-    if (landlordId && badge) {
-        badge.classList.remove('hidden');
-        document.getElementById('contract-landlord-search').classList.add('owner-selected');
-    }
+    // Заглушка для обратной совместимости — старый бейдж видалено,
+    // селект сам показує обраного орендодавця.
 }
 
 function initContractDeleteModal() {
@@ -8911,8 +9659,7 @@ function initContractDeleteModal() {
         if (response.ok) {
             showToast('Контракт видалено', 'success');
             closeModal();
-            await loadContracts();
-            await loadPayments();
+            await refreshAfterMutation(['contracts', 'payments', 'fields', 'dashboard']);
         } else {
             const error = await response.json().catch(() => null);
             showToast(error?.detail || 'Помилка видалення', 'error');
@@ -9208,14 +9955,13 @@ function initPaymentCancelModal() {
                 const cancelled = await response.json();
                 showToast('Виплату скасовано', 'success');
                 closeModal();
-                await loadPayments();
+                const scopes = ['payments', 'contracts', 'dashboard'];
                 if (cancelled.payment_type === 'grain') {
-                    await loadStock();
-                    await loadStockAdjustments();
+                    scopes.push('stock', 'stockAdjustments');
                 } else {
-                    await loadCashBalance();
-                    await loadCashTransactions();
+                    scopes.push('cash', 'cashTransactions');
                 }
+                await refreshAfterMutation(scopes);
             } else {
                 const error = await response.json().catch(() => null);
                 showToast(error?.detail || 'Не вдалося скасувати виплату', 'error');
@@ -9247,7 +9993,12 @@ function openPaymentAddModal() {
         clearFormValidationState(paymentForm, 'payment-message');
         paymentForm.reset();
     }
-    document.getElementById('payment-landlord-search').value = '';
+    const psel = document.getElementById('payment-landlord-select');
+    if (psel) {
+        if (typeof populateLandlordSelect === 'function') populateLandlordSelect('payment-landlord-select');
+        psel.value = '';
+        if (typeof refreshCustomSelect === 'function') refreshCustomSelect(psel);
+    }
     document.getElementById('payment-landlord-id').value = '';
     const contractSel = document.getElementById('payment-contract');
     if (contractSel) {
@@ -9332,61 +10083,16 @@ async function onPaymentLandlordChange(landlordId) {
 }
 
 function initPaymentLandlordSearch() {
-    const nameInput = document.getElementById('payment-landlord-search');
+    const select = document.getElementById('payment-landlord-select');
     const idInput = document.getElementById('payment-landlord-id');
-    const suggestionsDiv = document.getElementById('payment-landlord-suggestions');
-    if (!nameInput || !idInput || !suggestionsDiv) return;
+    if (!select || !idInput) return;
 
-    let timer = null;
-    let lastSelectedName = '';
+    if (typeof populateLandlordSelect === 'function') populateLandlordSelect('payment-landlord-select');
 
-    const clearSelection = () => {
-        idInput.value = '';
-        lastSelectedName = '';
-        onPaymentLandlordChange('');
-    };
-
-    nameInput.addEventListener('input', () => {
-        const value = nameInput.value.trim();
-        if (idInput.value && value !== lastSelectedName) {
-            clearSelection();
-        }
-        suggestionsDiv.innerHTML = '';
-        suggestionsDiv.classList.add('hidden');
-        if (timer) clearTimeout(timer);
-        if (value.length < 2) return;
-
-        timer = setTimeout(async () => {
-            try {
-                const response = await apiFetch(`/leases/landlords?q=${encodeURIComponent(value)}`);
-                if (!response.ok) return;
-                const landlords = await response.json();
-                if (!landlords.length) return;
-                suggestionsDiv.innerHTML = '';
-                landlords.forEach(l => {
-                    const item = document.createElement('div');
-                    item.className = 'suggestion-item';
-                    item.textContent = l.full_name;
-                    item.addEventListener('click', async () => {
-                        nameInput.value = l.full_name;
-                        idInput.value = l.id;
-                        lastSelectedName = l.full_name;
-                        suggestionsDiv.classList.add('hidden');
-                        await onPaymentLandlordChange(l.id);
-                    });
-                    suggestionsDiv.appendChild(item);
-                });
-                suggestionsDiv.classList.remove('hidden');
-            } catch {
-                // ignore
-            }
-        }, 150);
-    });
-
-    document.addEventListener('click', (e) => {
-        if (!suggestionsDiv.contains(e.target) && e.target !== nameInput) {
-            suggestionsDiv.classList.add('hidden');
-        }
+    select.addEventListener('change', async () => {
+        const id = select.value;
+        idInput.value = id || '';
+        await onPaymentLandlordChange(id || '');
     });
 }
 
@@ -9743,15 +10449,13 @@ function initPaymentModal() {
             document.getElementById('payment-balance-card').classList.add('hidden');
             clearFormValidationState(form, 'payment-message');
             modal.classList.add('hidden');
-            await loadPayments();
-            // Оновити склад та касу, бо виплата списує з них
+            const scopes = ['payments', 'contracts', 'dashboard'];
             if (paymentType === 'grain') {
-                await loadStock();
-                await loadStockAdjustments();
+                scopes.push('stock', 'stockAdjustments');
             } else {
-                await loadCashBalance();
-                await loadCashTransactions();
+                scopes.push('cash', 'cashTransactions');
             }
+            await refreshAfterMutation(scopes);
         } else {
             const error = await response.json().catch(() => null);
             setFormMessage('payment-message', error?.detail || 'Помилка збереження', true);
@@ -10309,8 +11013,7 @@ function initVouchers() {
                 const result = await resp.json();
                 showToast(result.message || 'Виплату створено', 'success');
                 hidePaymentModal();
-                await loadVouchersData();
-                await loadCashBalance();
+                await refreshAfterMutation(['vouchers', 'cash', 'cashTransactions', 'dashboard']);
             } catch (e) {
                 showToast(e.message || 'Помилка', 'error');
             } finally {
@@ -10342,8 +11045,7 @@ function initVouchers() {
                 const result = await resp.json();
                 showToast(result.message || 'Виплату скасовано', 'success');
                 hideCancelModal();
-                await loadVouchersData();
-                await loadCashBalance();
+                await refreshAfterMutation(['vouchers', 'cash', 'cashTransactions', 'dashboard']);
             } catch (e) {
                 showToast(e.message || 'Помилка', 'error');
             } finally {

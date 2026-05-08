@@ -29,6 +29,7 @@ from backend.models import (
     FarmerContractStatus,
     FarmerGrainDeduction,
     GrainVoucher,
+    Person,
     User
 )
 from backend.schemas import (
@@ -40,7 +41,7 @@ from backend.schemas import (
     FarmerContractPaymentResponse,
     ReserveActivateRequest,
 )
-from backend.auth import get_current_user
+from backend.auth import get_current_user, get_current_super_admin
 
 router = APIRouter()
 
@@ -670,13 +671,57 @@ async def get_farmer_contract(
 async def create_farmer_contract(
     payload: FarmerContractCreate,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
-    owner = session.get(GrainOwner, payload.owner_id)
-    if not owner:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Фермера не знайдено")
+    # Контрагент: фермер або людина — рівно один.
+    has_owner = bool(payload.owner_id)
+    has_person = bool(payload.person_id)
+    if has_owner == has_person:
+        raise HTTPException(
+            status_code=400,
+            detail="Вкажіть або фермера, або людину (рівно одне з полів owner_id/person_id)"
+        )
+
+    owner = None
+    person = None
+    counterparty_label = ""
+    if has_owner:
+        owner = session.get(GrainOwner, payload.owner_id)
+        if not owner:
+            raise HTTPException(status_code=404, detail="Фермера не знайдено")
+        counterparty_label = owner.full_name
+    else:
+        person = session.get(Person, payload.person_id)
+        if not person:
+            raise HTTPException(status_code=404, detail="Людину не знайдено")
+        counterparty_label = person.full_name
 
     ctype = payload.contract_type
+
+    # Обмеження для контрактів з людиною: вони не мають свого зерна.
+    # Дозволений лише тип «Контракт» (DEBT) — без виплат і без резерву.
+    if person:
+        if ctype != FarmerContractType.DEBT:
+            raise HTTPException(
+                status_code=400,
+                detail="Для людини доступний лише тип «Контракт»"
+            )
+        # У позиціях фермера для людини дозволені лише гроші
+        for fi in payload.farmer_items:
+            it = fi.item_type.value if hasattr(fi.item_type, "value") else fi.item_type
+            if it != FarmerContractItemType.CASH.value:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Людина може розраховуватись лише грошима"
+                )
+        # Талони не виписуються на людину
+        for ci in payload.company_items:
+            it = ci.item_type.value if hasattr(ci.item_type, "value") else ci.item_type
+            if it == FarmerContractItemType.VOUCHER.value:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Талон на зерно недоступний для контракту з людиною"
+                )
 
     # ─────────────────────────────────────────────
     #  PAYMENT — контракт виплати (миттєвий розрахунок)
@@ -858,6 +903,7 @@ async def create_farmer_contract(
 
         contract = FarmerContract(
             owner_id=payload.owner_id,
+            person_id=payload.person_id,
             contract_type=FarmerContractType.RESERVE.value,
             status=FarmerContractStatus.PENDING.value,
             total_value_uah=company_total,
@@ -937,6 +983,15 @@ async def create_farmer_contract(
             price = item.price_per_kg or culture.price_per_kg
             item_name = f"Талон: {culture.name}"
             # Талон не резервує фізичне зерно на складі
+        elif item.item_type == FarmerContractItemType.LAND_SERVICE:
+            # Обробка землі: quantity_kg фактично = гектари, price_per_kg = грн/га.
+            # Послуга — складських залишків не торкаємось, тільки фіксуємо суму.
+            if direction != FarmerContractItemDirection.FROM_COMPANY:
+                raise HTTPException(status_code=400, detail="Обробка землі може бути тільки від компанії")
+            if not item.price_per_kg or item.price_per_kg <= 0:
+                raise HTTPException(status_code=400, detail="Вкажіть ціну за гектар")
+            price = item.price_per_kg
+            item_name = "Обробка землі"
         else:
             # Гроші: price_per_kg = курс (1 для UAH)
             currency_str = getattr(item, "currency", None) or "UAH"
@@ -973,6 +1028,7 @@ async def create_farmer_contract(
     # Залишок боргу = сума від компанії (включно з талонами) мінус сума від фермера
     contract = FarmerContract(
         owner_id=payload.owner_id,
+        person_id=payload.person_id,
         contract_type=payload.contract_type.value if hasattr(payload.contract_type, 'value') else payload.contract_type,
         status=FarmerContractStatus.OPEN.value,
         total_value_uah=company_total,
@@ -1001,7 +1057,7 @@ async def activate_reserve_contract(
     contract_id: int,
     payload: Optional[ReserveActivateRequest] = None,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Активувати резервний контракт → перетворити в борговий. Ціни позицій вказуються в payload (при створенні резерву ціна не вказувалась)."""
     contract = session.get(FarmerContract, contract_id)
@@ -1098,7 +1154,7 @@ async def activate_reserve_contract(
 async def close_farmer_contract(
     contract_id: int,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Закрити контракт вручну"""
     contract = session.get(FarmerContract, contract_id)
@@ -1179,7 +1235,7 @@ async def create_farmer_contract_payment(
     contract_id: int,
     payload: FarmerContractPaymentCreate,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     contract = session.get(FarmerContract, contract_id)
     if not contract:
@@ -1187,7 +1243,23 @@ async def create_farmer_contract_payment(
     if contract.status != FarmerContractStatus.OPEN.value:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Контракт не активний")
 
-    owner = session.get(GrainOwner, contract.owner_id)
+    # Контрагент: фермер або людина
+    owner = session.get(GrainOwner, contract.owner_id) if contract.owner_id else None
+    person = session.get(Person, contract.person_id) if contract.person_id else None
+
+    # Для контрактів з людиною дозволені лише грошові операції та видача товару.
+    # Зерно/талон/прийом товару від людини — заборонені.
+    if person:
+        allowed_for_person = {
+            FarmerContractPaymentType.CASH,
+            FarmerContractPaymentType.GOODS_ISSUE,
+        }
+        if payload.payment_type not in allowed_for_person:
+            raise HTTPException(
+                status_code=400,
+                detail="Для контракту з людиною доступні лише оплата готівкою або видача товару"
+            )
+
     amount_uah = 0.0
     payment = None
 
@@ -1542,7 +1614,7 @@ async def create_farmer_contract_payment(
 async def cancel_farmer_contract_payment(
     payment_id: int,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Скасування операції по контракту фермера з поверненням"""
     payment = session.get(FarmerContractPayment, payment_id)

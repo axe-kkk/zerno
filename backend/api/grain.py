@@ -189,7 +189,7 @@ async def update_culture_price(
     culture_id: int,
     payload: GrainCulturePriceUpdate,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Оновлення ціни культури"""
     culture = session.get(GrainCulture, culture_id)
@@ -340,7 +340,7 @@ async def update_driver(
 async def delete_driver(
     driver_id: int,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Деактивація водія"""
     driver = session.get(Driver, driver_id)
@@ -661,7 +661,7 @@ async def export_farmer_grain_movements(
 async def deduct_farmer_grain(
     payload: FarmerGrainDeductRequest,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Списання зерна з балансу фермера"""
     owner = session.get(GrainOwner, payload.owner_id)
@@ -709,19 +709,43 @@ async def deduct_farmer_grain(
 async def transfer_farmer_grain(
     payload: FarmerGrainTransferRequest,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
-    """Переміщення зерна від одного фермера до іншого"""
-    if payload.from_owner_id == payload.to_owner_id:
+    """Переміщення зерна від фермера до іншого фермера або людини.
+
+    Фермер → фермер: зерно лишається на складі, переходить на баланс іншого фермера
+    (створюється синтетична картка приходу у отримувача, помічена `is_farmer_transfer`).
+    Фермер → людина: зерно фізично залишає склад (`farmer_quantity_kg -= qty`,
+    `quantity_kg -= qty`), у людини балансу не накопичується.
+    """
+    has_owner = bool(payload.to_owner_id)
+    has_person = bool(payload.to_person_id)
+    if has_owner == has_person:
+        raise HTTPException(
+            status_code=400,
+            detail="Вкажіть отримувача — фермера або людину (рівно одне з полів)"
+        )
+    if has_owner and payload.from_owner_id == payload.to_owner_id:
         raise HTTPException(status_code=400, detail="Не можна переміщувати зерно самому собі")
 
     from_owner = session.get(GrainOwner, payload.from_owner_id)
     if not from_owner:
         raise HTTPException(status_code=404, detail="Фермера-відправника не знайдено")
 
-    to_owner = session.get(GrainOwner, payload.to_owner_id)
-    if not to_owner:
-        raise HTTPException(status_code=404, detail="Фермера-отримувача не знайдено")
+    to_owner = None
+    to_person = None
+    receiver_label = ""
+    if has_owner:
+        to_owner = session.get(GrainOwner, payload.to_owner_id)
+        if not to_owner:
+            raise HTTPException(status_code=404, detail="Фермера-отримувача не знайдено")
+        receiver_label = to_owner.full_name
+    else:
+        from backend.models import Person
+        to_person = session.get(Person, payload.to_person_id)
+        if not to_person:
+            raise HTTPException(status_code=404, detail="Людину не знайдено")
+        receiver_label = to_person.full_name
 
     culture = session.get(GrainCulture, payload.culture_id)
     if not culture:
@@ -745,32 +769,57 @@ async def transfer_farmer_grain(
     )
     session.add(deduction)
 
-    to_intake = GrainIntake(
-        culture_id=payload.culture_id,
-        vehicle_type_id=1,
-        owner_id=payload.to_owner_id,
-        is_own_grain=False,
-        owner_full_name=to_owner.full_name,
-        owner_phone=to_owner.phone,
-        is_internal_driver=False,
-        gross_weight_kg=payload.quantity_kg,
-        tare_weight_kg=0,
-        net_weight_kg=payload.quantity_kg,
-        accepted_weight_kg=payload.quantity_kg,
-        pending_quality=False,
-        pending_tare=False,
-        impurity_percent=0,
-        has_trailer=False,
-        note=f"Трансфер від {from_owner.full_name}",
-        is_farmer_transfer=True,
-        created_by_user_id=current_user.id
-    )
-    session.add(to_intake)
+    if to_owner:
+        # Фермер → фермер: зерно фізично лишається на складі, отримувач накопичує баланс.
+        to_intake = GrainIntake(
+            culture_id=payload.culture_id,
+            vehicle_type_id=1,
+            owner_id=payload.to_owner_id,
+            is_own_grain=False,
+            owner_full_name=to_owner.full_name,
+            owner_phone=to_owner.phone,
+            is_internal_driver=False,
+            gross_weight_kg=payload.quantity_kg,
+            tare_weight_kg=0,
+            net_weight_kg=payload.quantity_kg,
+            accepted_weight_kg=payload.quantity_kg,
+            pending_quality=False,
+            pending_tare=False,
+            impurity_percent=0,
+            has_trailer=False,
+            note=f"Трансфер від {from_owner.full_name}",
+            is_farmer_transfer=True,
+            created_by_user_id=current_user.id
+        )
+        session.add(to_intake)
+    else:
+        # Фермер → людина: людина фізично забирає зерно зі складу.
+        stock = session.exec(
+            select(GrainStock).where(GrainStock.culture_id == payload.culture_id)
+        ).first()
+        if stock:
+            stock.farmer_quantity_kg = max(0.0, stock.farmer_quantity_kg - payload.quantity_kg)
+            stock.quantity_kg = max(0.0, stock.quantity_kg - payload.quantity_kg)
+            session.add(stock)
+            session.add(StockAdjustmentLog(
+                stock_type=StockAdjustmentType.GRAIN,
+                culture_id=payload.culture_id,
+                item_name=culture.name,
+                transaction_type=TransactionType.SUBTRACT,
+                amount=payload.quantity_kg,
+                quantity_before=stock.quantity_kg + payload.quantity_kg,
+                quantity_after=stock.quantity_kg,
+                user_id=current_user.id,
+                user_full_name=current_user.full_name,
+                source="farmer_transfer_to_person",
+                destination=f"Людина: {receiver_label}"
+            ))
 
     movement = FarmerGrainMovement(
         movement_type="transfer",
         from_owner_id=payload.from_owner_id,
         to_owner_id=payload.to_owner_id,
+        to_person_id=payload.to_person_id,
         culture_id=payload.culture_id,
         quantity_kg=payload.quantity_kg,
         note=payload.note,
@@ -927,7 +976,8 @@ async def export_owner_intakes(
 ):
     """Експорт приходів фермерів у Excel"""
     query = select(GrainIntake).where(
-        GrainIntake.is_own_grain == False
+        GrainIntake.is_own_grain == False,
+        GrainIntake.is_farmer_transfer == False
     ).order_by(GrainIntake.created_at.desc())
 
     if owner_id:
@@ -1161,7 +1211,7 @@ async def reserve_stock(
     culture_id: int,
     payload: GrainReserveRequest,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Бронювання зерна на складі"""
     culture = session.get(GrainCulture, culture_id)
@@ -1194,7 +1244,7 @@ async def release_stock_reserve(
     culture_id: int,
     payload: GrainReserveRequest,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Зняття бронювання зерна на складі"""
     culture = session.get(GrainCulture, culture_id)
@@ -1386,7 +1436,7 @@ async def export_stock_adjustments(
 async def create_intake(
     payload: GrainIntakeCreate,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Створення картки приходу"""
     culture = session.get(GrainCulture, payload.culture_id)
@@ -1570,10 +1620,13 @@ async def list_intakes(
     current_user: User = Depends(get_current_user),
     pending_only: bool = Query(False, description="Очікують % втрат або тару"),
     is_own_combine: Optional[bool] = Query(None, description="Наш комбайн: true/false, None — всі"),
-    field_id: Optional[int] = Query(None, description="Фільтр по полю (прийоми зерна підприємства з цього поля)")
+    field_id: Optional[int] = Query(None, description="Фільтр по полю (прийоми зерна підприємства з цього поля)"),
+    include_transfers: bool = Query(False, description="Показати синтетичні картки від трансферів між фермерами")
 ):
     """Список карток приходу"""
     query = select(GrainIntake).order_by(GrainIntake.created_at.desc())
+    if not include_transfers:
+        query = query.where(GrainIntake.is_farmer_transfer == False)
     if pending_only:
         query = query.where(
             or_(GrainIntake.pending_quality == True, GrainIntake.pending_tare == True)
@@ -1598,6 +1651,7 @@ async def export_intakes_summary(
         .where(
             GrainIntake.pending_quality == False,
             GrainIntake.pending_tare == False,
+            GrainIntake.is_farmer_transfer == False,
         )
         .order_by(GrainIntake.created_at.desc())
     )
@@ -1887,7 +1941,11 @@ async def export_intakes(
     field_id: Optional[int] = Query(None, description="Фільтр по полю (для прийомів з полів)")
 ):
     """Експорт карток приходу у Excel"""
-    query = select(GrainIntake).order_by(GrainIntake.created_at.desc())
+    query = (
+        select(GrainIntake)
+        .where(GrainIntake.is_farmer_transfer == False)
+        .order_by(GrainIntake.created_at.desc())
+    )
 
     if only_field_intakes:
         query = query.where(GrainIntake.field_id.isnot(None))
@@ -2104,7 +2162,7 @@ async def list_shipments(
 async def create_shipment(
     payload: GrainShipmentCreate,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Створення відправки зерна"""
     destination = " ".join(payload.destination.split()).strip()
@@ -2195,7 +2253,7 @@ async def update_shipment(
     shipment_id: int,
     payload: GrainShipmentUpdate,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Оновлення відправки зерна"""
     shipment = session.get(GrainShipment, shipment_id)

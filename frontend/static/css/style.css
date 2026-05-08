@@ -632,7 +632,8 @@ body {
     flex-direction: column;
     flex: 1;
     min-height: 0;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
 }
 
 .db {
@@ -6619,156 +6620,2330 @@ td .empty-value,
     box-shadow: 0 2px 8px rgba(34, 197, 94, 0.35);
 }
 
-/* ── Мобільний екран лише «Каса» (pocket-kassa.html) ── */
-.cash-pocket-page {
-    overflow: auto;
-    height: auto;
-    min-height: 100%;
+/* ============================================================
+   ✨ DESIGN REFRESH 2026
+   Косметический апгрейд: типографика, тени, цвета, формы.
+   Не трогает разметку — только переопределяет визуал.
+   ============================================================ */
+
+:root {
+    /* Розширена палітра */
+    --primary-50:  #f0fdf4;
+    --primary-100: #dcfce7;
+    --primary-200: #bbf7d0;
+    --primary-tint: rgba(22, 163, 74, 0.08);
+    --primary-glow: rgba(34, 197, 94, 0.18);
+
+    --bg-page: #f5f7fa;
+    --bg-page-alt: #eef2f7;
+
+    --text-strong: #0b1220;
+    --text-soft:   #4b5563;
+
+    --shadow-xs:  0 1px 2px rgba(15, 23, 42, 0.04);
+    --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04), 0 2px 6px rgba(15, 23, 42, 0.04);
+    --shadow-med:  0 4px 12px rgba(15, 23, 42, 0.06), 0 2px 4px rgba(15, 23, 42, 0.04);
+    --shadow-pop:  0 12px 32px rgba(15, 23, 42, 0.10), 0 4px 8px rgba(15, 23, 42, 0.04);
+    --shadow-modal: 0 24px 48px -12px rgba(15, 23, 42, 0.20),
+                    0 8px 16px -4px rgba(15, 23, 42, 0.08);
+
+    --ring: 0 0 0 3px var(--primary-tint);
+    --ring-danger: 0 0 0 3px rgba(239, 68, 68, 0.12);
+
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.cash-pocket-page .cash-pocket-layout {
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    background: var(--bg-hover);
+/* — Типографика — */
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
+    background: var(--bg-page);
+    color: var(--text-strong);
+    letter-spacing: -0.005em;
 }
 
-.cash-pocket-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 12px 16px;
-    padding: 12px 16px;
-    background: rgba(255, 255, 255, 0.96);
+h1, h2, h3, h4, h5, h6,
+.section-header h1,
+.page-title,
+.section-title,
+.card-title {
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    color: var(--text-strong);
+}
+
+/* — Sidebar — */
+.sidebar {
+    background: linear-gradient(180deg, #0b1220 0%, #0f172a 100%);
+    border-right: 1px solid rgba(255, 255, 255, 0.04);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.04);
+}
+
+.sidebar .logo-icon {
+    background: linear-gradient(135deg, rgba(34, 197, 94, 0.22) 0%, rgba(22, 163, 74, 0.08) 100%);
+    border: 1px solid rgba(34, 197, 94, 0.30);
+    box-shadow: 0 4px 14px rgba(22, 163, 74, 0.22),
+                inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.sidebar .logo-title {
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    font-size: 16px;
+}
+
+.sidebar .logo-subtitle {
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+}
+
+.sidebar-nav {
+    padding: 14px 10px;
+    gap: 2px;
+}
+
+.nav-item {
+    border-radius: 10px;
+    color: rgba(255, 255, 255, 0.6);
+    font-weight: 500;
+    font-size: 13.5px;
+    padding: 10px 14px;
+    transition: background 0.12s var(--ease-in-out),
+                color 0.12s var(--ease-in-out);
+}
+
+.nav-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: #ffffff;
+}
+
+.nav-item.active {
+    background: linear-gradient(90deg, rgba(34, 197, 94, 0.20) 0%, rgba(34, 197, 94, 0.04) 100%);
+    color: #ffffff;
+    border-left: none;
+    box-shadow: inset 3px 0 0 var(--primary);
+    font-weight: 600;
+}
+
+.sidebar-footer {
+    padding: 18px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.user-avatar {
+    background: linear-gradient(135deg, var(--primary-light) 0%, var(--primary-dark) 100%);
+    box-shadow: 0 4px 12px rgba(22, 163, 74, 0.32),
+                inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    font-weight: 700;
+}
+
+.btn-logout {
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.7);
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.btn-logout:hover {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+}
+
+/* — Карточки — */
+.card {
+    border-radius: 14px;
+    border: 1px solid var(--border-light);
+    box-shadow: var(--shadow-soft);
+    background: var(--bg-card);
+}
+
+.card .card-header {
+    padding-bottom: 8px;
+}
+
+.card .card-title {
+    font-size: 15px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+}
+
+/* — Кнопки — */
+.btn {
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    border-radius: 10px;
+    transition: transform 0.1s var(--ease-out),
+                box-shadow 0.18s var(--ease-out),
+                background 0.18s var(--ease-out),
+                border-color 0.18s var(--ease-out);
+}
+
+.btn-primary {
+    background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
+    color: #ffffff;
+    border-color: transparent;
+    box-shadow: 0 1px 2px rgba(22, 163, 74, 0.30),
+                0 4px 12px -2px rgba(22, 163, 74, 0.32),
+                inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+
+.btn-primary:hover:not(:disabled) {
+    box-shadow: 0 1px 2px rgba(22, 163, 74, 0.35),
+                0 8px 20px -2px rgba(22, 163, 74, 0.42),
+                inset 0 1px 0 rgba(255, 255, 255, 0.20);
+    transform: translateY(-1px);
+}
+
+.btn-primary:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: 0 1px 2px rgba(22, 163, 74, 0.35),
+                inset 0 1px 0 rgba(255, 255, 255, 0.16),
+                inset 0 2px 4px rgba(0, 0, 0, 0.08);
+}
+
+.btn-secondary {
+    background: var(--bg-card);
+    color: var(--text-strong);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-xs);
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: var(--bg-page);
+    border-color: #d1d5db;
+    box-shadow: var(--shadow-soft);
+}
+
+.btn-danger {
+    background: linear-gradient(180deg, #f87171 0%, #ef4444 100%);
+    color: #ffffff;
+    border-color: transparent;
+    box-shadow: 0 1px 2px rgba(239, 68, 68, 0.30),
+                0 4px 12px -2px rgba(239, 68, 68, 0.32),
+                inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.btn-danger:hover:not(:disabled) {
+    box-shadow: 0 1px 2px rgba(239, 68, 68, 0.35),
+                0 8px 20px -2px rgba(239, 68, 68, 0.42),
+                inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    transform: translateY(-1px);
+}
+
+.btn-small,
+.btn.btn-small {
+    padding: 7px 12px;
+    font-size: 12px;
+    min-height: 32px;
+    border-radius: 8px;
+}
+
+/* Icon-кнопки в таблицях */
+.btn-icon {
+    transition: background 0.12s, color 0.12s, border-color 0.12s, transform 0.1s;
+}
+
+.btn-icon:hover {
+    transform: translateY(-1px);
+}
+
+/* — Таблицы — */
+.data-table {
+    font-size: 13px;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.data-table thead th {
+    background: var(--bg-page);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 11px 14px;
     border-bottom: 1px solid var(--border);
+    text-align: left;
     position: sticky;
     top: 0;
-    z-index: 200;
-    box-shadow: var(--shadow-sm);
+    z-index: 1;
 }
 
-.cash-pocket-brand {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    min-width: 0;
+.data-table tbody td {
+    padding: 13px 14px;
+    border-bottom: 1px solid var(--border-light);
+    color: var(--text-strong);
+    vertical-align: middle;
 }
 
-.cash-pocket-logo {
-    width: 44px;
-    height: 44px;
+.data-table tbody tr {
+    transition: background 0.1s var(--ease-out);
+}
+
+.data-table tbody tr:hover {
+    background: var(--primary-50);
+}
+
+.data-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.table-wrapper {
     border-radius: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 22px;
-    background: rgba(34, 197, 94, 0.12);
-    border: 1px solid rgba(34, 197, 94, 0.28);
-    flex-shrink: 0;
+    border: 1px solid var(--border-light);
+    overflow: auto;
+    background: var(--bg-card);
 }
 
-.cash-pocket-brand-text {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
+/* — Модалки — */
+.modal {
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    background: rgba(11, 18, 32, 0.55);
+    animation: dr-modal-fade 0.16s var(--ease-out);
 }
 
-.cash-pocket-brand-title {
-    font-size: 18px;
-    font-weight: 700;
-    color: var(--text-primary);
-    letter-spacing: -0.2px;
+@keyframes dr-modal-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
 
-.cash-pocket-brand-sub {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+.modal-content,
+.modal-dialog,
+.modal-card {
+    border-radius: 16px;
+    box-shadow: var(--shadow-modal);
+    border: 1px solid rgba(255, 255, 255, 0.6);
+    animation: dr-modal-scale 0.22s var(--ease-out);
+}
+
+@keyframes dr-modal-scale {
+    from { opacity: 0; transform: scale(0.96) translateY(8px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.modal-close {
+    transition: background 0.12s, color 0.12s;
+}
+
+.modal-close:hover {
+    background: var(--border-light);
+    color: var(--text-strong);
+}
+
+/* — Формы — */
+input[type="text"],
+input[type="number"],
+input[type="email"],
+input[type="password"],
+input[type="date"],
+input[type="search"],
+input[type="tel"],
+input[type="url"],
+select,
+textarea {
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    transition: border-color 0.15s var(--ease-out),
+                box-shadow 0.15s var(--ease-out),
+                background 0.15s var(--ease-out);
+    font-size: 14px;
+    font-family: inherit;
+    color: var(--text-strong);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+    border-color: var(--primary);
+    box-shadow: var(--ring);
+    outline: none;
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled,
+input[readonly] {
+    background: var(--bg-page);
+    color: var(--text-muted);
+    cursor: not-allowed;
+}
+
+input::placeholder,
+textarea::placeholder {
     color: var(--text-muted);
 }
 
-.cash-pocket-header-actions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
+label {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--text-soft);
+    letter-spacing: -0.005em;
 }
 
-.cash-pocket-user-info {
-    margin-bottom: 0;
-    min-width: 0;
+/* — Toast — */
+.toast {
+    border-radius: 12px;
+    box-shadow: var(--shadow-pop);
+    border: 1px solid var(--border-light);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
 }
 
-.cash-pocket-page .cash-pocket-header .user-name {
-    color: var(--text-primary);
+.toast-title {
+    font-weight: 650;
+    letter-spacing: -0.005em;
 }
 
-.cash-pocket-page .cash-pocket-header .user-role {
-    color: var(--text-secondary);
-}
-
-.cash-pocket-main {
-    flex: 1;
-    width: 100%;
-    max-width: 960px;
-    margin: 0 auto;
-    padding: 16px 16px 28px;
-}
-
-.cash-pocket-section.page-section {
-    display: block;
-}
-
-.cash-pocket-grid.grid-2 {
-    align-items: stretch;
-}
-
-.cash-pocket-table-card .card-header {
-    flex-wrap: wrap;
-    gap: 10px;
-}
-
-.cash-pocket-table-wrap {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    margin: 0 -4px;
-    padding: 0 4px;
-}
-
-.cash-pocket-table-wrap .data-table {
-    min-width: 640px;
-}
-
-.cash-pocket-page #logout-btn .logout-icon {
-    width: 18px;
-    height: 18px;
-}
-
-.cash-pocket-page #logout-btn {
+/* — Status / badges — */
+.status-badge,
+.badge,
+.chip {
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    line-height: 1.4;
     display: inline-flex;
     align-items: center;
+    gap: 4px;
+    border: 1px solid transparent;
+}
+
+/* — Stat-cards / KPI — */
+.stat-card,
+.kpi-card,
+.metric-card,
+.dashboard-stat-card,
+.cash-balance-card {
+    border-radius: 14px;
+    border: 1px solid var(--border-light);
+    box-shadow: var(--shadow-soft);
+    background: var(--bg-card);
+    position: relative;
+    overflow: hidden;
+}
+
+.stat-card::after,
+.kpi-card::after,
+.dashboard-stat-card::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--primary) 0%, var(--primary-light) 100%);
+    opacity: 0.85;
+    border-radius: 14px 14px 0 0;
+}
+
+/* — Login полировка — */
+.login-page {
+    background:
+        radial-gradient(ellipse 80% 60% at 50% -20%, var(--primary-glow) 0%, transparent 50%),
+        radial-gradient(ellipse 60% 50% at 100% 100%, rgba(59, 130, 246, 0.1) 0%, transparent 50%),
+        linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+}
+
+.login-card {
+    border-radius: 18px;
+    box-shadow: 0 24px 48px -12px rgba(15, 23, 42, 0.18),
+                0 8px 16px -4px rgba(15, 23, 42, 0.06);
+    border: 1px solid var(--border-light);
+}
+
+/* — Скрываем admin-only row buttons для не-админов — */
+body.user-is-not-admin [data-renew],
+body.user-is-not-admin [data-delete],
+body.user-is-not-admin .vp-cancel-btn,
+body.user-is-not-admin button[onclick*="cancelPayment"],
+body.user-is-not-admin button[onclick*="deleteField"],
+body.user-is-not-admin button[onclick*="activateReserve"],
+body.user-is-not-admin button[onclick*="closeContract"],
+body.user-is-not-admin button[onclick*="cancelFarmerPayment"],
+body.user-is-not-admin button[onclick*="cancelVoucherPayment"],
+body.user-is-not-admin .admin-action,
+body.user-is-not-admin [data-admin-action] {
+    display: none !important;
+}
+
+/* — Полировка section header — */
+.section-header {
+    margin-bottom: 18px;
+}
+
+.section-header h1 {
+    font-size: 22px;
+    line-height: 1.25;
+}
+
+/* — Полировка scrollbars — */
+*::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(71, 85, 105, 0.6) 0%, rgba(51, 65, 85, 0.8) 100%);
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, var(--primary) 0%, var(--primary-dark) 100%);
+    background-clip: padding-box;
+    border: 2px solid transparent;
+}
+
+/* — Disabled state — */
+.btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    transform: none !important;
+    box-shadow: var(--shadow-xs) !important;
+}
+
+/* — Suggestions / dropdowns polish — */
+.suggestions {
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-pop);
+    overflow: hidden;
+}
+
+.suggestions > * {
+    transition: background 0.1s;
+}
+
+.suggestions > *:hover,
+.suggestions > .active {
+    background: var(--primary-50);
+}
+
+/* — Counterparty toggle (Фермер / Людина) — */
+.counterparty-toggle {
+    display: inline-flex;
+    background: var(--bg-page);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 3px;
+    gap: 2px;
+}
+
+.counterparty-toggle__item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 7px 16px;
+    cursor: pointer;
+    border-radius: 7px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-soft);
+    transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+    user-select: none;
+}
+
+.counterparty-toggle__item input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.counterparty-toggle__item:has(input:checked) {
+    background: var(--bg-card);
+    color: var(--text-strong);
+    box-shadow: var(--shadow-xs);
+}
+
+.counterparty-toggle__item:hover {
+    color: var(--text-strong);
+}
+
+/* — Custom select: вбудований пошук — */
+.custom-select-search {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--bg-card);
+    padding: 8px 8px 6px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.custom-select-search-input {
+    width: 100%;
+    padding: 7px 12px 7px 32px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    font-size: 13px;
+    background: var(--bg-page) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>") 10px center / 14px no-repeat;
+    color: var(--text-strong);
+    transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+}
+
+.custom-select-search-input::placeholder {
+    color: var(--text-muted);
+}
+
+.custom-select-search-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: var(--ring);
+    background-color: var(--bg-card);
+}
+
+.custom-options-list {
+    padding: 4px;
+}
+
+.custom-option.hidden {
+    display: none;
+}
+
+.custom-option.disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    pointer-events: none;
+    color: var(--text-muted);
+}
+
+.custom-select-empty {
+    padding: 16px 12px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-style: italic;
+}
+
+.custom-select-empty.hidden {
+    display: none;
+}
+
+/* — Секція "Люди": дві картки на всю висоту вьюпорта — */
+#section-people {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+#section-people > .landlords-grid {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+#section-people > .landlords-grid > .card.table-card {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 0;
+}
+
+#section-people .card.table-card > .card-header,
+#section-people .card.table-card > .table-filters,
+#section-people .card.table-card > .hint {
+    flex-shrink: 0;
+}
+
+#section-people .card.table-card > .table-wrapper {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+}
+
+#section-people #people-actions-table {
+    width: 100%;
+}
+
+/* ============================================================
+   ✨ MODAL REFRESH — структура та відступи
+   Header (sticky) + Body (scrollable) + Actions (sticky bottom)
+   ============================================================ */
+
+.modal {
+    padding: 28px;
+}
+
+.modal-content {
+    padding: 0;
+    max-height: calc(100vh - 56px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-top: 1px solid var(--border-light);
+    border: 1px solid var(--border-light);
+    border-radius: 16px;
+    margin: 0 auto;
+}
+
+.modal-content.modal-wide {
+    max-width: 1080px;
+}
+
+/* Header — фіксований зверху */
+.modal-header {
+    padding: 20px 26px 16px;
+    margin-bottom: 0;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--border-light);
+    background: var(--bg-card);
+}
+
+.modal-header h3,
+.modal-header h2 {
+    font-size: 17px;
+    font-weight: 650;
+    letter-spacing: -0.015em;
+    line-height: 1.3;
+    color: var(--text-strong);
+    margin: 0;
+}
+
+.modal-close {
+    width: 34px;
+    height: 34px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    color: var(--text-muted);
+    font-size: 22px;
+    line-height: 1;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-close:hover {
+    background: var(--border-light);
+    color: var(--text-strong);
+    border-color: var(--border);
+}
+
+/* Body — прокручується */
+.modal-body {
+    padding: 22px 26px;
+    margin-bottom: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    min-height: 0;
+}
+
+/* Вертикальний інтервал між сусідніми блоками всередині модалки
+   (form-grid, form-field.full, hint, form-hint, секції тощо).
+   Не дублюється з gap у grid: gap працює між елементами всередині одного grid,
+   margin-top — між самими grid-блоками. */
+.modal-body > * + * {
+    margin-top: 16px;
+}
+
+/* form-grid у тілі модалки — компактний gap між полями */
+.modal-body > .form-grid {
+    gap: 14px 16px;
+}
+
+.modal-body .form-field {
+    gap: 6px;
+}
+
+/* Не подвоюємо інтервал, коли йдуть «непомітні» технічні блоки */
+.modal-body > .hidden + *,
+.modal-body > * + .hidden {
+    /* hidden-сусід не повинен накидати свій margin-top сусіду */
+}
+
+.modal-body > .hidden {
+    margin-top: 0 !important;
+}
+
+.modal-body .form-field label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-soft);
+    letter-spacing: 0.01em;
+    text-transform: uppercase;
+}
+
+.modal-body .form-actions {
+    margin-top: 6px;
+}
+
+.modal-body .form-hint {
+    font-size: 12.5px;
+    line-height: 1.4;
+}
+
+.modal-body .form-hint:empty {
+    display: none;
+}
+
+/* Footer / Actions — фіксований знизу */
+.modal-actions,
+.modal-footer-buttons {
+    flex-shrink: 0;
+}
+
+.modal-actions {
+    padding: 14px 26px 18px;
+    margin-top: 0;
+    border-top: 1px solid var(--border-light);
+    background: var(--bg-page);
+    border-bottom-left-radius: 16px;
+    border-bottom-right-radius: 16px;
+    gap: 10px;
+}
+
+.modal-actions .btn {
+    min-width: 120px;
+}
+
+/* Small/confirm modals — без зайвих хвостиків */
+.modal-content:not(.modal-wide) .modal-body {
+    padding: 22px 26px;
+}
+
+/* Form всередині modal — підправляємо коли він сам — body */
+.modal-content > form.modal-body {
+    padding: 22px 26px;
+}
+
+/* Section всередині modal-body */
+.modal-body .form-section {
+    padding: 16px 18px;
+    margin-bottom: 14px;
+    border-radius: 12px;
+}
+
+.modal-body .form-section:last-child {
+    margin-bottom: 0;
+}
+
+.modal-body .form-section-title {
+    font-size: 11px;
+    margin-bottom: 10px;
+}
+
+/* Counterparty toggle — глибший інтервал у модалці */
+.modal-body .counterparty-toggle {
+    margin-top: 4px;
+}
+
+/* ============================================================
+   ✨ UI POLISH v2 — комплексний рефакторінг візуальної мови
+   • Карточки/таблиці/бейджі/фільтри з єдиною дизайн-системою
+   • Чіткіша ієрархія тексту, м'якіші тіні, узгоджені радіуси
+   ============================================================ */
+
+/* ── Page section headers ── */
+.section-header {
+    margin-bottom: 22px;
+    gap: 4px;
+}
+
+.section-header h1 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.2;
+    color: var(--text-strong);
+}
+
+.section-header h3 {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-strong);
+}
+
+.section-subtitle {
+    font-size: 13px;
+    color: var(--text-soft);
+    line-height: 1.5;
+}
+
+/* ── Cards ── */
+.card {
+    border-radius: 14px;
+    border: 1px solid var(--border-light);
+    box-shadow: var(--shadow-soft);
+    padding: 22px;
+}
+
+.card .card-header {
+    margin-bottom: 16px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.card .card-title {
+    font-size: 15px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    color: var(--text-strong);
+}
+
+.card-header-actions {
     gap: 8px;
+}
+
+/* ── Filters bar ── */
+.table-filters {
+    padding: 12px 14px;
+    margin-bottom: 14px;
+    background: var(--bg-page);
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    align-items: flex-end;
+}
+
+.table-filters .form-field {
+    gap: 5px;
+    min-width: 160px;
+}
+
+.table-filters .form-field label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin-bottom: 0;
+}
+
+.table-filters .form-field input,
+.table-filters .form-field select,
+.table-filters .form-field .custom-select-trigger {
+    height: 36px;
+    font-size: 13px;
+}
+
+/* ── Tables: уніфікована типографіка ── */
+.data-table {
+    font-size: 13px;
+    border-collapse: separate;
+    border-spacing: 0;
+    width: 100%;
+}
+
+.data-table thead th {
+    background: var(--bg-page);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
     white-space: nowrap;
 }
 
-@media (max-width: 480px) {
-    .cash-pocket-main {
-        padding: 12px 12px 24px;
-    }
+.data-table tbody td {
+    padding: 13px 14px;
+    border-bottom: 1px solid var(--border-light);
+    color: var(--text-strong);
+    vertical-align: middle;
+    line-height: 1.45;
+}
 
-    .cash-pocket-header {
+.data-table tbody tr {
+    transition: background 0.1s var(--ease-out);
+}
+
+.data-table tbody tr:hover {
+    background: var(--primary-50);
+}
+
+.data-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.data-table .td-mono {
+    font-family: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.data-table .td-weight,
+.data-table .td-amount {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.data-table thead th.td-weight,
+.data-table thead th.td-amount {
+    text-align: right;
+}
+
+.data-table .actions-cell {
+    text-align: right;
+    white-space: nowrap;
+    width: 1%;
+}
+
+.data-table .actions-cell > * + * {
+    margin-left: 6px;
+}
+
+.row-muted td {
+    color: var(--text-muted);
+    background: rgba(15, 23, 42, 0.012);
+}
+
+.row-cancelled td {
+    color: var(--text-muted);
+    text-decoration: line-through;
+    background: rgba(239, 68, 68, 0.04);
+}
+
+.row-cancelled td:last-child {
+    text-decoration: none;
+}
+
+/* ── Status badges (читабельні розміри + узгоджені кольори) ── */
+.status-badge {
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    line-height: 1.4;
+    max-width: none;
+    border: 1px solid transparent;
+    border-radius: 999px;
+}
+
+.status-badge.success {
+    background: var(--primary-50);
+    color: #15803d;
+    border-color: rgba(22, 163, 74, 0.18);
+}
+
+.status-badge.warning {
+    background: #fff7ed;
+    color: #c2410c;
+    border-color: rgba(234, 88, 12, 0.2);
+}
+
+.status-badge.danger {
+    background: #fef2f2;
+    color: #b91c1c;
+    border-color: rgba(220, 38, 38, 0.2);
+}
+
+.status-badge.info {
+    background: #eff6ff;
+    color: #1d4ed8;
+    border-color: rgba(37, 99, 235, 0.2);
+}
+
+.status-badge.muted {
+    background: #f1f5f9;
+    color: #64748b;
+    border-color: var(--border);
+}
+
+.status-badge.status-closed {
+    background: var(--primary-50);
+    color: #15803d;
+    border-color: rgba(22, 163, 74, 0.18);
+}
+
+.status-badge.status-active {
+    background: #eff6ff;
+    color: #1d4ed8;
+    border-color: rgba(37, 99, 235, 0.2);
+}
+
+/* ── Inline badges (типи операцій) ── */
+.inline-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 9px;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    line-height: 1.4;
+    border: 1px solid transparent;
+}
+
+.inline-badge.grain    { background: #fffbeb; color: #92400e; border-color: rgba(146, 64, 14, 0.15); }
+.inline-badge.cash     { background: #eff6ff; color: #1d4ed8; border-color: rgba(29, 78, 216, 0.15); }
+.inline-badge.purchase { background: #faf5ff; color: #7c3aed; border-color: rgba(124, 58, 237, 0.18); }
+.inline-badge.voucher  { background: #fdf2f8; color: #be185d; border-color: rgba(190, 24, 93, 0.18); }
+.inline-badge.issue    { background: #ecfdf5; color: #047857; border-color: rgba(4, 120, 87, 0.18); }
+.inline-badge.receive  { background: #fff7ed; color: #c2410c; border-color: rgba(194, 65, 12, 0.18); }
+.inline-badge.settlement { background: #eef2ff; color: #4338ca; border-color: rgba(67, 56, 202, 0.18); }
+
+/* ── Empty states ── */
+.empty-state,
+.table-empty-message {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 40px 20px;
+    font-size: 14px;
+    line-height: 1.6;
+    font-style: normal;
+}
+
+.table-empty-message .table-empty-icon {
+    display: block;
+    font-size: 32px;
+    margin-bottom: 10px;
+    opacity: 0.6;
+}
+
+/* hint blocks под таблицами/формами */
+.hint {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    padding: 10px 12px;
+    background: var(--bg-page);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    margin-top: 12px;
+}
+
+.hint:empty,
+.hint[style*="display: none"] {
+    display: none;
+}
+
+/* form-hint inline (внизу полів) */
+.form-hint {
+    font-size: 12.5px;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
+.form-hint.error {
+    color: var(--danger);
+    font-weight: 500;
+}
+
+.form-hint.success {
+    color: var(--success);
+    font-weight: 500;
+}
+
+/* ── Icon buttons (table actions) ── */
+.btn-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-soft);
+    transition: background 0.12s, color 0.12s, border-color 0.12s, transform 0.1s;
+}
+
+.btn-icon svg {
+    width: 16px;
+    height: 16px;
+}
+
+.btn-icon:hover:not(:disabled) {
+    background: var(--bg-page);
+    color: var(--text-strong);
+    border-color: #d1d5db;
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-xs);
+}
+
+.btn-icon-danger {
+    color: #dc2626;
+}
+
+.btn-icon-danger:hover:not(:disabled) {
+    background: #fef2f2;
+    color: #b91c1c;
+    border-color: rgba(220, 38, 38, 0.3);
+}
+
+.btn-icon-secondary {
+    color: var(--text-soft);
+}
+
+.btn-icon-secondary:hover:not(:disabled) {
+    color: var(--primary-dark);
+    border-color: rgba(22, 163, 74, 0.3);
+    background: var(--primary-50);
+}
+
+/* ── Table wrapper ── */
+.table-wrapper {
+    border-radius: 12px;
+    border: 1px solid var(--border-light);
+    overflow: auto;
+    background: var(--bg-card);
+}
+
+/* ── Form-field improvements ── */
+.form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.form-field label {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text-soft);
+    text-transform: uppercase;
+}
+
+.form-field.has-field-error input,
+.form-field.has-field-error select,
+.form-field.has-field-error textarea,
+.form-field.has-field-error .custom-select-trigger {
+    border-color: var(--danger);
+    box-shadow: var(--ring-danger);
+}
+
+.form-field input[readonly] {
+    background: var(--bg-page);
+    color: var(--text-soft);
+    cursor: default;
+}
+
+.form-field .form-hint {
+    margin-top: 2px;
+}
+
+/* ── Custom select trigger ── */
+.custom-select-trigger {
+    height: 38px;
+    padding: 0 36px 0 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-strong);
+    font-size: 14px;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    position: relative;
+}
+
+.custom-select-trigger::after {
+    content: '';
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    width: 14px;
+    height: 14px;
+    background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>") center / contain no-repeat;
+    transform: translateY(-50%);
+    transition: transform 0.2s var(--ease-out);
+    pointer-events: none;
+}
+
+.custom-select.open .custom-select-trigger::after {
+    transform: translateY(-50%) rotate(180deg);
+}
+
+.custom-select-trigger:hover::after {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234b5563' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+}
+
+.custom-select-trigger:hover {
+    border-color: #d1d5db;
+}
+
+.custom-select.open .custom-select-trigger {
+    border-color: var(--primary);
+    box-shadow: var(--ring);
+}
+
+.custom-options {
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-pop);
+    padding: 0;
+    overflow: hidden;
+    background: var(--bg-card);
+}
+
+/* Тільки селект валюти у рядку контракту: робимо ширшим, щоб UAH/USD/EUR
+   не показували горизонтальний скрол у попапі. Глобально дропдауни не чіпаємо. */
+.fc-item-cash-wrap .custom-select {
+    min-width: 110px;
+}
+
+/* ============================================================
+   Dashboard report
+   ============================================================ */
+
+.report {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    width: 100%;
+}
+
+.report-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.report-title {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.report-title h2 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-strong);
+    margin: 0;
+}
+
+.report-period-hint {
+    font-size: 12.5px;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.report-controls {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.report-controls .form-field {
+    min-width: 140px;
+    gap: 4px;
+}
+
+.report-controls .form-field input {
+    height: 36px;
+    font-size: 13px;
+}
+
+.report-kpis {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+}
+
+.report-card {
+    margin-bottom: 0;
+}
+
+/* ============================================================
+   Report tables — same look as the regular .data-table elsewhere.
+   Only structural helpers stay (sticky col, numeric alignment,
+   balance KPI tint, group headers).
+   ============================================================ */
+#report-movements-table {
+    min-width: 1480px;
+}
+
+#report-farmer-settlements-table {
+    min-width: 1100px;
+}
+
+#report-debts-table {
+    min-width: 1100px;
+}
+
+.report-table .rt-num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.report-table .rt-balance {
+    background: rgba(254, 240, 138, 0.4);
+    font-weight: 700;
+}
+
+.report-table .rt-sticky-col {
+    position: sticky;
+    left: 0;
+    background: var(--bg-card);
+    z-index: 1;
+    text-align: left;
+    min-width: 140px;
+}
+
+.report-table thead .rt-sticky-col {
+    background: var(--bg-hover);
+    z-index: 3;
+}
+
+.report-table tbody tr:nth-child(even) .rt-sticky-col {
+    background: #f8fafc;
+}
+
+.report-table tbody tr:hover .rt-sticky-col {
+    background: rgba(34, 197, 94, 0.08);
+}
+
+@media (max-width: 720px) {
+    .report-header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .report-controls {
+        width: 100%;
+    }
+    .report-table {
+        font-size: 11.5px;
+    }
+    .report-table thead th,
+    .report-table tbody td {
+        padding: 8px 7px;
+    }
+}
+
+/* ============================================================
+   Select-with-add — дропдаун + кнопка «+ Новий».
+   Використовується там, де довгі довідники (фермери, орендодавці).
+   ============================================================ */
+.select-with-add {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+    width: 100%;
+    min-width: 0;
+}
+
+.select-with-add > .custom-select,
+.select-with-add > select {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.select-with-add > .btn {
+    flex-shrink: 0;
+    white-space: nowrap;
+    height: 38px;
+    padding: 0 14px;
+    align-self: flex-start;
+}
+
+.custom-option {
+    width: 100%;
+    text-align: left;
+    padding: 9px 12px;
+    border: none;
+    background: transparent;
+    font-size: 13.5px;
+    font-family: inherit;
+    color: var(--text-strong);
+    cursor: pointer;
+    border-radius: 6px;
+    transition: background 0.1s;
+}
+
+.custom-option:hover {
+    background: var(--bg-page);
+}
+
+.custom-option.selected {
+    background: var(--primary-50);
+    color: var(--primary-dark);
+    font-weight: 600;
+}
+
+.custom-options-list {
+    padding: 4px;
+    max-height: 280px;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* ── Buttons polish ── */
+.btn-small {
+    height: 32px;
+    padding: 0 14px;
+    font-size: 12.5px;
+    border-radius: 8px;
+}
+
+.btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--primary-tint), 0 0 0 5px rgba(22, 163, 74, 0.18);
+}
+
+/* ── Suggestions dropdown ── */
+.suggestions {
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-pop);
+    background: var(--bg-card);
+    padding: 4px;
+    max-height: 240px;
+    overflow-y: auto;
+}
+
+.suggestions > * {
+    padding: 8px 12px;
+    font-size: 13.5px;
+    color: var(--text-strong);
+    cursor: pointer;
+    border-radius: 6px;
+    transition: background 0.1s;
+}
+
+.suggestions > *:hover,
+.suggestions > .active {
+    background: var(--primary-50);
+    color: var(--primary-dark);
+}
+
+/* ── Loading skeleton (fallback в порожніх таблицях під час завантаження) ── */
+.skeleton {
+    display: inline-block;
+    height: 12px;
+    background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+    background-size: 200% 100%;
+    border-radius: 4px;
+    animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+.skeleton-row {
+    pointer-events: none;
+}
+
+.skeleton-row td {
+    padding: 13px 14px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.skeleton-row:last-child td {
+    border-bottom: none;
+}
+
+.skeleton-row .skeleton {
+    height: 14px;
+    border-radius: 5px;
+}
+
+/* ── Spinner ── */
+.spinner {
+    width: 18px;
+    height: 18px;
+    border: 2px solid rgba(22, 163, 74, 0.18);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    display: inline-block;
+    animation: spinner-rotate 0.6s linear infinite;
+}
+
+@keyframes spinner-rotate {
+    to { transform: rotate(360deg); }
+}
+
+/* ── Toast polish ── */
+.toast-container {
+    position: fixed;
+    top: 24px;
+    right: 24px;
+    z-index: 5000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    pointer-events: none;
+}
+
+.toast {
+    pointer-events: auto;
+    min-width: 280px;
+    max-width: 380px;
+    padding: 12px 16px;
+    border-radius: 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-light);
+    box-shadow: var(--shadow-pop);
+    transform: translateX(20px);
+    opacity: 0;
+    transition: opacity 0.2s var(--ease-out), transform 0.2s var(--ease-out);
+    border-left: 3px solid var(--primary);
+}
+
+.toast.show {
+    transform: translateX(0);
+    opacity: 1;
+}
+
+.toast.toast-error {
+    border-left-color: var(--danger);
+}
+
+.toast.toast-success {
+    border-left-color: var(--success);
+}
+
+.toast-title {
+    font-size: 13px;
+    font-weight: 650;
+    color: var(--text-strong);
+    margin-bottom: 2px;
+}
+
+.toast-message {
+    font-size: 13px;
+    color: var(--text-soft);
+    line-height: 1.45;
+}
+
+/* ── Sidebar refinements ── */
+.sidebar-nav .nav-item .nav-icon {
+    width: 18px;
+    height: 18px;
+    opacity: 0.85;
+}
+
+.nav-item.active .nav-icon {
+    opacity: 1;
+    stroke: var(--primary-light);
+}
+
+.sidebar-footer {
+    padding: 16px;
+}
+
+.user-info {
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 10px;
+}
+
+.user-name {
+    font-size: 13.5px;
+}
+
+.user-role {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+/* ── Header bar (top of dashboard) ── */
+#page-title {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+/* ── Adaptive: tablet ── */
+@media (max-width: 1024px) {
+    .sidebar {
+        width: 220px;
+    }
+    .data-table {
+        font-size: 12.5px;
+    }
+    .data-table thead th,
+    .data-table tbody td {
         padding: 10px 12px;
     }
+}
 
-    .cash-pocket-table-wrap .data-table {
-        font-size: 13px;
+/* ── Adaptive: mobile (просто щоб не зламалось) ── */
+@media (max-width: 720px) {
+    .modal {
+        padding: 12px;
+    }
+    .modal-content {
+        max-height: calc(100vh - 24px);
+    }
+    .modal-header,
+    .modal-body,
+    .modal-actions {
+        padding-left: 18px;
+        padding-right: 18px;
+    }
+    .modal-body > .form-grid {
+        grid-template-columns: 1fr !important;
+    }
+    .table-filters {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .table-filters .form-field {
+        min-width: 0;
+    }
+    .card-header {
+        flex-wrap: wrap;
+    }
+    .card-header-actions {
+        flex-wrap: wrap;
+    }
+    .data-table {
+        font-size: 12px;
+    }
+    .data-table thead th,
+    .data-table tbody td {
+        padding: 9px 10px;
+    }
+}
+
+/* ── Fix: суміжні «hidden»-блоки не з'їдають spacing — */
+.modal-body > .hidden,
+.modal-body > [hidden] {
+    display: none !important;
+}
+
+/* ── Полировка фокуса інпутів у фільтрах ── */
+.table-filters input:focus,
+.table-filters select:focus,
+.table-filters .custom-select.open .custom-select-trigger {
+    border-color: var(--primary);
+    box-shadow: var(--ring);
+}
+
+/* ── form-actions/sticky-actions всередині модалки — як footer ──
+   Деякі модалки (intake-create, intake-edit, purchase) тримають
+   submit-кнопку всередині <form>, а не у .modal-actions. Робимо
+   їх візуально однаковими з footer-ом інших модалок. */
+.modal-body form > .form-actions,
+.modal-body > .form-actions,
+.modal-body .form-actions.sticky-actions,
+.modal-body .form-actions.intake-edit-actions {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 14px 26px;
+    margin: 14px -26px -22px;
+    border-top: 1px solid var(--border-light);
+    background: var(--bg-page);
+    border-bottom-left-radius: 16px;
+    border-bottom-right-radius: 16px;
+    position: sticky;
+    bottom: -22px;
+    z-index: 2;
+}
+
+/* Hint/повідомлення зліва, кнопка справа */
+.modal-body .form-actions .form-hint,
+.modal-body .form-actions #intake-message,
+.modal-body .form-actions #edit-message {
+    margin-right: auto;
+    flex: 1;
+    min-width: 0;
+}
+
+.modal-body .form-actions .form-hint:empty,
+.modal-body .form-actions #intake-message:empty,
+.modal-body .form-actions #edit-message:empty {
+    display: none;
+}
+
+.modal-body .form-actions .btn-primary,
+.modal-body .form-actions .btn-secondary {
+    min-width: 140px;
+}
+
+/* Запобігаємо подвійним стилям з попередніх правил */
+.intake-modal .form-actions.sticky-actions,
+.intake-modal .intake-edit-actions {
+    flex-direction: row !important;
+}
+
+/* ============================================================
+   ✨ Date pickers (експорт-модалки)
+   ============================================================ */
+
+.date-field {
+    position: relative;
+    width: 100%;
+}
+
+.date-field .date-input {
+    height: 38px;
+    width: 100%;
+    padding: 0 40px 0 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-strong);
+    font-size: 14px;
+    font-family: inherit;
+    font-variant-numeric: tabular-nums;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.date-field .date-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: var(--ring);
+}
+
+.date-field .date-input::placeholder {
+    color: var(--text-muted);
+}
+
+.date-picker-btn {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: background 0.12s, color 0.12s;
+}
+
+.date-picker-btn:hover {
+    background: var(--border-light);
+    color: var(--text-strong);
+}
+
+.date-picker-icon {
+    width: 16px;
+    height: 16px;
+    stroke: currentColor;
+    fill: none;
+}
+
+/* Експорт-модалки: дві дати поруч + хінт + футер */
+[id$="-report-modal"] .modal-body > .form-grid,
+.modal-body > .form-grid:has(.date-field) {
+    grid-template-columns: 1fr 1fr;
+    gap: 14px 16px;
+}
+
+[id$="-report-modal"] .modal-body .hint,
+.modal-body .form-grid + .hint {
+    margin-top: 14px;
+}
+
+[id$="-report-modal"] .modal-actions .btn-primary::before {
+    content: '';
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    margin-right: 4px;
+    background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='7 10 12 15 17 10'/><line x1='12' y1='15' x2='12' y2='3'/></svg>") center / contain no-repeat;
+}
+
+/* ============================================================
+   ✨ Dashboard: уніфіковані KPI-карточки
+   Три валютних блоки нагорі + метрики всередині — єдиний стиль.
+   ============================================================ */
+
+/* Top strip: даємо більше повітря і дозволяємо рости */
+.db-top {
+    gap: 14px;
+}
+
+.db-cash {
+    flex: 1;
+    padding: 18px 20px;
+    border-radius: 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-light);
+    box-shadow: var(--shadow-soft);
+    position: relative;
+    overflow: hidden;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    transition: box-shadow 0.18s, transform 0.12s;
+}
+
+.db-cash:hover {
+    box-shadow: var(--shadow-med);
+    transform: translateY(-1px);
+}
+
+/* Кольоровий акцент зверху — окрема смужка по валюті */
+.db-cash::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--accent-from), var(--accent-to));
+}
+
+.db-cash-uah {
+    --accent-from: #22c55e;
+    --accent-to:   #16a34a;
+}
+.db-cash-usd {
+    --accent-from: #3b82f6;
+    --accent-to:   #2563eb;
+}
+.db-cash-eur {
+    --accent-from: #a78bfa;
+    --accent-to:   #7c3aed;
+}
+
+/* Лейбл-валюта + значення нової ієрархії */
+.db-cash-cur {
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    background: none;
+    -webkit-text-fill-color: initial;
+}
+
+.db-cash-uah .db-cash-cur::before { content: 'UAH '; color: #15803d; }
+.db-cash-usd .db-cash-cur::before { content: 'USD '; color: #1d4ed8; }
+.db-cash-eur .db-cash-cur::before { content: 'EUR '; color: #6d28d9; }
+
+.db-cash-uah .db-cash-cur,
+.db-cash-usd .db-cash-cur,
+.db-cash-eur .db-cash-cur {
+    /* Ховаємо оригінальний знак валюти ($, €, ₴) — він не потрібен поряд з акронімом */
+    font-size: 0;
+}
+
+.db-cash-uah .db-cash-cur::before,
+.db-cash-usd .db-cash-cur::before,
+.db-cash-eur .db-cash-cur::before {
+    font-size: 11px;
+}
+
+.db-cash-val {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-strong);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+}
+
+/* ── Картки в основній сітці дашборда ── */
+.db-card {
+    border-radius: 14px;
+    border: 1px solid var(--border-light);
+    box-shadow: var(--shadow-soft);
+    background: var(--bg-card);
+}
+
+.db-card-head {
+    padding: 16px 20px 12px;
+    border-bottom: 1px solid var(--border-light);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.db-card-title {
+    font-size: 14px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    color: var(--text-strong);
+}
+
+.db-card-badge {
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: var(--primary-50);
+    color: var(--primary-dark);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+.db-card-body {
+    padding: 14px 20px 18px;
+}
+
+/* Метрики всередині картки — узгоджена типографіка */
+.db-m-section {
+    padding: 14px 0;
+    border-bottom: 1px dashed var(--border-light);
+}
+
+.db-m-section:first-child { padding-top: 0; }
+.db-m-section:last-child  { border-bottom: none; padding-bottom: 0; }
+
+.db-m-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+}
+
+.db-m-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 4px;
+    border-radius: 10px;
+    transition: background 0.12s;
+}
+
+.db-m-cell:hover {
+    background: var(--bg-page);
+}
+
+.db-m-val {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+    color: var(--text-strong);
+}
+
+.db-m-sub {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.db-m-lbl {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-muted);
+    text-align: center;
+    line-height: 1.3;
+    letter-spacing: 0.01em;
+}
+
+.db-m-green  { color: #15803d; }
+.db-m-blue   { color: #1d4ed8; }
+.db-m-orange { color: #c2410c; }
+.db-m-red    { color: #b91c1c; }
+
+/* Bar (own/farmer split) */
+.db-m-bar {
+    height: 6px;
+    background: var(--border-light);
+    border-radius: 999px;
+    overflow: hidden;
+    margin-top: 12px;
+    display: flex;
+}
+
+.db-m-bar-a {
+    background: linear-gradient(90deg, #22c55e, #16a34a);
+    transition: width 0.4s ease;
+}
+
+.db-m-bar-b {
+    background: linear-gradient(90deg, #60a5fa, #3b82f6);
+    transition: width 0.4s ease;
+}
+
+/* Stock list elements */
+.db-stock-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 0;
+    border-bottom: 1px dashed var(--border-light);
+}
+
+.db-stock-item:last-child {
+    border-bottom: none;
+}
+
+.db-stock-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.db-stock-name {
+    flex: 0 0 110px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-strong);
+}
+
+.db-stock-bar-wrap {
+    flex: 1;
+    height: 8px;
+    background: var(--border-light);
+    border-radius: 999px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+}
+
+.db-stock-bar-own {
+    background: linear-gradient(90deg, #22c55e, #16a34a);
+    height: 100%;
+    border-radius: 999px 0 0 999px;
+    transition: width 0.4s ease;
+}
+
+.db-stock-bar-farmer {
+    background: linear-gradient(90deg, #60a5fa, #3b82f6);
+    height: 100%;
+    transition: width 0.4s ease;
+}
+
+.db-stock-qty {
+    flex: 0 0 auto;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-soft);
+    font-variant-numeric: tabular-nums;
+    min-width: 70px;
+    text-align: right;
+}
+
+.db-stock-sub {
+    display: flex;
+    gap: 14px;
+    padding-left: 122px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.db-stock-sub .dot-own,
+.db-stock-sub .dot-farmer {
+    font-weight: 600;
+    color: var(--text-strong);
+    font-variant-numeric: tabular-nums;
+}
+
+.db-stock-legend {
+    display: flex;
+    gap: 16px;
+    padding: 10px 20px 14px;
+    font-size: 11px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border-light);
+}
+
+.db-leg-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 5px;
+    vertical-align: middle;
+}
+
+.db-empty {
+    text-align: center;
+    padding: 24px 12px;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+/* GF section (grain & farmers) */
+.db-gf-section {
+    padding: 14px 0;
+    border-bottom: 1px dashed var(--border-light);
+}
+
+.db-gf-section:first-child { padding-top: 0; }
+.db-gf-section:last-child  { border-bottom: none; padding-bottom: 0; }
+
+.db-gf-header {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.db-gf-total {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-strong);
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.db-gf-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.db-gf-item {
+    background: var(--bg-page);
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.db-gf-yes { border-left: 3px solid var(--primary); }
+.db-gf-no  { border-left: 3px solid var(--warning); }
+
+.db-gf-num {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-strong);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+}
+
+.db-gf-lbl {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.3;
+}
+
+.db-gf-bar-wrap {
+    height: 6px;
+    background: var(--border-light);
+    border-radius: 999px;
+    overflow: hidden;
+    margin-top: 12px;
+}
+
+.db-gf-bar-fill {
+    background: linear-gradient(90deg, #22c55e, #16a34a);
+    height: 100%;
+    transition: width 0.4s ease;
+}
+
+.db-gf-pct {
+    margin-top: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--primary-dark);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.db-gf-cats {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.db-gf-cat-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+}
+
+.db-gf-cat-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.db-gf-cat-name {
+    flex: 1;
+    font-size: 13px;
+    color: var(--text-strong);
+    font-weight: 500;
+}
+
+.db-gf-cat-val {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-soft);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================
+   ✨ Action menu (kebab) — на вузьких екранах
+   Складає всі іконки в попап з трьох крапок без зміни HTML.
+   Працює через :focus-within і :hover, з fallback на details.
+   ============================================================ */
+
+@media (max-width: 720px) {
+    .actions-cell {
+        position: relative;
+        width: 44px;
     }
 
-    .cash-pocket-table-wrap .data-table th,
-    .cash-pocket-table-wrap .data-table td {
-        padding: 10px 8px;
+    .actions-cell::before {
+        content: '⋮';
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        font-size: 22px;
+        line-height: 1;
+        font-weight: 700;
+        color: var(--text-muted);
+        cursor: pointer;
+        border-radius: 8px;
+        border: 1px solid transparent;
+    }
+
+    .actions-cell:hover::before,
+    .actions-cell:focus-within::before {
+        background: var(--bg-page);
+        border-color: var(--border);
+        color: var(--text-strong);
+    }
+
+    /* Контейнер з реальними кнопками — спливаюча панель */
+    .actions-cell > * {
+        display: none;
+    }
+
+    .actions-cell.open > *,
+    .actions-cell:focus-within > * {
+        display: inline-flex;
+        position: absolute;
+        right: 8px;
+        top: 100%;
+        z-index: 50;
+        margin-top: 4px;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        box-shadow: var(--shadow-pop);
+        padding: 6px;
+    }
+
+    /* Якщо в комірці кілька дій — стек у колонку */
+    .actions-cell.open,
+    .actions-cell:focus-within {
+        overflow: visible;
     }
 }

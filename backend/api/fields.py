@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 from typing import Optional
@@ -8,7 +8,7 @@ from io import BytesIO
 from backend.database import get_session
 from backend.models import AgriField, User
 from backend.schemas import AgriFieldCreate, AgriFieldResponse
-from backend.auth import get_current_user
+from backend.auth import get_current_user, get_current_super_admin
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 
@@ -79,7 +79,7 @@ async def update_field(
 async def delete_field(
     field_id: int,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Видалення поля"""
     field = session.get(AgriField, field_id)

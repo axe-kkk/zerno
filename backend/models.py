@@ -108,6 +108,17 @@ class GrainOwner(BaseModel, table=True):
     phone: Optional[str] = Field(default=None, description="Номер телефону")
 
 
+class Person(BaseModel, table=True):
+    """Звичайна людина (не фермер) — клієнт без зернового балансу.
+    Може купувати у нас зерно/добрива/насіння за гроші, отримувати
+    переказ зерна від фермера, але власного балансу зерна не веде.
+    """
+    __tablename__ = "people"
+
+    full_name: str = Field(index=True, description="ПІБ людини")
+    phone: Optional[str] = Field(default=None, description="Номер телефону")
+
+
 class GrainStock(BaseModel, table=True):
     """Залишки зерна на складі"""
     __tablename__ = "grain_stock"
@@ -234,6 +245,7 @@ class FarmerContractItemType(str, Enum):
     PURCHASE = "purchase"
     CASH = "cash"
     VOUCHER = "voucher"
+    LAND_SERVICE = "land_service"  # обробка землі (га × грн/га)
 
 
 class FarmerContractItemDirection(str, Enum):
@@ -253,10 +265,13 @@ class FarmerContractPaymentType(str, Enum):
 
 
 class FarmerContract(BaseModel, table=True):
-    """Контракт з фермером"""
+    """Контракт з фермером або людиною.
+    Рівно одне з полів `owner_id` або `person_id` має бути заповнене.
+    """
     __tablename__ = "farmer_contracts"
 
-    owner_id: int = Field(foreign_key="grain_owners.id")
+    owner_id: Optional[int] = Field(default=None, foreign_key="grain_owners.id")
+    person_id: Optional[int] = Field(default=None, foreign_key="people.id", description="Контракт з людиною (без власного зерна)")
     contract_type: str = Field(default="debt", sa_column=Column(String(32), default="debt"))
     status: str = Field(default="open", sa_column=Column(String(32), default="open"))
     total_value_uah: float = Field(default=0.0, description="Сума контракту, грн")
@@ -321,12 +336,17 @@ class FarmerGrainMovementType(str, Enum):
 
 
 class FarmerGrainMovement(BaseModel, table=True):
-    """Переміщення зерна фермерів (списання / трансфер)"""
+    """Переміщення зерна фермерів (списання / трансфер).
+    `to_owner_id` — переказ іншому фермеру (зерно лишається на складі).
+    `to_person_id` — переказ людині (зерно фізично залишає склад).
+    Обидва порожні — звичайне списання (deduct).
+    """
     __tablename__ = "farmer_grain_movements"
 
     movement_type: str = Field(description="deduct / transfer")
     from_owner_id: int = Field(foreign_key="grain_owners.id")
     to_owner_id: Optional[int] = Field(default=None, foreign_key="grain_owners.id")
+    to_person_id: Optional[int] = Field(default=None, foreign_key="people.id", description="Переказ людині")
     culture_id: int = Field(foreign_key="grain_cultures.id")
     quantity_kg: float = Field(description="Кількість, кг")
     note: Optional[str] = Field(default=None, description="Примітка")

@@ -165,6 +165,22 @@ def init_db():
         ))
         conn.commit()
 
+        # Міграція: «Люди» — окрема сутність, що може купувати у нас і приймати трансфери зерна.
+        conn.execute(text(
+            "ALTER TABLE farmer_contracts ADD COLUMN IF NOT EXISTS person_id INTEGER REFERENCES people(id)"
+        ))
+        # owner_id був NOT NULL — тепер контракт може бути або з фермером, або з людиною.
+        try:
+            conn.execute(text(
+                "ALTER TABLE farmer_contracts ALTER COLUMN owner_id DROP NOT NULL"
+            ))
+        except Exception:
+            conn.rollback()
+        conn.execute(text(
+            "ALTER TABLE farmer_grain_movements ADD COLUMN IF NOT EXISTS to_person_id INTEGER REFERENCES people(id)"
+        ))
+        conn.commit()
+
     with Session(engine) as session:
         # Создание супер админа, если его еще нет
         admin = session.exec(

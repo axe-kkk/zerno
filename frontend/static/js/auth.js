@@ -3,25 +3,11 @@
 // При локальной разработке можно использовать 'http://localhost:8000/api'
 const API_BASE_URL = '/api';
 
-/** Дозволені цілі після входу (лише ім'я html-файлу, без шляху та протоколу). */
-function getLoginRedirectTarget() {
-    const raw = new URLSearchParams(window.location.search).get('next');
-    if (!raw || typeof raw !== 'string') {
-        return 'dashboard.html';
-    }
-    const name = raw.trim().split('/').pop() || '';
-    if (!/^[a-zA-Z0-9._-]+\.html$/.test(name)) {
-        return 'dashboard.html';
-    }
-    return name;
-}
-
 // Проверка авторизации при загрузке
 document.addEventListener('DOMContentLoaded', () => {
     const token = localStorage.getItem('token');
-    const nextUrl = getLoginRedirectTarget();
     if (token) {
-        window.location.href = nextUrl;
+        window.location.href = 'dashboard.html';
         return;
     }
 
@@ -72,7 +58,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Сохраняем токен
             localStorage.setItem('token', data.access_token);
 
-            window.location.href = getLoginRedirectTarget();
+            window.location.href = 'dashboard.html';
 
         } catch (error) {
             console.error('Помилка входу:', error);

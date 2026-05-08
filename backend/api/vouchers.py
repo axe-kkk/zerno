@@ -7,7 +7,7 @@ from backend.models import (
     TransactionType, Currency, GrainOwner, GrainCulture, FarmerContract,
     FarmerContractPayment
 )
-from backend.auth import get_current_user, User
+from backend.auth import get_current_user, get_current_super_admin, User
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
@@ -137,7 +137,7 @@ async def list_voucher_payments(
 async def create_voucher_payment(
     data: VoucherPaymentCreate,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Створити виплату по загальному боргу талонів (зняти гроші з каси)"""
 
@@ -229,7 +229,7 @@ async def create_voucher_payment(
 async def cancel_voucher_payment(
     payment_id: int,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Скасувати виплату (повернути гроші в касу)"""
     payment = session.get(GrainVoucherPayment, payment_id)

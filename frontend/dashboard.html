@@ -7,7 +7,10 @@
     <meta http-equiv="Pragma" content="no-cache">
     <title>Система обліку зерна - Дашборд</title>
     <link rel="icon" type="image/svg+xml" href="static/favicon.svg">
-    <link rel="stylesheet" href="static/css/style.css?v=177">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+    <link rel="stylesheet" href="static/css/style.css?v=235">
 </head>
 <body class="dashboard-page">
     <div class="dashboard-container">
@@ -65,6 +68,15 @@
                         <path d="M8 8c0-2.5 2-4 4-4s4 1.5 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                     </svg>
                     <span class="nav-text">Фермери</span>
+                </a>
+                <a href="#" class="nav-item" data-page="people">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="9" cy="9" r="3" stroke="currentColor" stroke-width="2"/>
+                        <path d="M2.5 19.5a6.5 6.5 0 0 1 13 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        <circle cx="17.5" cy="8.5" r="2.5" stroke="currentColor" stroke-width="2"/>
+                        <path d="M14 19.5a4.5 4.5 0 0 1 7.5 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    <span class="nav-text">Люди</span>
                 </a>
                 <a href="#" class="nav-item" data-page="stock">
                     <svg class="nav-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -167,162 +179,121 @@
             <div class="content-area" id="content-area">
                 <!-- Dashboard Section -->
                 <section class="page-section" id="section-dashboard">
-                    <div class="db">
-                        <!-- Top strip: cash + mini stats -->
-                        <div class="db-top">
-                            <div class="db-cash db-cash-uah"><span class="db-cash-cur">₴</span><span class="db-cash-val" id="dashboard-cash-uah">0.00</span></div>
-                            <div class="db-cash db-cash-usd"><span class="db-cash-cur">$</span><span class="db-cash-val" id="dashboard-cash-usd">0.00</span></div>
-                            <div class="db-cash db-cash-eur"><span class="db-cash-cur">€</span><span class="db-cash-val" id="dashboard-cash-eur">0.00</span></div>
+                    <div class="report">
+                        <!-- Header: title + period picker + export -->
+                        <div class="report-header">
+                            <div class="report-title">
+                                <h2>Залишки на <span id="report-date">—</span></h2>
+                                <span class="report-period-hint" id="report-period-hint"></span>
+                            </div>
+                            <div class="report-controls">
+                                <div class="form-field">
+                                    <label>Період з</label>
+                                    <input type="date" id="report-start-date">
+                                </div>
+                                <div class="form-field">
+                                    <label>по</label>
+                                    <input type="date" id="report-end-date">
+                                </div>
+                                <button class="btn btn-secondary btn-small" id="report-reset-btn">Весь час</button>
+                                <button class="btn btn-secondary btn-small" id="report-export-btn">Завантажити</button>
+                                <button class="btn btn-primary btn-small" id="report-refresh-btn">Оновити</button>
+                            </div>
                         </div>
 
-                        <!-- Main area: 2 columns -->
-                        <div class="db-main">
-                            <!-- LEFT: stock by culture + recent cash ops -->
-                            <div class="db-col-left">
-                                <div class="db-card db-card-stock db-card-half">
-                                    <div class="db-card-head">
-                                        <span class="db-card-title">Склад по культурах</span>
-                                        <span class="db-card-badge" id="dashboard-total-stock">0 кг</span>
-                                    </div>
-                                    <div class="db-card-body db-stock-list" id="dashboard-stock-cultures">
-                                        <div class="db-empty">Завантаження…</div>
-                                    </div>
-                                    <div class="db-stock-legend">
-                                        <span class="db-leg"><span class="db-leg-dot" style="background:#22c55e"></span>Власне</span>
-                                        <span class="db-leg"><span class="db-leg-dot" style="background:#3b82f6"></span>Фермерське</span>
-                                    </div>
-                                </div>
-                                <div class="db-card db-card-half">
-                                    <div class="db-card-head"><span class="db-card-title">Останні операції каси</span></div>
-                                    <div class="db-card-body db-card-scroll" id="dashboard-recent-transactions">
-                                        <div class="db-empty">Завантаження…</div>
-                                    </div>
-                                </div>
+                        <!-- Cash KPI strip -->
+                        <div class="report-kpis">
+                            <div class="db-cash db-cash-uah">
+                                <span class="db-cash-cur">UAH</span>
+                                <span class="db-cash-val" id="dashboard-cash-uah">0.00</span>
                             </div>
+                            <div class="db-cash db-cash-usd">
+                                <span class="db-cash-cur">USD</span>
+                                <span class="db-cash-val" id="dashboard-cash-usd">0.00</span>
+                            </div>
+                            <div class="db-cash db-cash-eur">
+                                <span class="db-cash-cur">EUR</span>
+                                <span class="db-cash-val" id="dashboard-cash-eur">0.00</span>
+                            </div>
+                        </div>
 
-                            <!-- RIGHT: two panels 50/50 -->
-                            <div class="db-col-right">
-                                <!-- Panel 1: Key metrics grid -->
-                                <div class="db-card db-card-half">
-                                    <div class="db-card-head"><span class="db-card-title">Ключові показники</span></div>
-                                    <div class="db-card-body db-metrics-body">
-                                        <!-- Row: Today -->
-                                        <div class="db-m-section">
-                                            <div class="db-m-label">Сьогодні</div>
-                                            <div class="db-m-row3">
-                                                <div class="db-m-cell">
-                                                    <span class="db-m-val db-m-green" id="dashboard-intakes-today">0</span>
-                                                    <span class="db-m-sub" id="dashboard-intakes-today-kg">0 кг</span>
-                                                    <span class="db-m-lbl">Прийомка</span>
-                                                </div>
-                                                <div class="db-m-cell">
-                                                    <span class="db-m-val db-m-blue" id="dashboard-shipments-today">0</span>
-                                                    <span class="db-m-sub" id="dashboard-shipments-today-kg">0 кг</span>
-                                                    <span class="db-m-lbl">Відвантаження</span>
-                                                </div>
-                                                <div class="db-m-cell">
-                                                    <span class="db-m-val db-m-orange" id="dashboard-intakes-pending">0</span>
-                                                    <span class="db-m-sub">&nbsp;</span>
-                                                    <span class="db-m-lbl">Очікують</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <!-- Row: Grain ownership -->
-                                        <div class="db-m-section">
-                                            <div class="db-m-label">Зерно на складі</div>
-                                            <div class="db-m-row2">
-                                                <div class="db-m-cell">
-                                                    <span class="db-m-val db-m-green" id="dashboard-own-stock">0</span>
-                                                    <span class="db-m-lbl">Власне, кг</span>
-                                                </div>
-                                                <div class="db-m-cell">
-                                                    <span class="db-m-val db-m-blue" id="dashboard-farmer-stock">0</span>
-                                                    <span class="db-m-lbl">Фермерське, кг</span>
-                                                </div>
-                                            </div>
-                                            <div class="db-m-bar">
-                                                <div class="db-m-bar-a" id="dashboard-own-bar"></div>
-                                                <div class="db-m-bar-b" id="dashboard-farmer-bar"></div>
-                                            </div>
-                                        </div>
-                                        <!-- Row: Contracts -->
-                                        <div class="db-m-section">
-                                            <div class="db-m-label">Контракти</div>
-                                            <div class="db-m-row4">
-                                                <div class="db-m-cell">
-                                                    <span class="db-m-val db-m-green" id="dashboard-contracts-open-value">0</span>
-                                                    <span class="db-m-lbl">Відкриті</span>
-                                                </div>
-                                                <div class="db-m-cell">
-                                                    <span class="db-m-val" id="dashboard-contracts-closed-value">0</span>
-                                                    <span class="db-m-lbl">Закриті</span>
-                                                </div>
-                                                <div class="db-m-cell">
-                                                    <span class="db-m-val" id="dashboard-contracts-total-value">0</span>
-                                                    <span class="db-m-lbl">Сума, ₴</span>
-                                                </div>
-                                                <div class="db-m-cell">
-                                                    <span class="db-m-val db-m-orange" id="dashboard-contracts-balance-value">0</span>
-                                                    <span class="db-m-lbl">Залишок, ₴</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <!-- Row: Vouchers -->
-                                        <div class="db-m-section">
-                                            <div class="db-m-label">Хлібний завод</div>
-                                            <div class="db-m-row4">
-                                                <div class="db-m-cell">
-                                                    <span class="db-m-val" id="dashboard-vouchers-count">0</span>
-                                                    <span class="db-m-lbl">Талонів</span>
-                                                </div>
-                                                <div class="db-m-cell">
-                                                    <span class="db-m-val db-m-orange" id="dashboard-vouchers-open">0</span>
-                                                    <span class="db-m-lbl">Відкритих</span>
-                                                </div>
-                                                <div class="db-m-cell">
-                                                    <span class="db-m-val" id="dashboard-vouchers-total">0</span>
-                                                    <span class="db-m-lbl">Сума, ₴</span>
-                                                </div>
-                                                <div class="db-m-cell">
-                                                    <span class="db-m-val db-m-red" id="dashboard-vouchers-remaining">0</span>
-                                                    <span class="db-m-lbl">Борг, ₴</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
+                        <!-- 1. Рух зерна по складу -->
+                        <div class="card table-card report-card">
+                            <div class="card-header">
+                                <div class="card-title">Рух зерна по складу</div>
+                            </div>
+                            <div class="table-wrapper">
+                                <table class="data-table report-table" id="report-movements-table">
+                                    <thead>
+                                        <tr>
+                                            <th rowspan="2" class="rt-sticky-col">Культура</th>
+                                            <th colspan="3" class="rt-group">Прихід, кг</th>
+                                            <th rowspan="2">Втрати, кг</th>
+                                            <th rowspan="2">% втрат</th>
+                                            <th colspan="3" class="rt-group">Відвантажено компаніям, кг</th>
+                                            <th rowspan="2">Видано контрактами, кг</th>
+                                            <th rowspan="2">Виплати оренди, кг</th>
+                                            <th rowspan="2">Перекази людям, кг</th>
+                                            <th rowspan="2">Залишок, кг</th>
+                                        </tr>
+                                        <tr>
+                                            <th>Від фермерів</th>
+                                            <th>На підприємство</th>
+                                            <th>Всього</th>
+                                            <th>Готівка</th>
+                                            <th>Безготівка</th>
+                                            <th>Всього</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
 
-                                <!-- Panel 2: Grain & Farmers -->
-                                <div class="db-card db-card-half">
-                                    <div class="db-card-head"><span class="db-card-title">Зерно та фермери</span></div>
-                                    <div class="db-card-body db-gf-body">
-                                        <!-- Grain purchase -->
-                                        <div class="db-gf-section">
-                                            <div class="db-gf-header">Викуп зерна від фермерів</div>
-                                            <div class="db-gf-pair">
-                                                <div class="db-gf-item db-gf-yes">
-                                                    <span class="db-gf-num" id="dashboard-grain-purchased">0</span>
-                                                    <span class="db-gf-lbl">Викуплено, кг</span>
-                                                </div>
-                                                <div class="db-gf-item db-gf-no">
-                                                    <span class="db-gf-num" id="dashboard-grain-not-purchased">0</span>
-                                                    <span class="db-gf-lbl">Не викуплено, кг</span>
-                                                </div>
-                                            </div>
-                                            <div class="db-gf-bar-wrap">
-                                                <div class="db-gf-bar-fill" id="dashboard-purchase-bar"></div>
-                                            </div>
-                                            <div class="db-gf-pct" id="dashboard-purchase-pct">0%</div>
-                                        </div>
-                                        <!-- Purchases -->
-                                        <div class="db-gf-section db-gf-grow">
-                                            <div class="db-gf-header">Закупки на складі <span class="db-gf-total" id="dashboard-purchases-total">0 кг</span></div>
-                                            <div class="db-gf-cats" id="dashboard-purchases-by-cat">
-                                                <div class="db-empty">Завантаження…</div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
+                        <!-- 2. Розрахунки з фермерами -->
+                        <div class="card table-card report-card">
+                            <div class="card-header">
+                                <div class="card-title">Розрахунки з фермерами</div>
+                            </div>
+                            <div class="table-wrapper">
+                                <table class="data-table report-table" id="report-farmer-settlements-table">
+                                    <thead>
+                                        <tr>
+                                            <th class="rt-sticky-col">Культура</th>
+                                            <th>Надійшло, кг</th>
+                                            <th>Викуплено, кг</th>
+                                            <th>Перекази між фермерами, кг</th>
+                                            <th>Перекази людям, кг</th>
+                                            <th>Списання, кг</th>
+                                            <th>Не викуплено (на балансі), кг</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- 3. Борги -->
+                        <div class="card table-card report-card">
+                            <div class="card-header">
+                                <div class="card-title">Борги (відкриті контракти)</div>
+                            </div>
+                            <div class="table-wrapper">
+                                <table class="data-table report-table" id="report-debts-table">
+                                    <thead>
+                                        <tr>
+                                            <th>#</th>
+                                            <th>Контрагент</th>
+                                            <th>Тип</th>
+                                            <th>Дата</th>
+                                            <th>Сума, ₴</th>
+                                            <th>Сплачено, ₴</th>
+                                            <th>Залишок, ₴</th>
+                                            <th>Примітка</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
@@ -434,7 +405,7 @@
                                 <h4>Нова картка приходу</h4>
                                 <p>Створіть картку, щоб зафіксувати прийом зерна та оновити склад.</p>
                             </div>
-                            <button class="btn btn-primary" id="intake-open-modal">Додати картку</button>
+                            <button class="btn btn-primary" id="intake-open-modal" data-admin-only>Додати картку</button>
                         </div>
                         <div class="card intake-metrics">
                             <div class="metric">
@@ -518,7 +489,7 @@
                 <!-- Purchases Section -->
                 <section class="page-section hidden" id="section-purchases">
                     <div class="section-header"></div>
-                    <div class="card">
+                    <div class="card" data-admin-only>
                         <div class="card-header">
                             <div class="card-title">Нова закупівля</div>
                         </div>
@@ -602,7 +573,7 @@
                                 <h4>Нова відправка</h4>
                                 <p>Оформіть відправку зерна зі складу.</p>
                             </div>
-                            <button class="btn btn-primary" id="shipment-open-modal">Додати відправку</button>
+                            <button class="btn btn-primary" id="shipment-open-modal" data-admin-only>Додати відправку</button>
                         </div>
                     </div>
                     <div class="card table-card">
@@ -946,7 +917,7 @@
                             <div class="card-header">
                                 <div class="card-title">Список фермерів</div>
                                 <div class="card-header-actions">
-                                    <button class="btn btn-secondary btn-small" id="farmer-transfer-btn">Переміщення</button>
+                                    <button class="btn btn-secondary btn-small" id="farmer-transfer-btn" data-admin-only>Переміщення</button>
                                     <button class="btn btn-secondary btn-small" id="farmers-report-btn">Звіт</button>
                                 </div>
                             </div>
@@ -979,7 +950,7 @@
                             <div class="table-filters">
                                 <div class="form-field">
                                     <label>Фермер</label>
-                                    <select id="farmer-intake-filter-owner">
+                                    <select id="farmer-intake-filter-owner" data-searchable="true">
                                         <option value="">Всі фермери</option>
                                     </select>
                                 </div>
@@ -1036,7 +1007,7 @@
                             </div>
                             <div class="form-field">
                                 <label>Фермер</label>
-                                <select id="farmer-movement-filter-owner">
+                                <select id="farmer-movement-filter-owner" data-searchable="true">
                                     <option value="">Всі фермери</option>
                                 </select>
                             </div>
@@ -1076,6 +1047,166 @@
                     </div>
                 </section>
 
+                <!-- People Section (звичайні клієнти, не фермери) -->
+                <section class="page-section hidden" id="section-people">
+                    <div class="section-header"></div>
+                    <div class="landlords-grid">
+                        <div class="card table-card">
+                            <div class="card-header">
+                                <div class="card-title">Список людей</div>
+                                <div class="card-header-actions">
+                                    <button class="btn btn-secondary btn-small" id="people-list-export-btn">Звіт</button>
+                                    <button class="btn btn-primary btn-small" id="person-add-btn">Додати</button>
+                                </div>
+                            </div>
+                            <div class="table-filters">
+                                <div class="form-field">
+                                    <label>Пошук</label>
+                                    <input type="text" id="people-search" placeholder="Введіть ПІБ або телефон">
+                                </div>
+                            </div>
+                            <div class="table-wrapper">
+                                <table class="data-table" id="people-table">
+                                    <thead>
+                                        <tr>
+                                            <th>ПІБ</th>
+                                            <th>Телефон</th>
+                                            <th>Дії</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="card table-card">
+                            <div class="card-header">
+                                <div class="card-title">Дії по людях</div>
+                                <div class="card-header-actions">
+                                    <button class="btn btn-secondary btn-small" id="people-actions-export-btn">Звіт</button>
+                                </div>
+                            </div>
+                            <div class="table-filters">
+                                <div class="form-field">
+                                    <label>Людина</label>
+                                    <select id="people-actions-filter-person" data-searchable="true">
+                                        <option value="">Усі люди</option>
+                                    </select>
+                                </div>
+                                <div class="form-field">
+                                    <label>Тип</label>
+                                    <select id="people-actions-filter-type">
+                                        <option value="">Усі</option>
+                                        <option value="contract">Контракти</option>
+                                        <option value="contract_payment">Оплати по контракту</option>
+                                        <option value="transfer">Перекази зерна</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="table-wrapper">
+                                <table class="data-table" id="people-actions-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Дата</th>
+                                            <th>Людина</th>
+                                            <th>Тип</th>
+                                            <th>Опис</th>
+                                            <th>Кількість, кг</th>
+                                            <th>Сума, грн</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                            <div class="hint" id="people-actions-hint">Поки що дій немає.</div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Person Add/Edit Modal -->
+                <div class="modal hidden" id="person-modal">
+                    <div class="modal-overlay"></div>
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h3 id="person-modal-title">Додати людину</h3>
+                            <button class="modal-close" id="person-modal-close" aria-label="Закрити">×</button>
+                        </div>
+                        <form id="person-form" class="modal-body form-grid">
+                            <input type="hidden" id="person-edit-id" value="">
+                            <div class="form-field full">
+                                <label>ПІБ</label>
+                                <input type="text" id="person-name" required>
+                            </div>
+                            <div class="form-field full">
+                                <label>Телефон</label>
+                                <input type="text" id="person-phone" placeholder="+380...">
+                            </div>
+                            <div class="form-actions full form-actions-stack-msg">
+                                <div class="form-hint" id="person-message" role="status" aria-live="polite"></div>
+                                <div class="modal-footer-buttons">
+                                    <button type="button" class="btn btn-secondary" id="person-modal-cancel">Скасувати</button>
+                                    <button type="submit" class="btn btn-primary">Зберегти</button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Quick Farmer Add Modal -->
+                <div class="modal hidden" id="farmer-quick-add-modal">
+                    <div class="modal-overlay"></div>
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h3>Додати фермера</h3>
+                            <button class="modal-close" id="farmer-quick-add-close" aria-label="Закрити">×</button>
+                        </div>
+                        <form id="farmer-quick-add-form" class="modal-body form-grid">
+                            <div class="form-field full">
+                                <label>ПІБ</label>
+                                <input type="text" id="farmer-quick-add-name" required autocomplete="off">
+                            </div>
+                            <div class="form-field full">
+                                <label>Телефон</label>
+                                <input type="text" id="farmer-quick-add-phone" placeholder="+380..." autocomplete="off">
+                            </div>
+                            <div class="form-actions full form-actions-stack-msg">
+                                <div class="form-hint" id="farmer-quick-add-message" role="status" aria-live="polite"></div>
+                                <div class="modal-footer-buttons">
+                                    <button type="button" class="btn btn-secondary" id="farmer-quick-add-cancel">Скасувати</button>
+                                    <button type="submit" class="btn btn-primary">Додати</button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Quick Landlord Add Modal -->
+                <div class="modal hidden" id="landlord-quick-add-modal">
+                    <div class="modal-overlay"></div>
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h3>Додати орендодавця</h3>
+                            <button class="modal-close" id="landlord-quick-add-close" aria-label="Закрити">×</button>
+                        </div>
+                        <form id="landlord-quick-add-form" class="modal-body form-grid">
+                            <div class="form-field full">
+                                <label>ПІБ</label>
+                                <input type="text" id="landlord-quick-add-name" required autocomplete="off">
+                            </div>
+                            <div class="form-field full">
+                                <label>Телефон</label>
+                                <input type="text" id="landlord-quick-add-phone" placeholder="+380..." autocomplete="off">
+                            </div>
+                            <div class="form-actions full form-actions-stack-msg">
+                                <div class="form-hint" id="landlord-quick-add-message" role="status" aria-live="polite"></div>
+                                <div class="modal-footer-buttons">
+                                    <button type="button" class="btn btn-secondary" id="landlord-quick-add-cancel">Скасувати</button>
+                                    <button type="submit" class="btn btn-primary">Додати</button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
                 <!-- Farmer Contracts Section -->
                 <section class="page-section hidden" id="section-farmer-contracts">
                     <div class="section-header"></div>
@@ -1085,13 +1216,13 @@
                                 <div class="card-title">Контракти фермерів</div>
                                 <div class="card-header-actions">
                                     <button class="btn btn-secondary btn-small" id="fc-contracts-report-btn">Звіт</button>
-                                    <button class="btn btn-primary btn-small" id="farmer-contract-add-btn">Додати</button>
+                                    <button class="btn btn-primary btn-small" id="farmer-contract-add-btn" data-admin-only>Додати</button>
                                 </div>
                             </div>
                             <div class="table-filters" id="farmer-contracts-filters">
                                 <div class="form-field">
                                     <label>Фермер</label>
-                                    <select id="farmer-contracts-filter-owner">
+                                    <select id="farmer-contracts-filter-owner" data-searchable="true">
                                         <option value="">Всі фермери</option>
                                     </select>
                                 </div>
@@ -1239,7 +1370,7 @@
                                 <div class="card-header-actions">
                                     <button class="btn btn-secondary btn-small" id="contracts-report-btn">Звіт</button>
                                     <button class="btn btn-secondary btn-small" id="contracts-debt-report-btn" title="Лише контракти, за якими є борг до орендодавця">Звіт: борг</button>
-                                    <button class="btn btn-primary btn-small" id="contract-add-btn">Додати</button>
+                                    <button class="btn btn-primary btn-small" id="contract-add-btn" data-admin-only>Додати</button>
                                 </div>
                             </div>
                             <div class="table-filters" id="contracts-filters">
@@ -1281,13 +1412,13 @@
                                 <div class="card-title">Виплати</div>
                                 <div class="card-header-actions">
                                     <button class="btn btn-secondary btn-small" id="payments-report-btn">Звіт</button>
-                                    <button class="btn btn-primary btn-small" id="payment-add-btn">Додати</button>
+                                    <button class="btn btn-primary btn-small" id="payment-add-btn" data-admin-only>Додати</button>
                                 </div>
                             </div>
                             <div class="table-filters" id="payments-filters">
                                 <div class="form-field">
                                     <label>Орендодавець</label>
-                                    <select id="payments-filter-landlord">
+                                    <select id="payments-filter-landlord" data-searchable="true">
                                         <option value="">Всі орендодавці</option>
                                     </select>
                                 </div>
@@ -1330,7 +1461,7 @@
                 <section class="page-section hidden" id="section-vouchers">
                     <div class="section-header">
                         <div class="section-actions">
-                            <button class="btn btn-primary" id="voucher-pay-total-btn">Виплатити з боргу</button>
+                            <button class="btn btn-primary" id="voucher-pay-total-btn" data-admin-only>Виплатити з боргу</button>
                         </div>
                     </div>
 
@@ -2755,21 +2886,40 @@
         <div class="modal-overlay"></div>
         <div class="modal-content">
             <div class="modal-header">
-                <h3>Переміщення зерна між фермерами</h3>
+                <h3>Переміщення зерна</h3>
                 <button class="modal-close" id="farmer-transfer-close" aria-label="Закрити">×</button>
             </div>
             <div class="modal-body">
+                <div class="form-field full">
+                    <label>Кому</label>
+                    <div class="counterparty-toggle" role="tablist">
+                        <label class="counterparty-toggle__item">
+                            <input type="radio" name="ft-receiver" value="farmer" checked>
+                            <span>Фермеру</span>
+                        </label>
+                        <label class="counterparty-toggle__item">
+                            <input type="radio" name="ft-receiver" value="person">
+                            <span>Людині</span>
+                        </label>
+                    </div>
+                </div>
                 <div class="form-grid">
                     <div class="form-field">
                         <label>Від фермера</label>
-                        <select id="farmer-transfer-from">
+                        <select id="farmer-transfer-from" data-searchable="true">
                             <option value="">Оберіть</option>
                         </select>
                     </div>
-                    <div class="form-field">
+                    <div class="form-field" id="ft-to-farmer-field">
                         <label>До фермера</label>
-                        <select id="farmer-transfer-to">
+                        <select id="farmer-transfer-to" data-searchable="true">
                             <option value="">Оберіть</option>
+                        </select>
+                    </div>
+                    <div class="form-field hidden" id="ft-to-person-field">
+                        <label>До людини</label>
+                        <select id="farmer-transfer-person" data-searchable="true">
+                            <option value="">— Оберіть людину —</option>
                         </select>
                     </div>
                 </div>
@@ -2813,11 +2963,29 @@
             </div>
             <div class="modal-body">
                 <div class="form-grid report-grid">
-                    <div class="form-field" style="position: relative;">
+                    <div class="form-field full">
+                        <label>Контрагент</label>
+                        <div class="counterparty-toggle" role="tablist">
+                            <label class="counterparty-toggle__item">
+                                <input type="radio" name="fc-counterparty" value="farmer" checked>
+                                <span>Фермер</span>
+                            </label>
+                            <label class="counterparty-toggle__item">
+                                <input type="radio" name="fc-counterparty" value="person">
+                                <span>Людина</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-field" id="fc-owner-field">
                         <label>Фермер</label>
-                        <input type="text" id="farmer-contract-owner" placeholder="Почніть вводити ПІБ..." autocomplete="off">
+                        <select id="farmer-contract-owner-select" data-searchable="true" data-empty-message="Немає фермерів"></select>
                         <input type="hidden" id="farmer-contract-owner-id">
-                        <div class="suggestions hidden" id="farmer-contract-owner-suggestions"></div>
+                    </div>
+                    <div class="form-field hidden" id="fc-person-field">
+                        <label>Людина</label>
+                        <select id="farmer-contract-person" data-searchable="true">
+                            <option value="">— Оберіть людину —</option>
+                        </select>
                     </div>
                     <div class="form-field">
                         <label>Тип контракту</label>
@@ -3118,20 +3286,14 @@
                         <div class="form-grid intake-grid">
                             <div class="form-field owner-field">
                                 <label>Власник зерна</label>
-                                <div class="owner-search-wrapper">
-                                    <input type="text" id="owner-search" placeholder="Почніть вводити ПІБ">
-                                    <div class="owner-badge hidden" id="owner-badge" title="Фермер з бази даних">
-                                        <svg class="owner-badge-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                            <path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                            <path d="M21 12c-1 0-3-1-3-3s2-3 3-3 3 1 3 3-2 3-3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                            <path d="M3 12c1 0 3-1 3-3s-2-3-3-3-3 1-3 3 2 3 3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                            <path d="M12 3c0 1-1 3-3 3S6 4 6 3s1-3 3-3 3 2 3 3z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                            <path d="M12 21c0-1 1-3 3-3s3 2 3 3-1 3-3 3-3-2-3-3z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                        </svg>
-                                        <span class="owner-badge-text">З бази</span>
-                                    </div>
+                                <div class="select-with-add" id="intake-owner-mode-select">
+                                    <select id="intake-owner-select" data-searchable="true" data-empty-message="Немає фермерів"></select>
+                                    <button type="button" class="btn btn-secondary btn-small" id="intake-owner-add-btn" title="Ввести ПІБ нового фермера">+ Новий</button>
                                 </div>
-                                <div class="suggestions hidden" id="owner-suggestions"></div>
+                                <div class="select-with-add hidden" id="intake-owner-mode-new">
+                                    <input type="text" id="intake-owner-new-name" placeholder="Введіть ПІБ нового фермера" autocomplete="off">
+                                    <button type="button" class="btn btn-secondary btn-small" id="intake-owner-back-btn" title="Обрати зі списку">← Зі списку</button>
+                                </div>
                                 <input type="hidden" id="owner-id">
                             </div>
                             <div class="form-field owner-field">
@@ -3191,16 +3353,16 @@
                                 <input type="number" id="impurity-percent" min="0" max="100" step="0.1" value="0">
                             </div>
                             <div class="form-field inline">
-                                <label class="pill-toggle">
-                                    <input type="checkbox" id="pending-quality">
-                                    <span>Очікує % втрат</span>
-                                </label>
-                            </div>
-                            <div class="form-field inline">
-                                <label class="pill-toggle">
-                                    <input type="checkbox" id="pending-tare">
-                                    <span>Очікує тару</span>
-                                </label>
+                                <div class="switch-row">
+                                    <label class="pill-toggle">
+                                        <input type="checkbox" id="pending-quality">
+                                        <span>Очікує % втрат</span>
+                                    </label>
+                                    <label class="pill-toggle">
+                                        <input type="checkbox" id="pending-tare">
+                                        <span>Очікує тару</span>
+                                    </label>
+                                </div>
                             </div>
                             <div class="form-field">
                                 <label>Прийнято, кг</label>
@@ -3403,16 +3565,7 @@
                 <form id="contract-form">
                     <div class="form-field full">
                         <label>Орендодавець</label>
-                        <div class="owner-search-wrapper">
-                            <input type="text" id="contract-landlord-search" placeholder="Почніть вводити ПІБ" required>
-                            <div class="owner-badge hidden" id="contract-landlord-badge" title="Орендодавець з бази">
-                                <svg class="owner-badge-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                    <path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                </svg>
-                                <span class="owner-badge-text">З бази</span>
-                            </div>
-                        </div>
-                        <div class="suggestions hidden" id="contract-landlord-suggestions"></div>
+                        <select id="contract-landlord-select" data-searchable="true" data-empty-message="Немає орендодавців"></select>
                         <input type="hidden" id="contract-landlord-id">
                     </div>
                     <div class="form-field full">
@@ -4013,9 +4166,8 @@
                 <form id="payment-form" class="form-grid">
                     <div class="form-field full">
                         <label>Контрагент (орендодавець)</label>
-                        <input type="text" id="payment-landlord-search" placeholder="Почніть вводити ПІБ..." autocomplete="off">
+                        <select id="payment-landlord-select" data-searchable="true" data-empty-message="Немає орендодавців"></select>
                         <input type="hidden" id="payment-landlord-id">
-                        <div class="suggestions hidden" id="payment-landlord-suggestions"></div>
                     </div>
 
                     <div class="form-field full">
@@ -4094,7 +4246,7 @@
         </div>
     </div>
     
-    <script src="static/js/dashboard.js?v=133"></script>
+    <script src="static/js/dashboard.js?v=235"></script>
 </body>
 </html>
 

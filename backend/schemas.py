@@ -158,9 +158,46 @@ class GrainOwnerResponse(BaseModel):
     id: int
     full_name: str
     phone: Optional[str]
-    
+
     class Config:
         from_attributes = True
+
+
+# Люди (звичайні клієнти, не фермери)
+
+class PersonCreate(BaseModel):
+    """Схема створення людини"""
+    full_name: str = Field(..., min_length=1, description="ПІБ")
+    phone: Optional[str] = Field(default=None, description="Номер телефону")
+
+
+class PersonUpdate(BaseModel):
+    """Схема оновлення людини"""
+    full_name: Optional[str] = Field(default=None, min_length=1)
+    phone: Optional[str] = None
+
+
+class PersonResponse(BaseModel):
+    """Схема відповіді для людини"""
+    id: int
+    full_name: str
+    phone: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PersonActionResponse(BaseModel):
+    """Запис у журналі дій по людині (контракти / трансфери / оплати)."""
+    id: int
+    action_type: str  # contract | transfer | contract_payment
+    description: str
+    amount_uah: Optional[float] = None
+    quantity_kg: Optional[float] = None
+    culture_name: Optional[str] = None
+    created_at: datetime
+    related_id: Optional[int] = None
 
 
 class GrainStockResponse(BaseModel):
@@ -190,9 +227,12 @@ class FarmerGrainDeductRequest(BaseModel):
 
 
 class FarmerGrainTransferRequest(BaseModel):
-    """Переміщення зерна від одного фермера до іншого"""
+    """Переміщення зерна від фермера до іншого фермера або людини.
+    Рівно одне з полів `to_owner_id`/`to_person_id` має бути задане.
+    """
     from_owner_id: int
-    to_owner_id: int
+    to_owner_id: Optional[int] = None
+    to_person_id: Optional[int] = None
     culture_id: int
     quantity_kg: float = Field(..., gt=0)
     note: Optional[str] = None
@@ -203,6 +243,7 @@ class FarmerGrainMovementResponse(BaseModel):
     movement_type: str
     from_owner_id: int
     to_owner_id: Optional[int]
+    to_person_id: Optional[int] = None
     culture_id: int
     quantity_kg: float
     note: Optional[str]
@@ -225,7 +266,11 @@ class FarmerContractItemCreate(BaseModel):
 
 
 class FarmerContractCreate(BaseModel):
-    owner_id: int
+    """Контракт може бути з фермером (`owner_id`) або людиною (`person_id`).
+    Для людини: `farmer_items` дозволені лише типу CASH (вони платять грошима).
+    """
+    owner_id: Optional[int] = None
+    person_id: Optional[int] = None
     contract_type: FarmerContractType = FarmerContractType.DEBT
     note: Optional[str] = None
     currency: Optional[str] = None        # для payment
@@ -262,7 +307,8 @@ class FarmerContractItemResponse(BaseModel):
 
 class FarmerContractResponse(BaseModel):
     id: int
-    owner_id: int
+    owner_id: Optional[int] = None
+    person_id: Optional[int] = None
     contract_type: FarmerContractType
     status: FarmerContractStatus
     total_value_uah: float

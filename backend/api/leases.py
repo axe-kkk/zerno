@@ -229,7 +229,7 @@ async def update_landlord(
 async def delete_landlord(
     landlord_id: int,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Видалення орендодавця"""
     landlord = session.get(Landlord, landlord_id)
@@ -289,7 +289,7 @@ async def list_contracts(
 async def create_contract(
     payload: LeaseContractCreate,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Створення контракту оренди"""
     landlord = session.get(Landlord, payload.landlord_id)
@@ -389,7 +389,7 @@ async def update_contract(
     contract_id: int,
     payload: LeaseContractUpdate,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Оновлення контракту оренди"""
     contract = session.get(LeaseContract, contract_id)
@@ -474,7 +474,7 @@ async def update_contract(
 async def delete_contract(
     contract_id: int,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Видалення контракту оренди (з позиціями, виплатами та прив'язкою поля)."""
     contract = session.get(LeaseContract, contract_id)
@@ -529,7 +529,7 @@ async def renew_contract(
     contract_id: int,
     payload: LeaseContractRenewRequest,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Перевипуск контракту оренди на новий рік"""
     old_contract = session.get(LeaseContract, contract_id)
@@ -1102,7 +1102,7 @@ async def list_payments(
 async def create_payment(
     payload: LeasePaymentCreate,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Створення виплати по контракту з перевіркою залишку"""
     contract = session.get(LeaseContract, payload.contract_id)
@@ -1353,7 +1353,7 @@ async def create_payment(
 async def cancel_payment(
     payment_id: int,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """Скасування виплати з поверненням на склад / в касу"""
     payment = session.get(LeasePayment, payment_id)
