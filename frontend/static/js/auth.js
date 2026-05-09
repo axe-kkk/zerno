@@ -3,11 +3,21 @@
 // При локальной разработке можно использовать 'http://localhost:8000/api'
 const API_BASE_URL = '/api';
 
+// Який інтерфейс показуємо після логіну: 'desktop' | 'mobile'.
+// Зберігається в localStorage під ключем 'preferMobile' ('1' = мобільна).
+function landingPage() {
+    return localStorage.getItem('preferMobile') === '1' ? 'mobile.html' : 'dashboard.html';
+}
+
+function isMobileViewport() {
+    return window.matchMedia && window.matchMedia('(max-width: 768px)').matches;
+}
+
 // Проверка авторизации при загрузке
 document.addEventListener('DOMContentLoaded', () => {
     const token = localStorage.getItem('token');
     if (token) {
-        window.location.href = 'dashboard.html';
+        window.location.href = landingPage();
         return;
     }
 
@@ -18,6 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Инициализация кнопки показа пароля
     initPasswordToggle();
+    initLoginModeSwitch();
 
     loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -58,7 +69,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Сохраняем токен
             localStorage.setItem('token', data.access_token);
 
-            window.location.href = 'dashboard.html';
+            window.location.href = landingPage();
 
         } catch (error) {
             console.error('Помилка входу:', error);
@@ -71,6 +82,30 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 });
+
+function initLoginModeSwitch() {
+    const desktopRadio = document.getElementById('login-mode-desktop');
+    const mobileRadio = document.getElementById('login-mode-mobile');
+    if (!desktopRadio || !mobileRadio) return;
+
+    // Стартова позиція: збережений вибір, або автодетект мобільного
+    const stored = localStorage.getItem('preferMobile');
+    const wantMobile = stored === '1' || (stored === null && isMobileViewport());
+    if (wantMobile) {
+        mobileRadio.checked = true;
+    } else {
+        desktopRadio.checked = true;
+    }
+
+    const apply = () => {
+        const useMobile = mobileRadio.checked;
+        localStorage.setItem('preferMobile', useMobile ? '1' : '0');
+    };
+    desktopRadio.addEventListener('change', apply);
+    mobileRadio.addEventListener('change', apply);
+    // одразу зберігаємо стартовий вибір (автодетект)
+    apply();
+}
 
 function initPasswordToggle() {
     const passwordInput = document.getElementById('password');

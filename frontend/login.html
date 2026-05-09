@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
-    <link rel="stylesheet" href="static/css/style.css?v=220">
+    <link rel="stylesheet" href="static/css/style.css?v=311">
 </head>
 <body class="login-page">
     <div class="login-container">
@@ -72,12 +72,19 @@
                     <span class="btn-text">Увійти</span>
                     <span class="btn-loader hidden"></span>
                 </button>
+
+                <div class="login-mode-switch" role="radiogroup" aria-label="Інтерфейс">
+                    <input type="radio" name="login-mode" id="login-mode-desktop" value="desktop" checked>
+                    <label for="login-mode-desktop">Десктоп</label>
+                    <input type="radio" name="login-mode" id="login-mode-mobile" value="mobile">
+                    <label for="login-mode-mobile">Мобільна</label>
+                </div>
             </form>
         </div>
     </div>
     <div class="toast-container" id="toast-container"></div>
     
-    <script src="static/js/auth.js?v=3"></script>
+    <script src="static/js/auth.js?v=4"></script>
 </body>
 </html>
 

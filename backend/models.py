@@ -8,6 +8,7 @@ from sqlalchemy import UniqueConstraint, Column, String
 class UserRole(str, Enum):
     """Роли пользователей"""
     SUPER_ADMIN = "super_admin"
+    MANAGER = "manager"
     USER = "user"
 
 
@@ -21,12 +22,16 @@ class BaseModel(SQLModel):
 class User(BaseModel, table=True):
     """Модель пользователя"""
     __tablename__ = "users"
-    
+
     username: str = Field(unique=True, index=True)
     password_hash: str = Field(description="Хеш пароля")
     password_plain: Optional[str] = Field(default=None, description="Пароль в открытом виде")
     full_name: str = Field(description="ФИО пользователя")
-    role: UserRole = Field(default=UserRole.USER)
+    # Зберігаємо як VARCHAR(32) щоб додавання нових ролей не вимагало ALTER TYPE
+    role: UserRole = Field(
+        default=UserRole.USER,
+        sa_column=Column(String(32), default="user", nullable=False),
+    )
     is_active: bool = Field(default=True)
 
 

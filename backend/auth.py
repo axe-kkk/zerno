@@ -82,14 +82,29 @@ async def get_current_super_admin(
     return current_user
 
 
+async def get_current_admin_or_manager(
+    current_user: User = Depends(get_current_user)
+) -> User:
+    """Проверка, что пользователь — супер адмін або менеджер.
+    Менеджер може правити касу та ціни на складі, але не керує юзерами/довідниками.
+    """
+    if current_user.role not in (UserRole.SUPER_ADMIN, UserRole.MANAGER):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Недостатньо прав. Потрібен доступ супер адміна або менеджера."
+        )
+    return current_user
+
+
 def create_access_token(user: User) -> str:
     """Создание JWT токена для пользователя"""
     from datetime import timedelta
     
-    # Создаем subject как dict с данными пользователя
+    # role зберігається як VARCHAR — приходить str. На випадок enum-instance — підтягуємо value.
+    role_value = user.role.value if isinstance(user.role, UserRole) else str(user.role)
     subject = {
         "username": user.username,
-        "role": user.role.value,
+        "role": role_value,
         "user_id": user.id
     }
     

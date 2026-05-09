@@ -53,7 +53,7 @@ from backend.schemas import (
     StockAdjustRequest,
     StockAdjustmentResponse
 )
-from backend.auth import get_current_user, get_current_super_admin
+from backend.auth import get_current_user, get_current_super_admin, get_current_admin_or_manager
 
 router = APIRouter()
 
@@ -189,9 +189,9 @@ async def update_culture_price(
     culture_id: int,
     payload: GrainCulturePriceUpdate,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_super_admin)
+    current_user: User = Depends(get_current_admin_or_manager)
 ):
-    """Оновлення ціни культури"""
+    """Оновлення ціни культури (super_admin або manager)"""
     culture = session.get(GrainCulture, culture_id)
     if not culture:
         raise HTTPException(

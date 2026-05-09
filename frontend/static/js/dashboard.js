@@ -95,6 +95,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 async function initializeDashboard() {
+    initSidebarToggle();
     await loadUserInfo();
     initNavigation();
     initLogout();
@@ -270,7 +271,7 @@ document.addEventListener('click', (event) => {
  * Заповнити <select> опціями фермерів з ownersCache. Викликається після loadOwnersList()
  * для всіх селектів, що показують довідник фермерів. Зберігає поточно обране значення.
  */
-function populateOwnerSelect(selectId, { placeholder = '— Оберіть фермера —' } = {}) {
+function populateOwnerSelect(selectId, { placeholder = 'Оберіть фермера' } = {}) {
     const select = document.getElementById(selectId);
     if (!select) return;
     const current = select.value;
@@ -286,7 +287,7 @@ function populateOwnerSelect(selectId, { placeholder = '— Оберіть фе�
     if (typeof refreshCustomSelect === 'function') refreshCustomSelect(select);
 }
 
-function populateLandlordSelect(selectId, { placeholder = '— Оберіть орендодавця —' } = {}) {
+function populateLandlordSelect(selectId, { placeholder = 'Оберіть орендодавця' } = {}) {
     const select = document.getElementById(selectId);
     if (!select) return;
     const current = select.value;
@@ -511,7 +512,9 @@ async function loadUserInfo() {
             nameEl.textContent = userName;
         }
         if (roleEl) {
-            roleEl.textContent = isSuperAdmin ? 'Супер адмін' : 'Користувач';
+            roleEl.textContent = isSuperAdmin
+                ? 'Супер адмін'
+                : (user.role === 'manager' ? 'Менеджер' : 'Користувач');
         }
 
         const initials = user.full_name
@@ -532,10 +535,16 @@ async function loadUserInfo() {
 }
 
 function updateAdminVisibility() {
+    const isManager = currentUser?.role === 'manager';
+    const canEditMoney = !!isSuperAdmin || isManager;
     document.body.classList.toggle('user-is-admin', !!isSuperAdmin);
     document.body.classList.toggle('user-is-not-admin', !isSuperAdmin);
+    document.body.classList.toggle('user-is-money-editor', canEditMoney);
     document.querySelectorAll('[data-admin-only]').forEach(element => {
-        element.classList.toggle('hidden', !isSuperAdmin);
+        // Менеджеру дозволяємо те, що позначене data-money-action
+        const isMoneyAction = element.hasAttribute('data-money-action');
+        const visible = isSuperAdmin || (isMoneyAction && canEditMoney);
+        element.classList.toggle('hidden', !visible);
     });
 }
 
@@ -1105,11 +1114,11 @@ function populateShipmentSelects() {
     const driverSelect = document.getElementById('shipment-driver');
     const vehicleSelect = document.getElementById('shipment-vehicle');
     if (driverSelect) {
-        driverSelect.innerHTML = '<option value="">Пусто (не обрано)</option>' +
+        driverSelect.innerHTML = '<option value="">Не обрано</option>' +
             driversCache.map(d => `<option value="${d.id}">${d.full_name}</option>`).join('');
     }
     if (vehicleSelect) {
-        vehicleSelect.innerHTML = '<option value="">Пусто (не обрано)</option>' +
+        vehicleSelect.innerHTML = '<option value="">Не обрано</option>' +
             vehicleTypesCache.map(v => `<option value="${v.id}">${v.name}</option>`).join('');
     }
 }
@@ -1263,14 +1272,14 @@ function openShipmentEditModal(item) {
 
     const driverSelect = document.getElementById('shipment-edit-driver');
     if (driverSelect) {
-        driverSelect.innerHTML = '<option value="">Пусто (не обрано)</option>' +
+        driverSelect.innerHTML = '<option value="">Не обрано</option>' +
             driversCache.map(d => `<option value="${d.id}">${d.full_name}</option>`).join('');
         driverSelect.value = item.driver_id ? String(item.driver_id) : '';
     }
 
     const vehicleSelect = document.getElementById('shipment-edit-vehicle');
     if (vehicleSelect) {
-        vehicleSelect.innerHTML = '<option value="">Пусто (не обрано)</option>' +
+        vehicleSelect.innerHTML = '<option value="">Не обрано</option>' +
             vehicleTypesCache.map(v => `<option value="${v.id}">${v.name}</option>`).join('');
         vehicleSelect.value = item.vehicle_type_id ? String(item.vehicle_type_id) : '';
     }
@@ -1385,9 +1394,12 @@ async function loadUsers() {
         const canEdit = isSuperAdmin && user.role !== 'super_admin';
         const row = document.createElement('tr');
         const isAdmin = user.role === 'super_admin';
+        const isManager = user.role === 'manager';
         const roleBadge = isAdmin
             ? '<span class="status-badge danger">Супер адмін</span>'
-            : '<span class="status-badge info">Користувач</span>';
+            : isManager
+                ? '<span class="status-badge warning">Менеджер</span>'
+                : '<span class="status-badge info">Користувач</span>';
         row.innerHTML = `
             <td><strong>${escapeHtml(user.full_name || '')}</strong></td>
             <td class="td-mono">${escapeHtml(user.username)}</td>
@@ -1458,7 +1470,21 @@ function openUserEditModal(user) {
     editingUserId = user.id;
     document.getElementById('user-edit-full-name').value = user.full_name || '';
     document.getElementById('user-edit-username').value = user.username;
-    document.getElementById('user-edit-role').value = user.role === 'super_admin' ? 'Супер адмін' : 'Користувач';
+    const roleSelect = document.getElementById('user-edit-role');
+    if (roleSelect) {
+        if (user.role === 'super_admin') {
+            // Усі опції disabled, показуємо «Супер адмін»
+            const opt = roleSelect.querySelector('option[value="super_admin"]');
+            if (opt) opt.hidden = false;
+            roleSelect.value = 'super_admin';
+            roleSelect.disabled = true;
+        } else {
+            const opt = roleSelect.querySelector('option[value="super_admin"]');
+            if (opt) opt.hidden = true;
+            roleSelect.value = user.role || 'user';
+            roleSelect.disabled = false;
+        }
+    }
     const passwordInput = document.getElementById('user-edit-password');
     passwordInput.value = user.password_plain || '';
     passwordInput.type = 'text';
@@ -1543,16 +1569,24 @@ function initUserEditModal() {
         const fullName = document.getElementById('user-edit-full-name').value.trim();
         const password = document.getElementById('user-edit-password').value.trim();
         const isActive = document.getElementById('user-edit-is-active').checked;
-        
+        const roleSelect = document.getElementById('user-edit-role');
+        const role = roleSelect?.value;
+
         if (!fullName) {
             formShowValidationError(form, 'user-edit-message', 'Вкажіть ПІБ', ['user-edit-full-name']);
             return;
         }
-        
+
         const payload = {
             full_name: fullName,
             is_active: isActive
         };
+
+        // Передаємо роль лише якщо вона змінилася й це не супер адмін
+        const editing = usersCache.find(u => u.id === editingUserId);
+        if (role && editing && editing.role !== 'super_admin' && role !== editing.role) {
+            payload.role = role;
+        }
         
         // Всегда отправляем пароль
         const currentUser = usersCache.find(u => u.id === editingUserId);
@@ -4880,7 +4914,7 @@ function refreshPeopleSelectors() {
         const sel = document.getElementById(id);
         if (!sel) continue;
         const current = sel.value;
-        sel.innerHTML = '<option value="">— Оберіть людину —</option>'
+        sel.innerHTML = '<option value="">Оберіть людину</option>'
             + peopleCache.map(p => `<option value="${p.id}">${escapeHtml(p.full_name)}${p.phone ? ' (' + escapeHtml(p.phone) + ')' : ''}</option>`).join('');
         if (current && peopleCache.some(p => String(p.id) === current)) sel.value = current;
         if (typeof refreshCustomSelect === 'function') refreshCustomSelect(sel);
@@ -6869,6 +6903,34 @@ async function deleteField(fieldId) {
     }
 }
 
+function initSidebarToggle() {
+    const STORAGE_KEY = 'sidebar-collapsed';
+    const toggleBtn = document.getElementById('sidebar-toggle');
+    if (!toggleBtn) return;
+
+    // Заполняем data-label для tooltip'ів у згорнутому стані
+    document.querySelectorAll('.sidebar-nav .nav-item').forEach(item => {
+        const text = item.querySelector('.nav-text');
+        if (text && !item.dataset.label) {
+            item.dataset.label = text.textContent.trim();
+        }
+    });
+
+    // Восстановить состояние
+    if (localStorage.getItem(STORAGE_KEY) === '1') {
+        document.body.classList.add('sidebar-collapsed');
+        toggleBtn.setAttribute('aria-label', 'Розгорнути меню');
+        toggleBtn.title = 'Розгорнути меню';
+    }
+
+    toggleBtn.addEventListener('click', () => {
+        const collapsed = document.body.classList.toggle('sidebar-collapsed');
+        localStorage.setItem(STORAGE_KEY, collapsed ? '1' : '0');
+        toggleBtn.setAttribute('aria-label', collapsed ? 'Розгорнути меню' : 'Згорнути меню');
+        toggleBtn.title = collapsed ? 'Розгорнути меню' : 'Згорнути меню';
+    });
+}
+
 function initNavigation() {
     const navItems = document.querySelectorAll('.nav-item');
     const sections = document.querySelectorAll('.page-section');
@@ -7806,6 +7868,7 @@ function initUserAddModal() {
         const fullName = document.getElementById('user-full-name').value.trim();
         const username = document.getElementById('user-username').value.trim();
         const password = document.getElementById('user-password').value.trim();
+        const role = document.getElementById('user-add-role')?.value || 'user';
         if (!fullName || !username || !password) {
             const ids = [];
             if (!fullName) ids.push('user-full-name');
@@ -7816,7 +7879,7 @@ function initUserAddModal() {
         }
         const response = await apiFetch('/users', {
             method: 'POST',
-            body: JSON.stringify({ full_name: fullName, username, password })
+            body: JSON.stringify({ full_name: fullName, username, password, role })
         });
         if (response.ok) {
             showToast('Користувача створено', 'success');
@@ -7839,8 +7902,9 @@ function initCashForm() {
     formBindInvalidHighlightClearing(form);
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
-        if (!isSuperAdmin) {
-            formShowValidationError(form, 'cash-message', 'Доступно лише супер адміну', ['cash-currency']);
+        const canEditMoney = isSuperAdmin || currentUser?.role === 'manager';
+        if (!canEditMoney) {
+            formShowValidationError(form, 'cash-message', 'Доступно лише супер адміну або менеджеру', ['cash-currency']);
             return;
         }
         const currency = document.getElementById('cash-currency').value;
@@ -8154,11 +8218,26 @@ function initCustomSelects(targetSelect) {
     });
 
     document.addEventListener('scroll', (event) => {
-        if (event.target.closest('#contract-modal') || event.target.closest('#farmer-contract-modal') || event.target.closest('#intake-create-modal')) {
-            document.querySelectorAll('#contract-modal .custom-select.open, #farmer-contract-modal .custom-select.open, #intake-create-modal .custom-select.open').forEach(wrapper => {
-                positionContractSelectOptions(wrapper);
-            });
-        }
+        const inTrackedModal = event.target.closest && (
+            event.target.closest('#contract-modal') ||
+            event.target.closest('#farmer-contract-modal') ||
+            event.target.closest('#intake-create-modal')
+        );
+        if (!inTrackedModal) return;
+        document.querySelectorAll('#contract-modal .custom-select.open, #farmer-contract-modal .custom-select.open, #intake-create-modal .custom-select.open').forEach(wrapper => {
+            const trigger = wrapper.querySelector('.custom-select-trigger');
+            if (!trigger) return;
+            const tr = trigger.getBoundingClientRect();
+            // Видимая область модалки (с учётом sticky-header/footer)
+            const scroller = trigger.closest('.modal-body') || event.target;
+            const sr = (scroller && scroller.getBoundingClientRect) ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+            // Если триггер скрыт за хедером/футером — закрываем дропдаун
+            if (tr.bottom < sr.top + 4 || tr.top > sr.bottom - 4) {
+                wrapper.classList.remove('open');
+                return;
+            }
+            positionContractSelectOptions(wrapper);
+        });
     }, true);
 }
 

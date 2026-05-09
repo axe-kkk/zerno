@@ -26,14 +26,21 @@ async def create_user(
             detail="Користувач з таким ім'ям вже існує"
         )
     
-    # Создание пользователя с хешированным паролем
+    # Дозволяємо лише user або manager — super_admin створюється тільки через .env
+    requested_role = user.role or UserRole.USER
+    if requested_role == UserRole.SUPER_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Створення супер адмінів через UI заборонено"
+        )
+
     password_hash = get_password_hash(user.password)
     db_user = User(
         username=user.username,
         password_hash=password_hash,
-        password_plain=user.password,  # Сохраняем пароль в открытом виде
+        password_plain=user.password,  # пароль у відкритому вигляді (для адміна)
         full_name=user.full_name,
-        role=UserRole.USER  # Все новые пользователи получают роль user
+        role=requested_role,
     )
     session.add(db_user)
     session.commit()
@@ -98,13 +105,27 @@ async def update_user(
         )
     
     update_data = user_update.model_dump(exclude_unset=True)
-    
-    # Если обновляется пароль, нужно его захешировать
+
+    # Якщо оновлюється пароль — хешуємо
     if "password" in update_data:
         new_password = update_data.pop("password")
         update_data["password_hash"] = get_password_hash(new_password)
-        update_data["password_plain"] = new_password  # Сохраняем пароль в открытом виде
-    
+        update_data["password_plain"] = new_password
+
+    # Не дозволяємо призначити super_admin через UI або відібрати роль у супер адміна
+    if "role" in update_data:
+        new_role = update_data["role"]
+        if new_role == UserRole.SUPER_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Призначення супер адміна через UI заборонено"
+            )
+        if user.role == UserRole.SUPER_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Не можна змінити роль супер адміна"
+            )
+
     for field, value in update_data.items():
         setattr(user, field, value)
     

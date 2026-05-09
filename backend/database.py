@@ -165,6 +165,25 @@ def init_db():
         ))
         conn.commit()
 
+        # Міграція: users.role — конвертуємо нативний enum у VARCHAR(32),
+        # щоб додати нову роль "manager" без перетворення типу.
+        try:
+            conn.execute(text(
+                "ALTER TABLE users ALTER COLUMN role TYPE VARCHAR(32) USING role::text"
+            ))
+            conn.commit()
+            print("✅ Конвертовано users.role в VARCHAR(32)")
+        except Exception:
+            conn.rollback()
+
+        # SQLAlchemy старі версії зберігали enum NAME (SUPER_ADMIN) замість value (super_admin).
+        # Нормалізуємо до нижнього регістру, бо Pydantic очікує саме значення enum.
+        try:
+            conn.execute(text("UPDATE users SET role = LOWER(role) WHERE role <> LOWER(role)"))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
         # Міграція: «Люди» — окрема сутність, що може купувати у нас і приймати трансфери зерна.
         conn.execute(text(
             "ALTER TABLE farmer_contracts ADD COLUMN IF NOT EXISTS person_id INTEGER REFERENCES people(id)"

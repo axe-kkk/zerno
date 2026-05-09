@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
-    <link rel="stylesheet" href="static/css/style.css?v=235">
+    <link rel="stylesheet" href="static/css/style.css?v=323">
 </head>
 <body class="dashboard-page">
     <div class="dashboard-container">
@@ -24,6 +24,11 @@
                         <span class="logo-subtitle">обліку зерна</span>
                     </span>
                 </div>
+                <button class="sidebar-toggle" id="sidebar-toggle" type="button" aria-label="Згорнути меню" title="Згорнути меню">
+                    <svg class="sidebar-toggle-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
             </div>
             
             <nav class="sidebar-nav">
@@ -196,7 +201,7 @@
                                     <input type="date" id="report-end-date">
                                 </div>
                                 <button class="btn btn-secondary btn-small" id="report-reset-btn">Весь час</button>
-                                <button class="btn btn-secondary btn-small" id="report-export-btn">Завантажити</button>
+                                <button class="btn btn-secondary btn-small" id="report-export-btn">Звіт</button>
                                 <button class="btn btn-primary btn-small" id="report-refresh-btn">Оновити</button>
                             </div>
                         </div>
@@ -265,7 +270,7 @@
                                             <th>Перекази між фермерами, кг</th>
                                             <th>Перекази людям, кг</th>
                                             <th>Списання, кг</th>
-                                            <th>Не викуплено (на балансі), кг</th>
+                                            <th>На балансі, кг</th>
                                         </tr>
                                     </thead>
                                     <tbody></tbody>
@@ -276,7 +281,7 @@
                         <!-- 3. Борги -->
                         <div class="card table-card report-card">
                             <div class="card-header">
-                                <div class="card-title">Борги (відкриті контракти)</div>
+                                <div class="card-title">Відкриті борги</div>
                             </div>
                             <div class="table-wrapper">
                                 <table class="data-table report-table" id="report-debts-table">
@@ -335,12 +340,12 @@
                                     Редагування доступне лише супер адміну
                                 </div>
                             </div>
-                            <div class="cash-voucher-debt" id="cash-voucher-debt" style="margin-top:12px;padding:10px 14px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;display:none;">
-                                <div style="font-size:12px;color:#9a3412;font-weight:600;margin-bottom:4px;">Борг по талонах (Хлібний завод)</div>
-                                <div style="font-size:18px;font-weight:700;color:#dc2626;" id="cash-voucher-debt-value">0.00 грн</div>
+                            <div class="cash-voucher-debt" id="cash-voucher-debt" style="display:none;">
+                                <div class="cash-voucher-debt-label">Борг по талонах (Хлібний завод)</div>
+                                <div class="cash-voucher-debt-value" id="cash-voucher-debt-value">0.00 грн</div>
                             </div>
                         </div>
-                        <div class="card" data-admin-only>
+                        <div class="card" data-admin-only data-money-action>
                             <div class="card-title">Операція по касі</div>
                             <form id="cash-form" class="form-grid">
                                 <div class="form-field">
@@ -1434,7 +1439,7 @@
                                     <label>Статус</label>
                                     <select id="payments-filter-status">
                                         <option value="">Активні</option>
-                                        <option value="all">Всі (зі скасованими)</option>
+                                        <option value="all">Усі та скасовані</option>
                                     </select>
                                 </div>
                             </div>
@@ -1692,7 +1697,7 @@
                         </label>
                     </div>
                     <div class="form-field hidden" id="edit-field-wrap">
-                        <label>Поле (звідки привезли)</label>
+                        <label>Поле приходу</label>
                         <select id="edit-field">
                             <option value="">Оберіть поле</option>
                         </select>
@@ -1789,7 +1794,7 @@
                         <div class="intake-view-value" id="view-own-grain">-</div>
                     </div>
                     <div class="intake-view-item hidden" id="view-field-wrap">
-                        <div class="intake-view-label">Поле (звідки привезли)</div>
+                        <div class="intake-view-label">Поле приходу</div>
                         <div class="intake-view-value" id="view-field">-</div>
                     </div>
                     <div class="intake-view-item">
@@ -2174,6 +2179,13 @@
                         <label>Пароль</label>
                         <input type="password" id="user-password" required>
                     </div>
+                    <div class="form-field full">
+                        <label>Роль</label>
+                        <select id="user-add-role">
+                            <option value="user" selected>Користувач</option>
+                            <option value="manager">Менеджер (каса + ціни)</option>
+                        </select>
+                    </div>
                     <div class="form-actions full form-actions-stack-msg">
                         <div class="form-hint status-label" id="user-message" role="status" aria-live="polite"></div>
                         <button type="submit" class="btn btn-primary">Додати</button>
@@ -2201,7 +2213,11 @@
                     </div>
                     <div class="form-field">
                         <label>Роль</label>
-                        <input type="text" id="user-edit-role" disabled>
+                        <select id="user-edit-role">
+                            <option value="user">Користувач</option>
+                            <option value="manager">Менеджер (каса + ціни)</option>
+                            <option value="super_admin" disabled>Супер адмін</option>
+                        </select>
                     </div>
                     <div class="form-field full">
                         <label>Пароль</label>
@@ -2286,13 +2302,13 @@
                             <div class="form-field">
                                 <label>Водій</label>
                                 <select id="shipment-driver">
-                                    <option value="">Пусто (не обрано)</option>
+                                    <option value="">Не обрано</option>
                                 </select>
                             </div>
                             <div class="form-field">
                                 <label>Тип транспорту</label>
                                 <select id="shipment-vehicle">
-                                    <option value="">Пусто (не обрано)</option>
+                                    <option value="">Не обрано</option>
                                 </select>
                             </div>
                         </div>
@@ -2345,13 +2361,13 @@
                             <div class="form-field">
                                 <label>Водій</label>
                                 <select id="shipment-edit-driver">
-                                    <option value="">Пусто (не обрано)</option>
+                                    <option value="">Не обрано</option>
                                 </select>
                             </div>
                             <div class="form-field">
                                 <label>Тип транспорту</label>
                                 <select id="shipment-edit-vehicle">
-                                    <option value="">Пусто (не обрано)</option>
+                                    <option value="">Не обрано</option>
                                 </select>
                             </div>
                         </div>
@@ -2919,7 +2935,7 @@
                     <div class="form-field hidden" id="ft-to-person-field">
                         <label>До людини</label>
                         <select id="farmer-transfer-person" data-searchable="true">
-                            <option value="">— Оберіть людину —</option>
+                            <option value="">Оберіть людину</option>
                         </select>
                     </div>
                 </div>
@@ -2984,7 +3000,7 @@
                     <div class="form-field hidden" id="fc-person-field">
                         <label>Людина</label>
                         <select id="farmer-contract-person" data-searchable="true">
-                            <option value="">— Оберіть людину —</option>
+                            <option value="">Оберіть людину</option>
                         </select>
                     </div>
                     <div class="form-field">
@@ -3149,7 +3165,7 @@
 
                 <!-- GOODS_ISSUE: ми видаємо товар/талон фермеру -->
                 <div class="fcp-section" id="fcp-section-issue">
-                    <div class="fcp-items-title">Позиції контракту (від нас)</div>
+                    <div class="fcp-items-title">Позиції — видаємо фермеру</div>
                     <div class="fcp-contract-items" id="fcp-issue-items">
                         <div class="fcp-grain-empty">Завантаження...</div>
                     </div>
@@ -3169,7 +3185,7 @@
 
                 <!-- GOODS_RECEIVE: фермер передає товар нам -->
                 <div class="fcp-section hidden" id="fcp-section-receive">
-                    <div class="fcp-items-title">Позиції контракту (від фермера)</div>
+                    <div class="fcp-items-title">Позиції — отримали від фермера</div>
                     <div class="fcp-contract-items" id="fcp-receive-items">
                         <div class="fcp-grain-empty">Завантаження...</div>
                     </div>
@@ -3316,7 +3332,7 @@
                                 <div class="muted">Обрано: зерно підприємства. Оберіть поле, з якого привезли.</div>
                             </div>
                             <div class="form-field full hidden" id="own-grain-field-wrap">
-                                <label>Поле (звідки привезли)</label>
+                                <label>Поле приходу</label>
                                 <select id="intake-field">
                                     <option value="">Оберіть поле</option>
                                 </select>
@@ -4165,7 +4181,7 @@
             <div class="modal-body">
                 <form id="payment-form" class="form-grid">
                     <div class="form-field full">
-                        <label>Контрагент (орендодавець)</label>
+                        <label>Орендодавець</label>
                         <select id="payment-landlord-select" data-searchable="true" data-empty-message="Немає орендодавців"></select>
                         <input type="hidden" id="payment-landlord-id">
                     </div>
@@ -4209,7 +4225,7 @@
                     <div id="payment-cash-fields" class="hidden full">
                         <div class="payment-cash-grid">
                             <div class="form-field">
-                                <label>Культура (з якої списати)</label>
+                                <label>Списати з культури</label>
                                 <select id="payment-cash-culture"></select>
                             </div>
                             <div class="form-field">
@@ -4246,7 +4262,7 @@
         </div>
     </div>
     
-    <script src="static/js/dashboard.js?v=235"></script>
+    <script src="static/js/dashboard.js?v=239"></script>
 </body>
 </html>
 

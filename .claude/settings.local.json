@@ -37,7 +37,22 @@
       "Bash(python -c \"import sys, json; data=json.load\\(sys.stdin\\); [print\\(f\\\\\"{s['culture_name']:15s} qty={s['quantity_kg']:>15.2f}  own={s['own_quantity_kg']:>15.2f}  farmer={s['farmer_quantity_kg']:>10.2f}\\\\\"\\) for s in data]\")",
       "Bash(curl -s http://localhost:8000/api/dashboard/period-report -H 'Authorization: Bearer __TRACKED_VAR__')",
       "Bash(curl -s -o /tmp/dashboard_test.xlsx -w 'status=%{http_code}\\\\nsize=%{size_download}\\\\ntype=%{content_type}\\\\n' http://localhost:8000/api/dashboard/period-report/export -H 'Authorization: Bearer __TRACKED_VAR__')",
-      "Bash(python -m zipfile -l /tmp/dashboard_test.xlsx)"
+      "Bash(python -m zipfile -l /tmp/dashboard_test.xlsx)",
+      "Bash(grep -nE \"^\\\\.[a-zA-Z_][a-zA-Z0-9_-]*\\\\s*[\\\\{,]|^\\\\.[a-zA-Z_][a-zA-Z0-9_-]*::\\\\w+|^/\\\\*\" C:/projects/zerno/frontend/static/css/style.css)",
+      "Bash(grep -nE \"^\\\\.[a-zA-Z_][a-zA-Z0-9_-]*\\\\s*[\\\\{,]|^/\\\\*\" C:/projects/zerno/frontend/static/css/style.css)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(curl -sX POST http://localhost:8000/api/auth/login -H \"Content-Type: application/json\" -d '{\"username\":\"admin\",\"password\":\"b1cf72afce9\"}')",
+      "Bash(curl -s http://localhost:8765/ -o /dev/null -w \"%{http_code}\\\\n\")",
+      "Bash(netstat -ano)",
+      "PowerShell(Stop-Process -Id 13796 -Force; Start-Sleep -Milliseconds 500; \\(Test-NetConnection -ComputerName 127.0.0.1 -Port 8765 -WarningAction SilentlyContinue\\).TcpTestSucceeded)",
+      "PowerShell(Stop-Process -Id 6080 -Force)",
+      "Bash(grep -nB1 -A8 \"\\\\.form-field label\" C:/projects/zerno/frontend/static/css/style.css)",
+      "Bash(grep -nE \"—|\\\\\\([^\\)]{15,}\\\\\\)\" C:/projects/zerno/frontend/dashboard.html)",
+      "Bash(grep -nB1 -A6 \"\\\\.sidebar-nav\" C:/projects/zerno/frontend/static/css/style.css)",
+      "Bash(grep -E \"^\\\\+/\\\\* =+ .{3,}\" -A1)",
+      "Bash(grep -v \"^--$\")",
+      "Bash(grep -v \"^$\")",
+      "Bash(docker restart *)"
     ]
   }
 }

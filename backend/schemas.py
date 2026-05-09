@@ -25,6 +25,7 @@ class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, description="Ім'я користувача")
     password: str = Field(..., min_length=6, description="Пароль")
     full_name: str = Field(..., description="ПІБ користувача")
+    role: Optional[UserRole] = Field(default=UserRole.USER, description="Роль")
 
 
 class UserResponse(BaseModel):
@@ -47,6 +48,7 @@ class UserUpdate(BaseModel):
     full_name: Optional[str] = None
     password: Optional[str] = Field(None, min_length=6)
     is_active: Optional[bool] = None
+    role: Optional[UserRole] = None
 
 
 # Схемы для кассы

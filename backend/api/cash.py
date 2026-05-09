@@ -8,7 +8,7 @@ from backend.schemas import (
     BalanceUpdateRequest,
     TransactionResponse
 )
-from backend.auth import get_current_super_admin, get_current_user
+from backend.auth import get_current_super_admin, get_current_admin_or_manager, get_current_user
 from datetime import datetime, date, time
 from io import BytesIO
 from openpyxl import Workbook
@@ -47,9 +47,9 @@ async def get_balance(
 async def update_balance(
     update_request: BalanceUpdateRequest,
     session: Session = Depends(get_session),
-    current_admin: User = Depends(get_current_super_admin)
+    current_admin: User = Depends(get_current_admin_or_manager)
 ):
-    """Изменение баланса кассы (только для супер админа)"""
+    """Зміна балансу каси (super_admin або manager)"""
     cash_register = get_or_create_cash_register(session)
     
     # Определяем, какое поле баланса нужно изменить
