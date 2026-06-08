@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Response
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 from sqlalchemy import func, or_
@@ -63,7 +63,10 @@ def _intake_on_stock(intake: GrainIntake) -> bool:
     return not intake.pending_quality and not intake.pending_tare
 
 
-def _get_or_create_stock(session: Session, culture_id: int) -> GrainStock:
+def _get_or_create_stock(session: Session, culture_id: int, *, commit: bool = True) -> GrainStock:
+    """`commit=True` (default) — старе поведінка, ідемпотентне створення з власним commit.
+    `commit=False` — flush замість commit, щоб callers могли об'єднати все в одну транзакцію.
+    """
     stock = session.exec(
         select(GrainStock).where(GrainStock.culture_id == culture_id)
     ).first()
@@ -76,8 +79,12 @@ def _get_or_create_stock(session: Session, culture_id: int) -> GrainStock:
             reserved_kg=0.0
         )
         session.add(stock)
-        session.commit()
-        session.refresh(stock)
+        if commit:
+            session.commit()
+            session.refresh(stock)
+        else:
+            # flush присвоює PK без завершення транзакції — callers продовжують додавати мутації
+            session.flush()
     return stock
 
 
@@ -86,8 +93,11 @@ def _get_or_create_driver_stat(
     driver_id: int,
     vehicle_type_id: int,
     culture_id: int,
-    has_trailer: bool
+    has_trailer: bool,
+    *,
+    commit: bool = True,
 ) -> DriverStat:
+    """`commit` — див. `_get_or_create_stock`."""
     stat = session.exec(
         select(DriverStat).where(
             DriverStat.driver_id == driver_id,
@@ -107,8 +117,11 @@ def _get_or_create_driver_stat(
             total_accepted_weight_kg=0.0
         )
         session.add(stat)
-        session.commit()
-        session.refresh(stat)
+        if commit:
+            session.commit()
+            session.refresh(stat)
+        else:
+            session.flush()
     return stat
 
 
@@ -116,17 +129,22 @@ def _apply_stock_delta(
     session: Session,
     culture_id: int,
     delta_kg: float,
-    is_own_grain: bool = False
+    is_own_grain: bool = False,
+    *,
+    commit: bool = True,
 ) -> None:
-    """Обновление склада с учетом разделения на наше и фермерское зерно"""
-    stock = _get_or_create_stock(session, culture_id)
+    """Обновление склада с учетом разделения на наше и фермерское зерно.
+    `commit=False` для атомарних handler-ів (transactional refactor).
+    """
+    stock = _get_or_create_stock(session, culture_id, commit=commit)
     stock.quantity_kg += delta_kg
     if is_own_grain:
         stock.own_quantity_kg += delta_kg
     else:
         stock.farmer_quantity_kg += delta_kg
     session.add(stock)
-    session.commit()
+    if commit:
+        session.commit()
 
 
 def _apply_driver_stat_delta(
@@ -137,20 +155,24 @@ def _apply_driver_stat_delta(
     has_trailer: bool,
     delta_trips: int,
     delta_net_kg: float,
-    delta_accepted_kg: float
+    delta_accepted_kg: float,
+    *,
+    commit: bool = True,
 ) -> None:
     stat = _get_or_create_driver_stat(
         session,
         driver_id=driver_id,
         vehicle_type_id=vehicle_type_id,
         culture_id=culture_id,
-        has_trailer=has_trailer
+        has_trailer=has_trailer,
+        commit=commit,
     )
     stat.trips += delta_trips
     stat.total_net_weight_kg += delta_net_kg
     stat.total_accepted_weight_kg += delta_accepted_kg
     session.add(stat)
-    session.commit()
+    if commit:
+        session.commit()
 
 
 @router.get("/cultures", response_model=list[GrainCultureResponse])
@@ -537,13 +559,29 @@ async def export_owner_balance(
 
 @router.get("/farmer-movements", response_model=list[FarmerGrainMovementResponse])
 async def list_farmer_grain_movements(
+    response: Response,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    start_date: Optional[str] = Query(None, description="ISO YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="ISO YYYY-MM-DD включно"),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
 ):
-    """Список переміщень зерна фермерів"""
-    return session.exec(
-        select(FarmerGrainMovement).order_by(FarmerGrainMovement.created_at.desc())
-    ).all()
+    """Список переміщень зерна фермерів. `start_date`/`end_date` — необовʼязковий діапазон."""
+    query = select(FarmerGrainMovement).order_by(FarmerGrainMovement.created_at.desc())
+    if start_date:
+        try:
+            query = query.where(FarmerGrainMovement.created_at >= datetime.combine(date.fromisoformat(start_date), time.min))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Некоректний start_date")
+    if end_date:
+        try:
+            query = query.where(FarmerGrainMovement.created_at <= datetime.combine(date.fromisoformat(end_date), time.max))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Некоректний end_date")
+    total = session.exec(select(func.count()).select_from(query.subquery())).first() or 0
+    response.headers["X-Total-Count"] = str(total)
+    return session.exec(query.limit(limit).offset(offset)).all()
 
 
 @router.get("/farmer-movements/export")
@@ -793,27 +831,18 @@ async def transfer_farmer_grain(
         )
         session.add(to_intake)
     else:
-        # Фермер → людина: людина фізично забирає зерно зі складу.
+        # Фермер → людина: зерно лишається у нас на складі, перевішується з
+        # farmer_quantity_kg у person_quantity_kg. Фізично нічого не вибуває —
+        # людина потім або забере, або обміняє за контрактом.
+        # quantity_kg (загальний фізичний об'єм) не змінюється, тому
+        # StockAdjustmentLog не пишемо — це не списання, а внутрішня переуступка.
         stock = session.exec(
             select(GrainStock).where(GrainStock.culture_id == payload.culture_id)
         ).first()
         if stock:
             stock.farmer_quantity_kg = max(0.0, stock.farmer_quantity_kg - payload.quantity_kg)
-            stock.quantity_kg = max(0.0, stock.quantity_kg - payload.quantity_kg)
+            stock.person_quantity_kg = (stock.person_quantity_kg or 0.0) + payload.quantity_kg
             session.add(stock)
-            session.add(StockAdjustmentLog(
-                stock_type=StockAdjustmentType.GRAIN,
-                culture_id=payload.culture_id,
-                item_name=culture.name,
-                transaction_type=TransactionType.SUBTRACT,
-                amount=payload.quantity_kg,
-                quantity_before=stock.quantity_kg + payload.quantity_kg,
-                quantity_after=stock.quantity_kg,
-                user_id=current_user.id,
-                user_full_name=current_user.full_name,
-                source="farmer_transfer_to_person",
-                destination=f"Людина: {receiver_label}"
-            ))
 
     movement = FarmerGrainMovement(
         movement_type="transfer",
@@ -1104,6 +1133,7 @@ async def get_stock(
         quantity = stock.quantity_kg if stock else 0.0
         own_quantity = stock.own_quantity_kg if stock else 0.0
         farmer_quantity = stock.farmer_quantity_kg if stock else 0.0
+        person_quantity = (stock.person_quantity_kg if stock else 0.0) or 0.0
         reserved_quantity = stock.reserved_kg if stock else 0.0
         response.append(
             GrainStockResponse(
@@ -1112,6 +1142,7 @@ async def get_stock(
                 quantity_kg=quantity,
                 own_quantity_kg=own_quantity,
                 farmer_quantity_kg=farmer_quantity,
+                person_quantity_kg=person_quantity,
                 reserved_kg=reserved_quantity,
                 price_per_kg=culture.price_per_kg
             )
@@ -1201,6 +1232,7 @@ async def adjust_stock(
         quantity_kg=stock.quantity_kg,
         own_quantity_kg=stock.own_quantity_kg,
         farmer_quantity_kg=stock.farmer_quantity_kg,
+        person_quantity_kg=(stock.person_quantity_kg or 0.0),
         reserved_kg=stock.reserved_kg,
         price_per_kg=culture.price_per_kg
     )
@@ -1234,6 +1266,7 @@ async def reserve_stock(
         quantity_kg=stock.quantity_kg,
         own_quantity_kg=stock.own_quantity_kg,
         farmer_quantity_kg=stock.farmer_quantity_kg,
+        person_quantity_kg=(stock.person_quantity_kg or 0.0),
         reserved_kg=stock.reserved_kg,
         price_per_kg=culture.price_per_kg
     )
@@ -1266,6 +1299,7 @@ async def release_stock_reserve(
         quantity_kg=stock.quantity_kg,
         own_quantity_kg=stock.own_quantity_kg,
         farmer_quantity_kg=stock.farmer_quantity_kg,
+        person_quantity_kg=(stock.person_quantity_kg or 0.0),
         reserved_kg=stock.reserved_kg,
         price_per_kg=culture.price_per_kg
     )
@@ -1273,15 +1307,33 @@ async def release_stock_reserve(
 
 @router.get("/stock/adjustments", response_model=list[StockAdjustmentResponse])
 async def list_grain_stock_adjustments(
+    response: Response,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
 ):
     """Журнал ручних коригувань складу зерна"""
-    return session.exec(
+    query = (
         select(StockAdjustmentLog)
         .where(StockAdjustmentLog.stock_type == StockAdjustmentType.GRAIN)
         .order_by(StockAdjustmentLog.created_at.desc())
-    ).all()
+    )
+    if start_date:
+        try:
+            query = query.where(StockAdjustmentLog.created_at >= datetime.combine(date.fromisoformat(start_date), time.min))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Некоректний start_date")
+    if end_date:
+        try:
+            query = query.where(StockAdjustmentLog.created_at <= datetime.combine(date.fromisoformat(end_date), time.max))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Некоректний end_date")
+    total = session.exec(select(func.count()).select_from(query.subquery())).first() or 0
+    response.headers["X-Total-Count"] = str(total)
+    return session.exec(query.limit(limit).offset(offset)).all()
 
 
 @router.get("/stock/adjustments/export")
@@ -1501,8 +1553,8 @@ async def create_intake(
             if not owner:
                 owner = GrainOwner(full_name=owner_full_name, phone=owner_phone)
                 session.add(owner)
-                session.commit()
-                session.refresh(owner)
+                # flush — отримуємо owner.id, але не комітимо: контракт інтейку має йти однією транзакцією
+                session.flush()
             owner_id = owner.id
 
         owner_full_name = owner.full_name
@@ -1574,14 +1626,13 @@ async def create_intake(
         created_by_user_id=current_user.id
     )
     session.add(intake)
-    session.commit()
-    session.refresh(intake)
+    # flush для отримання intake.id у можливих наступних мутаціях. Без commit — атомарність.
+    session.flush()
 
     if not payload.pending_quality and not payload.pending_tare:
-        stock = _get_or_create_stock(session, payload.culture_id)
+        stock = _get_or_create_stock(session, payload.culture_id, commit=False)
         quantity_before = stock.quantity_kg
-        _apply_stock_delta(session, payload.culture_id, accepted_weight, payload.is_own_grain)
-        session.refresh(stock)
+        _apply_stock_delta(session, payload.culture_id, accepted_weight, payload.is_own_grain, commit=False)
         owner_label = "Підприємство" if payload.is_own_grain else (owner_full_name or "Фермер")
         session.add(StockAdjustmentLog(
             stock_type=StockAdjustmentType.GRAIN,
@@ -1598,7 +1649,6 @@ async def create_intake(
             source="intake",
             destination=owner_label,
         ))
-        session.commit()
         if payload.is_internal_driver and driver_id:
             _apply_driver_stat_delta(
                 session,
@@ -1608,22 +1658,42 @@ async def create_intake(
                 has_trailer=payload.has_trailer,
                 delta_trips=1,
                 delta_net_kg=net_weight,
-                delta_accepted_kg=accepted_weight
+                delta_accepted_kg=accepted_weight,
+                commit=False,
             )
 
+    # Один атомарний commit на всю операцію: owner (опц.) + intake + stock + adjustment log + driver stat.
+    # Якщо щось упало посередині — відкочуємо все: ніяких orphan intake без stock, або stock без журналу.
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    session.refresh(intake)
     return intake
 
 
 @router.get("/intakes", response_model=list[GrainIntakeResponse])
 async def list_intakes(
+    response: Response,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
     pending_only: bool = Query(False, description="Очікують % втрат або тару"),
     is_own_combine: Optional[bool] = Query(None, description="Наш комбайн: true/false, None — всі"),
     field_id: Optional[int] = Query(None, description="Фільтр по полю (прийоми зерна підприємства з цього поля)"),
-    include_transfers: bool = Query(False, description="Показати синтетичні картки від трансферів між фермерами")
+    include_transfers: bool = Query(False, description="Показати синтетичні картки від трансферів між фермерами"),
+    start_date: Optional[str] = Query(None, description="Фільтр з дати (ISO YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="Фільтр до дати (ISO YYYY-MM-DD), включно"),
+    include_pending: bool = Query(True, description="Включати pending-картки (без часу) навіть якщо за діапазоном"),
+    limit: int = Query(100, ge=1, le=1000, description="Розмір сторінки"),
+    offset: int = Query(0, ge=0, description="Зміщення для пагінації"),
 ):
-    """Список карток приходу"""
+    """Список карток приходу.
+
+    `start_date`/`end_date` — необовʼязковий діапазон. Без них повертається все.
+    `include_pending=True` гарантує що pending-картки (очікують тару/якість) завжди
+    видимі — вони критичні для оператора незалежно від обраного періоду.
+    """
     query = select(GrainIntake).order_by(GrainIntake.created_at.desc())
     if not include_transfers:
         query = query.where(GrainIntake.is_farmer_transfer == False)
@@ -1635,7 +1705,40 @@ async def list_intakes(
         query = query.where(GrainIntake.is_own_combine == is_own_combine)
     if field_id is not None:
         query = query.where(GrainIntake.field_id == field_id)
-    return session.exec(query).all()
+    if start_date or end_date:
+        start_dt = None
+        end_dt = None
+        if start_date:
+            try:
+                start_dt = datetime.combine(date.fromisoformat(start_date), time.min)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Некоректний формат start_date")
+        if end_date:
+            try:
+                end_dt = datetime.combine(date.fromisoformat(end_date), time.max)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Некоректний формат end_date")
+        date_filter = []
+        if start_dt:
+            date_filter.append(GrainIntake.created_at >= start_dt)
+        if end_dt:
+            date_filter.append(GrainIntake.created_at <= end_dt)
+        # Pending-картки бачимо завжди — вони потребують уваги оператора.
+        if include_pending:
+            query = query.where(
+                or_(
+                    *date_filter,
+                    GrainIntake.pending_quality == True,
+                    GrainIntake.pending_tare == True,
+                )
+            )
+        else:
+            for cond in date_filter:
+                query = query.where(cond)
+    # Загальний count для пагінації — без limit/offset
+    total = session.exec(select(func.count()).select_from(query.subquery())).first() or 0
+    response.headers["X-Total-Count"] = str(total)
+    return session.exec(query.limit(limit).offset(offset)).all()
 
 
 @router.get("/intakes/summary-export")
@@ -2149,13 +2252,29 @@ async def export_intakes(
 
 @router.get("/shipments", response_model=list[GrainShipmentResponse])
 async def list_shipments(
+    response: Response,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    start_date: Optional[str] = Query(None, description="ISO YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="ISO YYYY-MM-DD включно"),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
 ):
-    """Список відправок зерна"""
-    return session.exec(
-        select(GrainShipment).order_by(GrainShipment.created_at.desc())
-    ).all()
+    """Список відправок зерна. `start_date`/`end_date` — необовʼязковий діапазон."""
+    query = select(GrainShipment).order_by(GrainShipment.created_at.desc())
+    if start_date:
+        try:
+            query = query.where(GrainShipment.created_at >= datetime.combine(date.fromisoformat(start_date), time.min))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Некоректний start_date")
+    if end_date:
+        try:
+            query = query.where(GrainShipment.created_at <= datetime.combine(date.fromisoformat(end_date), time.max))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Некоректний end_date")
+    total = session.exec(select(func.count()).select_from(query.subquery())).first() or 0
+    response.headers["X-Total-Count"] = str(total)
+    return session.exec(query.limit(limit).offset(offset)).all()
 
 
 @router.post("/shipments", response_model=GrainShipmentResponse)
@@ -2943,18 +3062,15 @@ async def update_intake_quality(
     intake.pending_quality = False
     intake.accepted_weight_kg = new_accepted
     session.add(intake)
-    session.commit()
-    session.refresh(intake)
 
     culture = session.get(GrainCulture, intake.culture_id)
     culture_name = culture.name if culture else "-"
     owner_label = "Підприємство" if intake.is_own_grain else (intake.owner_full_name or "Фермер")
 
     if was_pending:
-        stock = _get_or_create_stock(session, intake.culture_id)
+        stock = _get_or_create_stock(session, intake.culture_id, commit=False)
         quantity_before = stock.quantity_kg
-        _apply_stock_delta(session, intake.culture_id, new_accepted, intake.is_own_grain)
-        session.refresh(stock)
+        _apply_stock_delta(session, intake.culture_id, new_accepted, intake.is_own_grain, commit=False)
         session.add(StockAdjustmentLog(
             stock_type=StockAdjustmentType.GRAIN,
             culture_id=intake.culture_id,
@@ -2970,7 +3086,6 @@ async def update_intake_quality(
             source="intake",
             destination=owner_label,
         ))
-        session.commit()
         if intake.is_internal_driver and intake.driver_id:
             _apply_driver_stat_delta(
                 session,
@@ -2980,15 +3095,15 @@ async def update_intake_quality(
                 has_trailer=intake.has_trailer,
                 delta_trips=1,
                 delta_net_kg=intake.net_weight_kg,
-                delta_accepted_kg=new_accepted
+                delta_accepted_kg=new_accepted,
+                commit=False,
             )
     else:
         delta_accepted = new_accepted - old_accepted
         if abs(delta_accepted) > 0:
-            stock = _get_or_create_stock(session, intake.culture_id)
+            stock = _get_or_create_stock(session, intake.culture_id, commit=False)
             quantity_before = stock.quantity_kg
-            _apply_stock_delta(session, intake.culture_id, delta_accepted, intake.is_own_grain)
-            session.refresh(stock)
+            _apply_stock_delta(session, intake.culture_id, delta_accepted, intake.is_own_grain, commit=False)
             is_add = delta_accepted > 0
             session.add(StockAdjustmentLog(
                 stock_type=StockAdjustmentType.GRAIN,
@@ -3005,7 +3120,6 @@ async def update_intake_quality(
                 source="intake",
                 destination=owner_label,
             ))
-            session.commit()
             if intake.is_internal_driver and intake.driver_id:
                 _apply_driver_stat_delta(
                     session,
@@ -3015,9 +3129,17 @@ async def update_intake_quality(
                     has_trailer=intake.has_trailer,
                     delta_trips=0,
                     delta_net_kg=0.0,
-                    delta_accepted_kg=delta_accepted
+                    delta_accepted_kg=delta_accepted,
+                    commit=False,
                 )
 
+    # Атомарно: intake + stock + adjustment log + driver stat (опц.).
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    session.refresh(intake)
     return intake
 
 
@@ -3092,8 +3214,8 @@ async def update_intake(
             if not owner:
                 owner = GrainOwner(full_name=owner_full_name, phone=owner_phone)
                 session.add(owner)
-                session.commit()
-                session.refresh(owner)
+                # flush — отримуємо owner.id без завершення транзакції
+                session.flush()
             update_data["owner_id"] = owner.id
             update_data["owner_full_name"] = owner.full_name
             update_data["owner_phone"] = owner.phone
@@ -3148,12 +3270,11 @@ async def update_intake(
         setattr(intake, field, value)
 
     session.add(intake)
-    session.commit()
-    session.refresh(intake)
+    session.flush()  # без commit — щоб старе/нове коригування складу залишилось атомарним
 
-    # Коригуємо склад і статистику
+    # Коригуємо склад і статистику (відкочуємо старі дельти, накатуємо нові)
     if old_on_stock:
-        _apply_stock_delta(session, old_culture_id, -old_accepted, old_is_own_grain)
+        _apply_stock_delta(session, old_culture_id, -old_accepted, old_is_own_grain, commit=False)
         if old_is_internal_driver and old_driver_id:
             _apply_driver_stat_delta(
                 session,
@@ -3163,11 +3284,12 @@ async def update_intake(
                 has_trailer=old_has_trailer,
                 delta_trips=-1,
                 delta_net_kg=-old_net,
-                delta_accepted_kg=-old_accepted
+                delta_accepted_kg=-old_accepted,
+                commit=False,
             )
 
     if _intake_on_stock(intake):
-        _apply_stock_delta(session, intake.culture_id, intake.accepted_weight_kg, intake.is_own_grain)
+        _apply_stock_delta(session, intake.culture_id, intake.accepted_weight_kg, intake.is_own_grain, commit=False)
         if intake.is_internal_driver and intake.driver_id:
             _apply_driver_stat_delta(
                 session,
@@ -3177,9 +3299,17 @@ async def update_intake(
                 has_trailer=intake.has_trailer,
                 delta_trips=1,
                 delta_net_kg=intake.net_weight_kg,
-                delta_accepted_kg=intake.accepted_weight_kg
+                delta_accepted_kg=intake.accepted_weight_kg,
+                commit=False,
             )
 
+    # Атомарно: owner (опц.) + intake + 2 рази stock/driver_stat (старе rollback + нове).
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    session.refresh(intake)
     return intake
 
 

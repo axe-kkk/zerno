@@ -201,6 +201,86 @@ async def list_person_actions(
     return actions
 
 
+@router.get("/{person_id}/balance")
+async def get_person_balance(
+    person_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Залишок зерна на балансі людини по культурах.
+
+    Розраховується як сума переказів `to_person_id` мінус витрати у контрактах
+    (видача/прийом за контрактом). Зараз контрактна логіка для людини оперує
+    лише грошима, тому витрати = 0 — лишається повна сума переказів.
+    """
+    person = session.get(Person, person_id)
+    if not person:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Людину не знайдено")
+
+    cultures_map = {c.id: c.name for c in session.exec(select(GrainCulture)).all()}
+
+    incoming = session.exec(
+        select(FarmerGrainMovement).where(
+            FarmerGrainMovement.to_person_id == person_id,
+            FarmerGrainMovement.movement_type == "transfer",
+        )
+    ).all()
+
+    totals: dict[int, float] = {}
+    for m in incoming:
+        totals[m.culture_id] = totals.get(m.culture_id, 0.0) + (m.quantity_kg or 0.0)
+
+    # Витрати:
+    #  1) GRAIN-оплати по DEBT-контрактах (людина платить за свій борг зерном)
+    #  2) FROM_FARMER GRAIN-позиції у PAYMENT-контрактах (викуп: зерно одразу йде у нас)
+    from backend.models import (
+        FarmerContractPayment, FarmerContractPaymentType,
+        FarmerContractItem, FarmerContractItemDirection, FarmerContractItemType,
+        FarmerContractStatus,
+    )
+    active_contracts = session.exec(
+        select(FarmerContract).where(
+            FarmerContract.person_id == person_id,
+            FarmerContract.status != FarmerContractStatus.CANCELLED.value,
+        )
+    ).all()
+    contract_ids = [c.id for c in active_contracts]
+    if contract_ids:
+        spent_payments = session.exec(
+            select(FarmerContractPayment).where(
+                FarmerContractPayment.contract_id.in_(contract_ids),
+                FarmerContractPayment.payment_type == FarmerContractPaymentType.GRAIN.value,
+                FarmerContractPayment.is_cancelled == False,
+            )
+        ).all()
+        for p in spent_payments:
+            if p.culture_id is None:
+                continue
+            totals[p.culture_id] = totals.get(p.culture_id, 0.0) - (p.quantity_kg or 0.0)
+
+        spent_payment_items = session.exec(
+            select(FarmerContractItem).where(
+                FarmerContractItem.contract_id.in_(contract_ids),
+                FarmerContractItem.direction == FarmerContractItemDirection.FROM_FARMER.value,
+                FarmerContractItem.item_type == FarmerContractItemType.GRAIN.value,
+            )
+        ).all()
+        for it in spent_payment_items:
+            if it.culture_id is None:
+                continue
+            totals[it.culture_id] = totals.get(it.culture_id, 0.0) - (it.delivered_kg or 0.0)
+
+    return [
+        {
+            "culture_id": cid,
+            "culture_name": cultures_map.get(cid, "—"),
+            "quantity_kg": round(qty, 4),
+        }
+        for cid, qty in sorted(totals.items())
+        if qty > 0.0001
+    ]
+
+
 @router.get("/export")
 async def export_people(
     session: Session = Depends(get_session),

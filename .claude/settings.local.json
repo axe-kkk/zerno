@@ -52,7 +52,14 @@
       "Bash(grep -E \"^\\\\+/\\\\* =+ .{3,}\" -A1)",
       "Bash(grep -v \"^--$\")",
       "Bash(grep -v \"^$\")",
-      "Bash(docker restart *)"
+      "Bash(docker restart *)",
+      "Bash(git -C /c/projects/zerno remote -v)",
+      "Bash(git -C /c/projects/zerno ls-remote https://github.com/axe-kkk/zerno.git HEAD)",
+      "Bash(git -C /c/projects/zerno ls-files)",
+      "Bash(grep -E \"^\\\\.env$\")",
+      "Bash(git -C /c/projects/zerno log --oneline --all -- .env)",
+      "Bash(git -C C:/projects/zerno status)",
+      "Bash(git -C C:/projects/zerno ls-files)"
     ]
   }
 }

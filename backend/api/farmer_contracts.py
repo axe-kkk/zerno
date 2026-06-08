@@ -113,6 +113,50 @@ def _get_farmer_balance(session: Session, owner_id: int, culture_id: int) -> flo
     return float(total) - float(deductions)
 
 
+def _get_person_balance(session: Session, person_id: int, culture_id: int) -> float:
+    """Баланс зерна людини по культурі.
+    Прибутки: переказів to_person_id за цю культуру.
+    Витрати:
+      1) активні GRAIN-оплати по DEBT-контрактах цієї людини за цю культуру;
+      2) FROM_FARMER GRAIN-позиції у PAYMENT-контрактах цієї людини (викуп —
+         зерно одразу йде у нас, незалежно від типу оплати).
+    Скасовані контракти/оплати не враховуються.
+    """
+    from backend.models import FarmerGrainMovement, FarmerContract, FarmerContractItem
+    incoming = session.exec(
+        select(func.sum(FarmerGrainMovement.quantity_kg)).where(
+            FarmerGrainMovement.to_person_id == person_id,
+            FarmerGrainMovement.culture_id == culture_id,
+            FarmerGrainMovement.movement_type == "transfer",
+        )
+    ).first() or 0.0
+
+    contract_ids_query = select(FarmerContract.id).where(
+        FarmerContract.person_id == person_id,
+        FarmerContract.status != FarmerContractStatus.CANCELLED.value,
+    )
+    grain_spent = session.exec(
+        select(func.sum(FarmerContractPayment.quantity_kg)).where(
+            FarmerContractPayment.contract_id.in_(contract_ids_query),
+            FarmerContractPayment.payment_type == FarmerContractPaymentType.GRAIN.value,
+            FarmerContractPayment.culture_id == culture_id,
+            FarmerContractPayment.is_cancelled == False,
+        )
+    ).first() or 0.0
+
+    # Викуп (PAYMENT-контракт): зерно йде у нас одразу при створенні контракту.
+    payment_spent = session.exec(
+        select(func.sum(FarmerContractItem.delivered_kg)).where(
+            FarmerContractItem.contract_id.in_(contract_ids_query),
+            FarmerContractItem.direction == FarmerContractItemDirection.FROM_FARMER.value,
+            FarmerContractItem.item_type == FarmerContractItemType.GRAIN.value,
+            FarmerContractItem.culture_id == culture_id,
+        )
+    ).first() or 0.0
+
+    return float(incoming) - float(grain_spent) - float(payment_spent)
+
+
 def _normalize_name_for_match(name: str) -> str:
     """Канонічна назва для зіставлення: однакове написання кирилицею/латиницею (С/С, А/а тощо)."""
     import re
@@ -698,22 +742,26 @@ async def create_farmer_contract(
 
     ctype = payload.contract_type
 
-    # Обмеження для контрактів з людиною: вони не мають свого зерна.
-    # Дозволений лише тип «Контракт» (DEBT) — без виплат і без резерву.
+    # Обмеження для контрактів з людиною. Дозволені:
+    #   • DEBT — «Контракт»: людина дає нам гроші/зерно за наші товари/гроші.
+    #   • PAYMENT — «Викуп»: людина продає нам своє зерно (з person_quantity_kg на складі)
+    #     за гроші — миттєвий розрахунок.
+    # Резерв (RESERVE) і EXCHANGE — заборонені.
     if person:
-        if ctype != FarmerContractType.DEBT:
+        if ctype not in (FarmerContractType.DEBT, FarmerContractType.PAYMENT):
             raise HTTPException(
                 status_code=400,
-                detail="Для людини доступний лише тип «Контракт»"
+                detail="Для людини доступні типи «Контракт» або «Викуп/Виплата»"
             )
-        # У позиціях фермера для людини дозволені лише гроші
-        for fi in payload.farmer_items:
-            it = fi.item_type.value if hasattr(fi.item_type, "value") else fi.item_type
-            if it != FarmerContractItemType.CASH.value:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Людина може розраховуватись лише грошима"
-                )
+        # У DEBT-контракті від людини дозволені лише гроші. У PAYMENT — лише зерно (це викуп).
+        if ctype == FarmerContractType.DEBT:
+            for fi in payload.farmer_items:
+                it = fi.item_type.value if hasattr(fi.item_type, "value") else fi.item_type
+                if it != FarmerContractItemType.CASH.value:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Людина в контракті може розраховуватись лише грошима"
+                    )
         # Талони не виписуються на людину
         for ci in payload.company_items:
             it = ci.item_type.value if hasattr(ci.item_type, "value") else ci.item_type
@@ -724,11 +772,15 @@ async def create_farmer_contract(
                 )
 
     # ─────────────────────────────────────────────
-    #  PAYMENT — контракт виплати (миттєвий розрахунок)
+    #  PAYMENT — контракт виплати/викупу (миттєвий розрахунок).
+    #  Працює і для фермера, і для людини. Різниця лише у:
+    #   • джерелі балансу для перевірки доступного зерна
+    #   • бакеті складу, з якого списуємо (farmer vs person)
+    #   • чи створюємо FarmerGrainDeduction (тільки для фермера)
     # ─────────────────────────────────────────────
     if ctype == FarmerContractType.PAYMENT:
         if not payload.farmer_items:
-            raise HTTPException(status_code=400, detail="Вкажіть зерно фермера для обміну на гроші")
+            raise HTTPException(status_code=400, detail="Вкажіть зерно для викупу")
 
         # Валідуємо та збираємо позиції
         farmer_total = 0.0
@@ -740,7 +792,10 @@ async def create_farmer_contract(
             if not culture:
                 raise HTTPException(status_code=404, detail="Культуру не знайдено")
             price = fi.price_per_kg or culture.price_per_kg
-            available = _get_farmer_balance(session, payload.owner_id, fi.culture_id)
+            if person:
+                available = _get_person_balance(session, payload.person_id, fi.culture_id)
+            else:
+                available = _get_farmer_balance(session, payload.owner_id, fi.culture_id)
             if fi.quantity_kg > available + 0.01:
                 raise HTTPException(status_code=400, detail=f"Недостатньо {culture.name} на балансі. Доступно: {available:.2f}")
             total_uah = fi.quantity_kg * price
@@ -771,6 +826,7 @@ async def create_farmer_contract(
         # Створюємо контракт (відразу закритий)
         contract = FarmerContract(
             owner_id=payload.owner_id,
+            person_id=payload.person_id,
             contract_type=FarmerContractType.PAYMENT.value,
             status=FarmerContractStatus.CLOSED.value,
             total_value_uah=farmer_total,
@@ -788,18 +844,23 @@ async def create_farmer_contract(
             session.add(item)
         session.flush()
 
-        # Рухи на складі: фермерське зерно → наше
+        # Рухи на складі: зерно контрагента → наше.
         for item in items_to_create:
             stock = _get_or_create_grain_stock(session, item.culture_id)
-            stock.farmer_quantity_kg = max(0.0, stock.farmer_quantity_kg - item.quantity_kg)
+            if person:
+                stock.person_quantity_kg = max(0.0, (stock.person_quantity_kg or 0.0) - item.quantity_kg)
+            else:
+                stock.farmer_quantity_kg = max(0.0, stock.farmer_quantity_kg - item.quantity_kg)
             stock.own_quantity_kg += item.quantity_kg
             session.add(stock)
-            # Списання з балансу фермера
-            session.add(FarmerGrainDeduction(
-                owner_id=payload.owner_id,
-                culture_id=item.culture_id,
-                quantity_kg=item.quantity_kg
-            ))
+            # Списання з балансу фермера — лише для фермера. Балас людини
+            # автоматично перерахується через GRAIN-payments + transfers.
+            if not person:
+                session.add(FarmerGrainDeduction(
+                    owner_id=payload.owner_id,
+                    culture_id=item.culture_id,
+                    quantity_kg=item.quantity_kg
+                ))
 
         # Списуємо гроші з каси
         cash_register = _get_cash_register(session)
@@ -813,7 +874,7 @@ async def create_farmer_contract(
             amount=payout_amount,
             transaction_type=TransactionType.SUBTRACT,
             user_id=current_user.id,
-            description=f"Виплата фермеру за контрактом #{contract.id} ({owner.full_name})",
+            description=f"Виплата за контрактом #{contract.id} ({counterparty_label})",
             uah_balance_after=cash_register.uah_balance,
             usd_balance_after=cash_register.usd_balance,
             eur_balance_after=cash_register.eur_balance
@@ -1247,17 +1308,19 @@ async def create_farmer_contract_payment(
     owner = session.get(GrainOwner, contract.owner_id) if contract.owner_id else None
     person = session.get(Person, contract.person_id) if contract.person_id else None
 
-    # Для контрактів з людиною дозволені лише грошові операції та видача товару.
-    # Зерно/талон/прийом товару від людини — заборонені.
+    # Для контрактів з людиною дозволено: оплату готівкою, видачу товару, і — якщо у людини
+    # є зерно на нашому складі (від переказу фермером) — оплату цим зерном.
+    # Талон/прийом товару від людини — досі заборонені.
     if person:
         allowed_for_person = {
             FarmerContractPaymentType.CASH,
             FarmerContractPaymentType.GOODS_ISSUE,
+            FarmerContractPaymentType.GRAIN,
         }
         if payload.payment_type not in allowed_for_person:
             raise HTTPException(
                 status_code=400,
-                detail="Для контракту з людиною доступні лише оплата готівкою або видача товару"
+                detail="Для контракту з людиною доступні лише оплата готівкою/зерном або видача товару"
             )
 
     amount_uah = 0.0
@@ -1475,14 +1538,21 @@ async def create_farmer_contract_payment(
         session.add(payment)
         contract.balance_uah = max(0.0, contract.balance_uah - amount_uah)
 
-    # ─── GRAIN: фермер платить зерном з балансу (зменшує борг) ───
+    # ─── GRAIN: контрагент платить зерном з балансу (зменшує борг) ───
+    # Для фермера: списується з його балансу через FarmerGrainDeduction.
+    # Для людини: списується з person_quantity_kg на складі (зерно, переказане їй фермером).
+    # В обох випадках зерно фізично переходить у наш бакет own_quantity_kg.
     elif payload.payment_type == FarmerContractPaymentType.GRAIN:
         if not payload.culture_id or not payload.quantity_kg or payload.quantity_kg <= 0:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Вкажіть культуру та кількість")
         culture = session.get(GrainCulture, payload.culture_id)
         if not culture:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Культуру не знайдено")
-        available = _get_farmer_balance(session, contract.owner_id, payload.culture_id)
+
+        if person:
+            available = _get_person_balance(session, contract.person_id, payload.culture_id)
+        else:
+            available = _get_farmer_balance(session, contract.owner_id, payload.culture_id)
         if payload.quantity_kg > available + 0.01:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1494,7 +1564,12 @@ async def create_farmer_contract_payment(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Сума перевищує залишок боргу")
 
         stock = _get_or_create_grain_stock(session, payload.culture_id)
-        stock.farmer_quantity_kg -= payload.quantity_kg
+        if person:
+            # У людини зерно лежить у person_quantity_kg — переносимо у own.
+            stock.person_quantity_kg = max(0.0, (stock.person_quantity_kg or 0.0) - payload.quantity_kg)
+        else:
+            # У фермера — у farmer_quantity_kg.
+            stock.farmer_quantity_kg -= payload.quantity_kg
         stock.own_quantity_kg += payload.quantity_kg
         session.add(stock)
 
@@ -1511,12 +1586,15 @@ async def create_farmer_contract_payment(
         )
         session.add(payment)
         session.flush()
-        session.add(FarmerGrainDeduction(
-            owner_id=contract.owner_id,
-            culture_id=payload.culture_id,
-            quantity_kg=payload.quantity_kg,
-            payment_id=payment.id
-        ))
+        if not person:
+            # FarmerGrainDeduction — лише для фермерів (їхній баланс рахується через ці записи).
+            # Баланс людини рахується з FarmerContractPayment(GRAIN), деduction не потрібен.
+            session.add(FarmerGrainDeduction(
+                owner_id=contract.owner_id,
+                culture_id=payload.culture_id,
+                quantity_kg=payload.quantity_kg,
+                payment_id=payment.id
+            ))
         contract.balance_uah = max(0.0, contract.balance_uah - amount_uah)
 
     # ─── VOUCHER: талон на зерно (хлібний завод) ───
@@ -1605,7 +1683,13 @@ async def create_farmer_contract_payment(
     _check_contract_completion(session, contract)
     session.add(contract)
 
-    session.commit()
+    # Атомарно: stock + cash + transaction + contract balance + payment.
+    # Один з найважливіших handler-ів — будь-яка часткова мутація = неконсистентний стан.
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     session.refresh(payment)
     return payment
 
@@ -1737,24 +1821,27 @@ async def cancel_farmer_contract_payment(
         contract.balance_uah += payment.amount_uah
         session.add(contract)
 
-    # ─── GRAIN: фермер платив зерном → повертаємо зерно фермеру ───
+    # ─── GRAIN: контрагент платив зерном → повертаємо зерно йому ───
     elif payment.payment_type == FarmerContractPaymentType.GRAIN.value:
         qty = payment.quantity_kg or 0.0
 
         if qty > 0 and payment.culture_id:
             stock = _get_or_create_grain_stock(session, payment.culture_id)
             stock.own_quantity_kg = max(0.0, stock.own_quantity_kg - qty)
-            stock.farmer_quantity_kg += qty
+            if contract.person_id:
+                # Повертаємо у бакет людини на складі.
+                stock.person_quantity_kg = (stock.person_quantity_kg or 0.0) + qty
+            else:
+                # Фермеру повертаємо у farmer_quantity_kg + видаляємо deduction-запис.
+                stock.farmer_quantity_kg += qty
+                deduction = session.exec(
+                    select(FarmerGrainDeduction).where(
+                        FarmerGrainDeduction.payment_id == payment.id
+                    )
+                ).first()
+                if deduction:
+                    session.delete(deduction)
             session.add(stock)
-
-            # Видаляємо списання з балансу фермера
-            deduction = session.exec(
-                select(FarmerGrainDeduction).where(
-                    FarmerGrainDeduction.payment_id == payment.id
-                )
-            ).first()
-            if deduction:
-                session.delete(deduction)
 
         # Повертаємо борг
         contract.balance_uah += payment.amount_uah
@@ -1810,7 +1897,12 @@ async def cancel_farmer_contract_payment(
     payment.updated_at = datetime.utcnow()
     session.add(payment)
 
-    session.commit()
+    # Атомарно: повернення зі складу/каси + reopen контракту + cancel payment.
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     session.refresh(payment)
     return payment
 

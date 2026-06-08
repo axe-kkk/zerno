@@ -221,7 +221,13 @@ async def create_voucher_payment(
             remaining_to_distribute = 0
         session.add(v)
 
-    session.commit()
+    # Атомарно: каса + transaction + payment + N vouchers (FIFO).
+    # Якщо щось упало — відкат, щоб не лишилось часткових мутацій.
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     return {"ok": True, "message": "Виплату створено"}
 
 
@@ -289,5 +295,10 @@ async def cancel_voucher_payment(
             remaining_to_distribute = 0
         session.add(v)
 
-    session.commit()
+    # Атомарно: повернення в касу + transaction + cancel payment + перерахунок vouchers.
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     return {"ok": True, "message": "Виплату скасовано, кошти повернуто"}

@@ -1,0 +1,24 @@
+[Unit]
+Description=Zerno FastAPI backend (uvicorn)
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=zerno
+Group=zerno
+WorkingDirectory=/opt/zerno
+ExecStart=/opt/zerno/.venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8000 --workers 2 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=15
+
+# basic hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

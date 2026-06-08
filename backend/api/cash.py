@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 from backend.database import get_session
@@ -80,32 +80,29 @@ async def update_balance(
                 detail=f"Недостатньо коштів. Поточний баланс {currency_label}: {current_balance}"
             )
     
-    # Обновляем баланс
+    # Атомарно: оновлюємо баланс + створюємо запис у журналі транзакцій.
+    # Один commit на всю операцію — якщо посередині щось впаде, відкочуємо все.
     setattr(cash_register, balance_field, new_balance)
-    
-    # Обновляем updated_at
-    from datetime import datetime
     cash_register.updated_at = datetime.utcnow()
-    
-    # Сохраняем изменения
     session.add(cash_register)
-    session.commit()
-    session.refresh(cash_register)
-    
-    # Создаем запись о транзакции
+
     transaction = Transaction(
         currency=update_request.currency,
         amount=update_request.amount,
         transaction_type=update_request.transaction_type,
         user_id=current_admin.id,
         description=update_request.description,
-        uah_balance_after=cash_register.uah_balance,
-        usd_balance_after=cash_register.usd_balance,
-        eur_balance_after=cash_register.eur_balance
+        uah_balance_after=new_balance if update_request.currency == Currency.UAH else cash_register.uah_balance,
+        usd_balance_after=new_balance if update_request.currency == Currency.USD else cash_register.usd_balance,
+        eur_balance_after=new_balance if update_request.currency == Currency.EUR else cash_register.eur_balance,
     )
-    
     session.add(transaction)
-    session.commit()
+
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     session.refresh(transaction)
     
     return TransactionResponse(
@@ -125,18 +122,35 @@ async def update_balance(
 
 @router.get("/transactions", response_model=list[TransactionResponse])
 async def get_transactions(
+    response: Response,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
     limit: int = 100,
-    offset: int = 0
+    offset: int = 0,
+    start_date: str | None = None,
+    end_date: str | None = None,
 ):
-    """Получение истории транзакций (доступно всем авторизованным пользователям)"""
-    transactions = session.exec(
-        select(Transaction)
-        .order_by(Transaction.created_at.desc())
-        .limit(limit)
-        .offset(offset)
-    ).all()
+    """Получение истории транзакций.
+    Підтримує діапазон дат (`start_date`/`end_date` ISO). Без дат — повертає
+    усі за обраним `limit`/`offset`. Загальна кількість — у `X-Total-Count` header.
+    """
+    from sqlalchemy import func as _f
+    query = select(Transaction).order_by(Transaction.created_at.desc())
+    if start_date:
+        try:
+            start_dt = datetime.combine(date.fromisoformat(start_date), time.min)
+            query = query.where(Transaction.created_at >= start_dt)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Некоректний формат start_date")
+    if end_date:
+        try:
+            end_dt = datetime.combine(date.fromisoformat(end_date), time.max)
+            query = query.where(Transaction.created_at <= end_dt)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Некоректний формат end_date")
+    total = session.exec(select(_f.count()).select_from(query.subquery())).first() or 0
+    response.headers["X-Total-Count"] = str(total)
+    transactions = session.exec(query.limit(limit).offset(offset)).all()
 
     user_ids = {item.user_id for item in transactions if item.user_id}
     users = session.exec(select(User).where(User.id.in_(list(user_ids)))).all() if user_ids else []

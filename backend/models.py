@@ -125,13 +125,18 @@ class Person(BaseModel, table=True):
 
 
 class GrainStock(BaseModel, table=True):
-    """Залишки зерна на складі"""
+    """Залишки зерна на складі.
+    Інваріант: quantity_kg == own_quantity_kg + farmer_quantity_kg + person_quantity_kg.
+    `person_quantity_kg` — зерно, передане фермером людині, але ще фізично у нас на складі
+    (людина має право забрати/обміняти за контрактом).
+    """
     __tablename__ = "grain_stock"
 
     culture_id: int = Field(foreign_key="grain_cultures.id", unique=True)
     quantity_kg: float = Field(default=0.0, description="Кількість в кг (загальна)")
     own_quantity_kg: float = Field(default=0.0, description="Наше зерно, кг")
     farmer_quantity_kg: float = Field(default=0.0, description="Зерно фермерів (не викуплене), кг")
+    person_quantity_kg: float = Field(default=0.0, description="Зерно людей (передане фермером, ще на складі), кг")
     reserved_kg: float = Field(default=0.0, description="Заброньовано, кг")
 
 

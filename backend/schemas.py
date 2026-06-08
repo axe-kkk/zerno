@@ -209,6 +209,7 @@ class GrainStockResponse(BaseModel):
     quantity_kg: float
     own_quantity_kg: float
     farmer_quantity_kg: float
+    person_quantity_kg: float = 0.0
     reserved_kg: float
     price_per_kg: float
 

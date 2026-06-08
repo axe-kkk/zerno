@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Response
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 from typing import Optional
@@ -135,13 +135,30 @@ async def list_purchase_stock_adjustments(
 
 @router.get("", response_model=list[PurchaseResponse])
 async def list_purchases(
+    response: Response,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    start_date: Optional[str] = Query(None, description="ISO YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="ISO YYYY-MM-DD включно"),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
 ):
-    """Історія закупівель"""
-    return session.exec(
-        select(PurchaseRecord).order_by(PurchaseRecord.created_at.desc())
-    ).all()
+    """Історія закупівель. `start_date`/`end_date` — необовʼязковий діапазон."""
+    from sqlalchemy import func as _f
+    query = select(PurchaseRecord).order_by(PurchaseRecord.created_at.desc())
+    if start_date:
+        try:
+            query = query.where(PurchaseRecord.created_at >= datetime.combine(date.fromisoformat(start_date), time.min))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Некоректний start_date")
+    if end_date:
+        try:
+            query = query.where(PurchaseRecord.created_at <= datetime.combine(date.fromisoformat(end_date), time.max))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Некоректний end_date")
+    total = session.exec(select(_f.count()).select_from(query.subquery())).first() or 0
+    response.headers["X-Total-Count"] = str(total)
+    return session.exec(query.limit(limit).offset(offset)).all()
 
 
 @router.get("/export")

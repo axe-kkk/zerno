@@ -200,6 +200,44 @@ def init_db():
         ))
         conn.commit()
 
+        # Баланс зерна у людей (новий бакет в grain_stock). Бекап з історичних
+        # переказів to_person_id: повертаємо зерно на склад і кладемо у новий бакет.
+        # Стара логіка фізично зменшувала quantity_kg при переказі до людини; тепер
+        # переказ — це внутрішня переуступка з farmer_quantity_kg в person_quantity_kg.
+        conn.execute(text(
+            "ALTER TABLE grain_stock ADD COLUMN IF NOT EXISTS person_quantity_kg DOUBLE PRECISION DEFAULT 0"
+        ))
+        conn.commit()
+
+        try:
+            already_migrated = conn.execute(text(
+                "SELECT COALESCE(SUM(person_quantity_kg), 0) FROM grain_stock"
+            )).scalar() or 0
+            # Запускаємо бекап лише один раз — якщо ще нікому з людей баланс не нараховувався.
+            if float(already_migrated) <= 0:
+                conn.execute(text(
+                    """
+                    WITH person_transfers AS (
+                        SELECT culture_id, COALESCE(SUM(quantity_kg), 0) AS total_kg
+                        FROM farmer_grain_movements
+                        WHERE to_person_id IS NOT NULL
+                          AND movement_type = 'transfer'
+                        GROUP BY culture_id
+                    )
+                    UPDATE grain_stock gs
+                    SET person_quantity_kg = pt.total_kg,
+                        quantity_kg = gs.quantity_kg + pt.total_kg
+                    FROM person_transfers pt
+                    WHERE gs.culture_id = pt.culture_id
+                      AND pt.total_kg > 0
+                    """
+                ))
+                conn.commit()
+                print("✅ Бекап: зерно з історичних переказів to_person повернуто на склад у person_quantity_kg")
+        except Exception as exc:
+            print(f"⚠️  Бекап person_quantity_kg пропущено: {exc}")
+            conn.rollback()
+
     with Session(engine) as session:
         # Создание супер админа, если его еще нет
         admin = session.exec(

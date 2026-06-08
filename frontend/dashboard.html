@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
-    <link rel="stylesheet" href="static/css/style.css?v=323">
+    <link rel="stylesheet" href="static/css/style.css?v=328">
 </head>
 <body class="dashboard-page">
     <div class="dashboard-container">
@@ -175,11 +175,19 @@
         <!-- Main Content -->
         <main class="main-content">
             <header class="main-header">
+                <button class="mobile-nav-toggle" id="mobile-nav-toggle" type="button" aria-label="Меню" aria-controls="dashboard-sidebar">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="3" y1="6" x2="21" y2="6"/>
+                        <line x1="3" y1="12" x2="21" y2="12"/>
+                        <line x1="3" y1="18" x2="21" y2="18"/>
+                    </svg>
+                </button>
                 <h2 id="page-title">Дашборд</h2>
                 <div class="header-actions">
                     <div class="current-time" id="current-time"></div>
                 </div>
             </header>
+            <div class="mobile-nav-backdrop" id="mobile-nav-backdrop"></div>
             
             <div class="content-area" id="content-area">
                 <!-- Dashboard Section -->
@@ -383,6 +391,7 @@
                             <div class="card-title">Останні операції</div>
                             <button class="btn btn-secondary btn-small" id="cash-report-btn">Звіт</button>
                         </div>
+                        <div class="table-period-hint" id="cash-transactions-period-hint"></div>
                         <div class="table-wrapper">
                             <table class="data-table" id="cash-transactions-table">
                                 <thead>
@@ -472,6 +481,7 @@
                                 <input type="text" id="intake-filter-query" placeholder="Власник, культура, водій">
                             </div>
                         </div>
+                        <div class="table-period-hint" id="intakes-period-hint"></div>
                         <div class="table-wrapper">
                             <table class="data-table" id="intakes-table">
                                 <thead>
@@ -549,6 +559,7 @@
                             <div class="card-title">Історія закупівель</div>
                             <button class="btn btn-secondary btn-small" id="purchases-report-btn">Звіт</button>
                         </div>
+                        <div class="table-period-hint" id="purchases-period-hint"></div>
                         <div class="table-wrapper">
                             <table class="data-table" id="purchases-table">
                                 <thead>
@@ -586,6 +597,7 @@
                             <div class="card-title">Історія відправок</div>
                             <button class="btn btn-secondary btn-small" id="shipments-report-btn">Звіт</button>
                         </div>
+                        <div class="table-period-hint" id="shipments-period-hint"></div>
                         <div class="table-wrapper">
                             <table class="data-table" id="shipments-table">
                                 <thead>
@@ -1032,6 +1044,7 @@
                                 </select>
                             </div>
                         </div>
+                        <div class="table-period-hint" id="farmer-movements-period-hint"></div>
                         <div class="table-wrapper">
                             <table class="data-table" id="farmer-movements-table">
                                 <thead>
@@ -1379,6 +1392,10 @@
                                 </div>
                             </div>
                             <div class="table-filters" id="contracts-filters">
+                                <div class="form-field">
+                                    <label>Пошук</label>
+                                    <input type="text" id="contracts-filter-search" placeholder="ПІБ орендодавця або назва поля" autocomplete="off">
+                                </div>
                                 <div class="form-field">
                                     <label>Орендодавець</label>
                                     <select id="contracts-filter-landlord">
@@ -2840,7 +2857,8 @@
                 <button class="modal-close" id="farmer-balance-close" aria-label="Закрити">×</button>
             </div>
             <div class="modal-body">
-                <div class="table-wrapper">
+                <!-- Табличний вигляд: для фермерів (тут є кнопка «Списати») -->
+                <div class="table-wrapper" id="farmer-balance-table-wrap">
                     <table class="data-table" id="farmer-balance-table">
                         <thead>
                             <tr>
@@ -2852,6 +2870,8 @@
                         <tbody></tbody>
                     </table>
                 </div>
+                <!-- Спрощений вигляд картками — для людей (read-only) -->
+                <div class="fcp-grain-cards hidden" id="farmer-balance-cards-wrap"></div>
                 <div class="hint" id="farmer-balance-hint">Завантаження...</div>
             </div>
             <div class="modal-actions">
@@ -3017,11 +3037,11 @@
                     </div>
                 </div>
 
-                <!-- Farmer balance (payment) -->
+                <!-- Counterparty balance (payment) — фермер або людина -->
                 <div class="fc-farmer-balance-section hidden" id="fc-farmer-balance-section">
                     <div class="fcp-info" style="margin-bottom:12px;">
                         <div class="fcp-info__row">
-                            <span class="fcp-info__label">Баланс фермера</span>
+                            <span class="fcp-info__label" id="fc-farmer-balance-label">Баланс контрагента</span>
                             <span class="fcp-info__value fcp-info__value--bold" id="fc-farmer-balance-total"><span class="empty-value" lang="uk">Пусто</span></span>
                         </div>
                     </div>
@@ -3036,7 +3056,7 @@
                 <!-- Виплата грошима: валюта + курс (тільки для типу Виплата) -->
                 <div class="fc-payment-options hidden" id="fc-payment-options">
                     <div class="fc-payment-money">
-                        <span class="fc-payment-money__label">Фермер отримає гроші:</span>
+                        <span class="fc-payment-money__label" id="fc-payment-money-label">Фермер отримає гроші:</span>
                         <div class="fc-payment-money__controls">
                             <div class="fc-payment-money__field">
                                 <label for="fc-payment-currency" class="fc-payment-money__field-label">Валюта</label>
@@ -3055,12 +3075,12 @@
                     </div>
                 </div>
 
-                <!-- Від фермера (only for payment) -->
+                <!-- Від фермера/людини (only for payment) -->
                 <div class="fc-section fc-section--farmer hidden" id="fc-section-farmer">
                     <div class="fc-section__header">
                         <div class="fc-section__title">
                             <span class="fc-section__badge">↑</span>
-                            Від фермера
+                            <span id="fc-farmer-section-title">Від фермера</span>
                         </div>
                         <button class="btn btn-secondary btn-small" id="farmer-contract-add-farmer-item">+ Позиція</button>
                     </div>
@@ -3089,7 +3109,7 @@
                 <!-- Підсумки -->
                 <div class="fc-totals">
                     <div class="fc-totals__item" id="fc-total-farmer-wrap">
-                        <span class="fc-totals__label">Від фермера</span>
+                        <span class="fc-totals__label" id="fc-total-farmer-label">Від фермера</span>
                         <span class="fc-totals__value" id="farmer-contract-total-farmer">0,00 грн</span>
                     </div>
                     <div class="fc-totals__item" id="fc-total-company-wrap">
@@ -3233,7 +3253,7 @@
                 <div class="fcp-section hidden" id="fcp-section-grain">
                     <div class="fcp-grain-recommend" id="fcp-grain-recommend"></div>
                     <div class="fcp-grain-balance">
-                        <div class="fcp-grain-balance__title">Баланс фермера</div>
+                        <div class="fcp-grain-balance__title" id="fcp-grain-balance-title">Баланс контрагента</div>
                         <div class="fcp-grain-cards" id="fcp-grain-cards">
                             <div class="fcp-grain-empty">Завантаження...</div>
                         </div>
@@ -4262,7 +4282,15 @@
         </div>
     </div>
     
-    <script src="static/js/dashboard.js?v=239"></script>
+    <script src="static/js/core.js?v=4"></script>
+    <script src="static/js/cash.js?v=3"></script>
+    <script src="static/js/vouchers.js?v=1"></script>
+    <script src="static/js/users.js?v=1"></script>
+    <script src="static/js/people.js?v=3"></script>
+    <script src="static/js/fields.js?v=1"></script>
+    <script src="static/js/leases.js?v=2"></script>
+    <script src="static/js/farmer-contracts.js?v=8"></script>
+    <script src="static/js/dashboard.js?v=253"></script>
 </body>
 </html>
 

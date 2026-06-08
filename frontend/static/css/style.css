@@ -2821,6 +2821,8 @@ body {
 #section-intake .intake-table-card .table-wrapper {
     flex: 1;
     min-height: 0;
+    /* Перевизначаємо загальний клемп — основна таблиця приходів займає більше місця */
+    max-height: clamp(400px, 70vh, 920px);
 }
 
 #section-drivers .drivers-deliveries-card .hint {
@@ -12585,3 +12587,228 @@ body.sidebar-collapsed .btn-logout:hover::after {
     box-shadow: 0 1px 2px rgba(9, 9, 11, 0.06);
 }
 
+
+/* ════════════════════════════════════════════════════════════════════
+   АДАПТИВНІСТЬ — приведення дашборда під вузькі екрани (laptop/tablet/mobile).
+   Додано окремим блоком, щоб не зачіпати наявні правила. Перевизначається
+   тільки те, що ламається при звуженні; на широких екранах нуль ефекту.
+   Брейкпойнти: 1280 → 1100 → 900 → 720 → 480.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* Бургер-кнопка у топбарі — за замовчуванням прихована */
+.mobile-nav-toggle {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    margin-right: 8px;
+    border: 1px solid var(--border, #e4e4e7);
+    border-radius: 10px;
+    background: var(--bg-card, #ffffff);
+    color: var(--text-strong, #09090b);
+    cursor: pointer;
+    transition: background-color 0.15s, border-color 0.15s;
+}
+.mobile-nav-toggle:hover {
+    background: var(--bg-hover, #f4f4f5);
+    border-color: var(--border-strong, #d4d4d8);
+}
+
+.mobile-nav-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(9, 9, 11, 0.4);
+    z-index: 9;
+    opacity: 0;
+    transition: opacity 0.18s ease;
+    pointer-events: none;
+}
+
+/* KPI картки — простіший fallback на меншу ширину контентної області
+   (auto-fit вище може давати 3 колонки, коли реально влізає лише 2). */
+@media (max-width: 1280px) {
+    .report-kpis {
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    }
+}
+
+@media (max-width: 1100px) {
+    .report-kpis {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    /* Звузити сайдбар-табмо в проміжному режимі */
+    .report-controls .form-field {
+        min-width: 120px;
+    }
+}
+
+/* Тег-натяк на горизонтальний скрол: тонка тінь з правого краю,
+   щоб користувач бачив, що таблиця ще «під рукою» */
+.table-wrapper {
+    background:
+        linear-gradient(to right, var(--bg-card, #ffffff) 30%, rgba(255, 255, 255, 0)) left center / 24px 100% no-repeat,
+        linear-gradient(to left, var(--bg-card, #ffffff) 30%, rgba(255, 255, 255, 0)) right center / 24px 100% no-repeat,
+        linear-gradient(to right, rgba(9, 9, 11, 0.08), rgba(9, 9, 11, 0)) left center / 12px 100% no-repeat,
+        linear-gradient(to left, rgba(9, 9, 11, 0.08), rgba(9, 9, 11, 0)) right center / 12px 100% no-repeat;
+    background-attachment: local, local, scroll, scroll;
+}
+
+/* ≤900px: tablet — стискаємо topbar/sidebar */
+@media (max-width: 900px) {
+    .main-content .content-area {
+        padding: 16px;
+    }
+    .report-title h2 {
+        font-size: 18px;
+    }
+}
+
+/* ≤720px: mobile — сайдбар у режимі off-canvas drawer */
+@media (max-width: 720px) {
+    .mobile-nav-toggle {
+        display: inline-flex;
+    }
+
+    /* Топбар може стискатись — заголовок не повинен виходити за межі */
+    .main-header {
+        gap: 8px;
+    }
+    .main-header h2#page-title {
+        font-size: 18px;
+        margin: 0;
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .main-header .header-actions .current-time {
+        font-size: 12px;
+    }
+
+    /* Сайдбар стає off-canvas drawer'ом — і завжди показує повний вигляд
+       (десктопний sidebar-collapsed на мобільному ігнорується). */
+    .dashboard-container .sidebar,
+    body.sidebar-collapsed .dashboard-container .sidebar {
+        position: fixed;
+        inset: 0 auto 0 0;
+        z-index: 10;
+        width: min(86vw, 320px);
+        transform: translateX(-100%);
+        transition: transform 0.22s ease;
+        box-shadow: 8px 0 32px rgba(9, 9, 11, 0.18);
+    }
+    /* На мобільному показуємо текст пунктів меню навіть якщо desktop-стан був collapsed */
+    body.sidebar-collapsed .dashboard-container .sidebar .nav-text,
+    body.sidebar-collapsed .dashboard-container .sidebar .logo-text,
+    body.sidebar-collapsed .dashboard-container .sidebar .user-info,
+    body.sidebar-collapsed .dashboard-container .sidebar .logout-btn {
+        display: revert;
+        opacity: 1;
+        visibility: visible;
+    }
+    body.mobile-nav-open .dashboard-container .sidebar {
+        transform: translateX(0);
+    }
+
+    /* Backdrop */
+    body.mobile-nav-open .mobile-nav-backdrop {
+        display: block;
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    /* Головний контент — на повну ширину */
+    .dashboard-container .main-content {
+        width: 100%;
+        margin-left: 0;
+    }
+
+    /* KPI картки — одна колонка */
+    .report-kpis {
+        grid-template-columns: 1fr;
+    }
+
+    /* Контроли звіту — full width inputs щоб не вилазили за край */
+    .report-controls {
+        width: 100%;
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .report-controls .form-field {
+        min-width: 0;
+        width: 100%;
+    }
+    .report-controls .btn {
+        width: 100%;
+    }
+
+    /* Картки — менші відступи */
+    .card {
+        border-radius: 12px;
+    }
+    .card-header {
+        padding: 14px 14px 0;
+    }
+    .table-wrapper {
+        margin: 0 -2px;
+    }
+}
+
+/* ≤480px: small mobile — ще тісніше */
+@media (max-width: 480px) {
+    .main-content .content-area {
+        padding: 12px;
+    }
+    .main-header {
+        padding: 12px;
+    }
+    .report-title h2 {
+        font-size: 16px;
+    }
+    .table-wrapper {
+        font-size: 12px;
+    }
+}
+
+/* Підказка про період завантаження + link-стиль кнопки «Завантажити всю історію» */
+.table-period-hint {
+    padding: 8px 12px;
+    margin: 4px 0 8px;
+    font-size: 12.5px;
+    color: var(--text-muted, #71717a);
+    background: var(--bg-page, #fafafa);
+    border-radius: 8px;
+}
+.table-period-hint:empty { display: none; }
+.table-period-hint strong { color: var(--text-strong, #09090b); font-weight: 600; }
+.link-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    margin-left: 8px;
+    color: var(--brand, #16a34a);
+    text-decoration: underline;
+    font: inherit;
+    cursor: pointer;
+}
+.link-btn:hover { color: var(--brand-strong, #15803d); }
+
+/* Підсумковий рядок (sum-bar) для таблиці прийомів — як в Excel */
+.intake-totals {
+    background: var(--bg-page, #fafafa);
+    border-top: 2px solid var(--border-strong, #d4d4d8);
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+}
+.intake-totals td {
+    padding: 10px 12px;
+    font-variant-numeric: tabular-nums;
+}
+.intake-totals strong {
+    color: var(--text-strong, #09090b);
+    font-weight: 600;
+}
