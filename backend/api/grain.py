@@ -557,6 +557,123 @@ async def export_owner_balance(
     )
 
 
+@router.get("/owners/balances/export")
+async def export_all_owners_balances(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """Зведений Excel-звіт: залишки зерна у всіх фермерів по культурах.
+    Один рядок = (Фермер, Культура, Залишок). Фермери без залишків не вкладаються.
+    """
+    # Прийнято фермером по культурі
+    received = session.exec(
+        select(
+            GrainIntake.owner_id,
+            GrainIntake.culture_id,
+            func.sum(GrainIntake.accepted_weight_kg),
+        )
+        .where(
+            GrainIntake.owner_id.is_not(None),
+            GrainIntake.is_own_grain == False,
+            GrainIntake.pending_quality == False,
+            GrainIntake.pending_tare == False,
+        )
+        .group_by(GrainIntake.owner_id, GrainIntake.culture_id)
+    ).all()
+
+    # Списання
+    deducted = session.exec(
+        select(
+            FarmerGrainDeduction.owner_id,
+            FarmerGrainDeduction.culture_id,
+            func.sum(FarmerGrainDeduction.quantity_kg),
+        )
+        .group_by(FarmerGrainDeduction.owner_id, FarmerGrainDeduction.culture_id)
+    ).all()
+    deduct_map = {(d[0], d[1]): float(d[2] or 0) for d in deducted}
+
+    owners_map = {o.id: o.full_name for o in session.exec(select(GrainOwner)).all()}
+    cultures_map = {c.id: c.name for c in session.exec(select(GrainCulture)).all()}
+
+    # Збираємо позитивні залишки
+    rows = []
+    totals_by_culture: dict[int, float] = {}
+    for owner_id, culture_id, qty in received:
+        balance = float(qty or 0) - deduct_map.get((owner_id, culture_id), 0.0)
+        if balance <= 0.0001:
+            continue
+        rows.append((owners_map.get(owner_id, f"#{owner_id}"), cultures_map.get(culture_id, "—"), balance))
+        totals_by_culture[culture_id] = totals_by_culture.get(culture_id, 0.0) + balance
+
+    rows.sort(key=lambda r: (r[0].lower(), r[1].lower()))
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Залишки фермерів"
+
+    headers = ["Фермер", "Культура", "Не викуплено, кг"]
+    sheet.append(headers)
+
+    header_fill = PatternFill("solid", fgColor="1F2937")
+    header_font = Font(color="FFFFFF", bold=True)
+    header_alignment = Alignment(horizontal="center", vertical="center")
+    thin_border = Border(
+        left=Side(style="thin", color="E5E7EB"),
+        right=Side(style="thin", color="E5E7EB"),
+        top=Side(style="thin", color="E5E7EB"),
+        bottom=Side(style="thin", color="E5E7EB")
+    )
+    for col in range(1, len(headers) + 1):
+        cell = sheet.cell(row=1, column=col)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_alignment
+        cell.border = thin_border
+
+    alt_fill = PatternFill("solid", fgColor="F8FAFC")
+    for r in rows:
+        sheet.append(list(r))
+
+    # Підсумок по культурах
+    if rows:
+        sheet.append([])  # порожній роздільник
+        summary_start = sheet.max_row + 1
+        sheet.append(["", "Підсумок по культурах", ""])
+        bold = Font(bold=True)
+        for cell in sheet[sheet.max_row]:
+            cell.font = bold
+        for culture_id, total in sorted(totals_by_culture.items(), key=lambda kv: cultures_map.get(kv[0], "")):
+            sheet.append(["", cultures_map.get(culture_id, "—"), total])
+
+    # Стилізація рядків даних
+    for row in range(2, sheet.max_row + 1):
+        row_fill = alt_fill if row % 2 == 0 else None
+        for col in range(1, len(headers) + 1):
+            cell = sheet.cell(row=row, column=col)
+            if row_fill:
+                cell.fill = row_fill
+            cell.border = thin_border
+            if col == 3:
+                cell.number_format = "#,##0.00"
+
+    sheet.freeze_panes = "A2"
+    if sheet.max_row > 1:
+        sheet.auto_filter.ref = f"A1:C{sheet.max_row}"
+    sheet.column_dimensions["A"].width = 32
+    sheet.column_dimensions["B"].width = 22
+    sheet.column_dimensions["C"].width = 20
+
+    buffer = BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    filename = f"farmers_balances_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/farmer-movements", response_model=list[FarmerGrainMovementResponse])
 async def list_farmer_grain_movements(
     response: Response,

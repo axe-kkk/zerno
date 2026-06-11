@@ -5164,6 +5164,29 @@ function initOwnersSearch() {
         }, 300);
     });
 
+    // Кнопка «Звіт залишків» — Excel-зведення по всіх фермерах з позитивним балансом.
+    document.getElementById('farmers-balances-export-btn')?.addEventListener('click', async (event) => {
+        const btn = event.currentTarget;
+        const originalText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Готується...';
+        try {
+            const response = await apiFetchBlob('/grain/owners/balances/export');
+            if (!response.ok) {
+                const err = await response.json().catch(() => null);
+                showToast(err?.detail || 'Не вдалося сформувати звіт', 'error');
+                return;
+            }
+            await downloadBlob(response, `farmers_balances_${new Date().toISOString().slice(0, 10)}.xlsx`);
+            showToast('Звіт сформовано', 'success');
+        } catch (e) {
+            showToast('Помилка експорту', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
+    });
+
     // Двохрежимний пікер фермера в картці приходу:
     //   режим A — обираємо існуючого зі списку (dropdown з пошуком)
     //   режим B — вводимо ПІБ нового фермера у текстове поле; ownerId лишається порожнім,
