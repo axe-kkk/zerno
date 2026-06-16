@@ -13,7 +13,11 @@ from backend.config import settings
 
 logger = logging.getLogger(__name__)
 
-BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", "/app/backups"))
+# Тека для бекапів. За замовчуванням — відносно робочої теки процесу:
+#   Docker (WORKDIR /app) → /app/backups (змонтовано на host ./backups);
+#   systemd (WorkingDirectory /opt/zerno) → /opt/zerno/backups.
+# Можна перевизначити змінною оточення BACKUP_DIR.
+BACKUP_DIR = Path(os.environ.get("BACKUP_DIR") or "backups").resolve()
 BACKUP_FILE = BACKUP_DIR / "zerno_backup.sql"
 BACKUP_INTERVAL_SEC = 24 * 60 * 60  # щодоби
 
