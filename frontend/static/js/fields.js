@@ -28,28 +28,18 @@ function renderFieldsTable(data) {
     tbody.innerHTML = '';
 
     if (!data.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Полів ще немає</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="3" class="empty-state">Полів ще немає</td></tr>';
         return;
     }
 
     data.forEach(f => {
         const tr = document.createElement('tr');
-        if (f.lease_contract_id) tr.classList.add('field-from-lease');
-        const contractInfo = f.lease_contract_id ? `#${f.lease_contract_id}` : emptyValueHtml();
-        const isEnterprise = !f.landlord_id;
-        const leaseBadge = f.lease_contract_id
-            ? ' <span class="field-badge field-badge-lease" title="Створено з контракту оренди">Оренда</span>'
-            : '';
         tr.innerHTML = `
-            <td>${f.name}${leaseBadge}</td>
-            <td>${f.owner_name}</td>
-            <td>${contractInfo}</td>
+            <td>${escapeHtml(f.name)}</td>
             <td>${f.note ? escapeHtml(f.note) : emptyValueHtml()}</td>
             <td class="actions-cell">
-                ${isEnterprise ? `
-                    <button class="btn-icon btn-icon-secondary" onclick="openFieldEditModal(${f.id})" title="Редагувати">${ICONS.edit}</button>
-                    <button class="btn-icon btn-icon-danger" onclick="deleteField(${f.id})" title="Видалити">${ICONS.delete}</button>
-                ` : ''}
+                <button class="btn-icon btn-icon-secondary" onclick="openFieldEditModal(${f.id})" title="Редагувати">${ICONS.edit}</button>
+                <button class="btn-icon btn-icon-danger" onclick="deleteField(${f.id})" title="Видалити">${ICONS.delete}</button>
             </td>
         `;
         tbody.appendChild(tr);
@@ -102,19 +92,9 @@ function renderFieldIntakesTable() {
 
 function applyFieldsFilters() {
     const search = (document.getElementById('fields-filter-search')?.value || '').toLowerCase().trim();
-    const ownerType = document.getElementById('fields-filter-owner')?.value || '';
-
     let filtered = fieldsCache;
     if (search) {
-        filtered = filtered.filter(f =>
-            f.name.toLowerCase().includes(search) ||
-            f.owner_name.toLowerCase().includes(search)
-        );
-    }
-    if (ownerType === 'enterprise') {
-        filtered = filtered.filter(f => !f.landlord_id);
-    } else if (ownerType === 'landlord') {
-        filtered = filtered.filter(f => !!f.landlord_id);
+        filtered = filtered.filter(f => f.name.toLowerCase().includes(search));
     }
     renderFieldsTable(filtered);
 }
@@ -143,7 +123,6 @@ function initFieldsSection() {
     if (fieldForm) formBindInvalidHighlightClearing(fieldForm);
 
     document.getElementById('fields-filter-search')?.addEventListener('input', applyFieldsFilters);
-    document.getElementById('fields-filter-owner')?.addEventListener('change', applyFieldsFilters);
 
     const fieldIntakesFilterField = document.getElementById('field-intakes-filter-field');
     const fieldIntakesFilterCulture = document.getElementById('field-intakes-filter-culture');

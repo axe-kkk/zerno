@@ -7,6 +7,7 @@ from sqlalchemy.exc import OperationalError
 
 from backend.database import init_db
 from backend.api import router
+from backend.backup import backup_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,8 @@ async def startup_event():
             await asyncio.to_thread(init_db)
             if attempt > 1:
                 logger.info("База данных доступна з %s-ї спроби", attempt)
+            # Щодобовий бекап БД (знімається одразу і далі раз на добу)
+            asyncio.create_task(backup_scheduler())
             return
         except OperationalError as e:
             last_error = e

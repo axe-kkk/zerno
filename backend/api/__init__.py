@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from backend.api import users, auth, cash, grain, purchases, leases, farmer_contracts, dashboard, vouchers, fields, people
+from backend.api import users, auth, cash, grain, purchases, leases, farmer_contracts, dashboard, vouchers, fields, people, admin
 
 router = APIRouter()
 
@@ -15,4 +15,5 @@ router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 router.include_router(vouchers.router, prefix="/vouchers", tags=["vouchers"])
 router.include_router(fields.router, prefix="/fields", tags=["fields"])
 router.include_router(people.router, prefix="/people", tags=["people"])
+router.include_router(admin.router, prefix="/admin", tags=["admin"])
 

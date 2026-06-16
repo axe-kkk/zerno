@@ -18,7 +18,7 @@ from backend.models import (
     StockAdjustmentLog, StockAdjustmentType, TransactionType,
     PurchaseStock, PurchaseRecord, PurchaseCategory,
     Currency, CashRegister, Transaction,
-    AgriField, Landlord, LeaseContract, LeaseContractItem, LeasePayment, LeasePaymentGrainItem,
+    AgriField, Landlord, LeaseParcel, LeasePeriod, LeasePeriodGrainItem, LeasePayment, LeasePaymentGrainItem,
     FarmerContract, FarmerContractItem, FarmerContractPayment,
     FarmerContractType, FarmerContractStatus, FarmerContractItemType, FarmerContractItemDirection,
     FarmerContractPaymentType,
@@ -297,33 +297,48 @@ def seed():
         session.flush()
         print(f'  ✓ {contracts_created} контрактів фермерів')
 
-        # ── Орендні контракти (~10) ────────────────────────────
+        # ── Орендні ділянки з річними періодами (~10) ──────────
         lease_count = 10
         for _ in range(lease_count):
             ll = R.choice(landlords)
-            field_name = R.choice(VILLAGES) + ' ' + R.choice(['ділянка', 'поле'])
             start = START_DATE + timedelta(days=R.randint(0, 200))
-            lc = LeaseContract(
+            terms = R.choice(['grain', 'cash', 'grain_cash'])
+            parcel = LeaseParcel(
                 landlord_id=ll.id,
                 landlord_full_name=ll.full_name,
-                field_name=field_name,
-                contract_date=start,
-                end_date=start + timedelta(days=365),
+                area_ha=round(R.uniform(1, 25), 2),
+                label=R.choice([None, R.choice(VILLAGES)]),
+                payment_terms=terms,
+                start_date=start,
                 is_active=True,
                 created_at=start,
             )
-            session.add(lc)
+            session.add(parcel)
             session.flush()
-            # Позиції
-            for _ in range(R.randint(1, 3)):
-                culture = R.choice(cultures)
-                session.add(LeaseContractItem(
-                    contract_id=lc.id,
-                    culture_id=culture.id,
-                    quantity_kg=R.uniform(500, 5000),
-                    price_per_kg_uah=R.uniform(8, 18),
-                ))
-        print(f'  ✓ {lease_count} орендних контрактів')
+            # 1-2 річних періоди
+            for yi in range(R.randint(1, 2)):
+                year = start.year + yi
+                p_start = start.replace(year=year)
+                period = LeasePeriod(
+                    parcel_id=parcel.id,
+                    year=year,
+                    period_start=p_start,
+                    period_end=p_start + timedelta(days=365),
+                    cash_amount=(round(R.uniform(3000, 15000), 2) if terms in ('cash', 'grain_cash') else 0.0),
+                    cash_currency='UAH',
+                )
+                session.add(period)
+                session.flush()
+                if terms in ('grain', 'grain_cash'):
+                    for _ in range(R.randint(1, 3)):
+                        culture = R.choice(cultures)
+                        session.add(LeasePeriodGrainItem(
+                            period_id=period.id,
+                            culture_id=culture.id,
+                            quantity_kg=round(R.uniform(500, 5000), 2),
+                            price_per_kg_uah=round(R.uniform(8, 18), 2),
+                        ))
+        print(f'  ✓ {lease_count} орендних ділянок')
 
         session.commit()
         print('\n🎉 Сід завершено\n')

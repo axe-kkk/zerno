@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
-    <link rel="stylesheet" href="static/css/style.css?v=328">
+    <link rel="stylesheet" href="static/css/style.css?v=352">
 </head>
 <body class="dashboard-page">
     <div class="dashboard-container">
@@ -740,15 +740,7 @@
                             <div class="table-filters" id="fields-filters">
                                 <div class="form-field">
                                     <label>Пошук</label>
-                                    <input type="text" id="fields-filter-search" placeholder="Назва поля або власник...">
-                                </div>
-                                <div class="form-field">
-                                    <label>Власник</label>
-                                    <select id="fields-filter-owner">
-                                        <option value="">Всі</option>
-                                        <option value="enterprise">Підприємство</option>
-                                        <option value="landlord">Орендодавці</option>
-                                    </select>
+                                    <input type="text" id="fields-filter-search" placeholder="Назва поля...">
                                 </div>
                             </div>
                             <div class="table-wrapper">
@@ -756,8 +748,6 @@
                                     <thead>
                                         <tr>
                                             <th>Назва поля</th>
-                                            <th>Власник</th>
-                                            <th>Контракт</th>
                                             <th>Примітка</th>
                                             <th>Дії</th>
                                         </tr>
@@ -935,7 +925,7 @@
                                 <div class="card-title">Список фермерів</div>
                                 <div class="card-header-actions">
                                     <button class="btn btn-secondary btn-small" id="farmer-transfer-btn" data-admin-only>Переміщення</button>
-                                    <button class="btn btn-secondary btn-small" id="farmers-balances-export-btn" title="Excel-звіт із залишками всіх фермерів по культурах">Звіт залишків</button>
+                                    <button class="btn btn-secondary btn-small" id="farmers-balances-export-btn" title="Залишки всіх фермерів по культурах (перегляд + Excel)">Звіт залишків</button>
                                     <button class="btn btn-secondary btn-small" id="farmers-report-btn">Звіт</button>
                                 </div>
                             </div>
@@ -1074,6 +1064,7 @@
                             <div class="card-header">
                                 <div class="card-title">Список людей</div>
                                 <div class="card-header-actions">
+                                    <button class="btn btn-secondary btn-small" id="people-balances-export-btn" title="Залишки всіх людей по культурах (перегляд + Excel)">Звіт залишків</button>
                                     <button class="btn btn-secondary btn-small" id="people-list-export-btn">Звіт</button>
                                     <button class="btn btn-primary btn-small" id="person-add-btn">Додати</button>
                                 </div>
@@ -1330,7 +1321,10 @@
                     <div class="card table-card">
                         <div class="card-header">
                             <div class="card-title">Список користувачів</div>
-                            <button class="btn btn-primary btn-small" id="user-add-btn" data-admin-only>Додати</button>
+                            <div class="card-header-actions">
+                                <button class="btn btn-secondary btn-small" id="db-backup-btn" data-admin-only title="Скачати резервну копію БД (.sql). Оновлюється щодоби автоматично.">Резервна копія БД</button>
+                                <button class="btn btn-primary btn-small" id="user-add-btn" data-admin-only>Додати</button>
+                            </div>
                         </div>
                         <div class="table-wrapper">
                             <table class="data-table" id="users-table">
@@ -1353,19 +1347,28 @@
                 <section class="page-section hidden" id="section-landlords">
                     <div class="section-header"></div>
                     <div class="landlords-grid">
-                        <!-- Landlords List -->
-                        <div class="card table-card">
+                        <!-- Landlords hub -->
+                        <div class="card table-card" style="grid-column: 1 / -1;">
                             <div class="card-header">
                                 <div class="card-title">Орендодавці</div>
                                 <div class="card-header-actions">
-                                    <button class="btn btn-secondary btn-small" id="landlords-report-btn">Звіт</button>
-                                    <button class="btn btn-primary btn-small" id="landlord-add-btn">Додати</button>
+                                    <button class="btn btn-secondary btn-small" id="parcels-report-btn">Звіт</button>
+                                    <button class="btn btn-secondary btn-small" id="parcels-debt-report-btn" title="Лише ділянки, за якими є борг до орендодавця">Звіт: борг</button>
+                                    <button class="btn btn-secondary btn-small" id="landlord-add-btn">+ Орендодавець</button>
+                                    <button class="btn btn-primary btn-small" id="parcel-add-btn" data-admin-only>+ Новий договір</button>
                                 </div>
                             </div>
                             <div class="table-filters" id="landlords-filters">
                                 <div class="form-field">
                                     <label>Пошук</label>
-                                    <input type="text" id="landlords-filter-search" placeholder="Введіть ПІБ...">
+                                    <input type="text" id="landlords-filter-search" placeholder="ПІБ орендодавця...">
+                                </div>
+                                <div class="form-field">
+                                    <label>Фільтр</label>
+                                    <select id="landlords-filter-status">
+                                        <option value="">Усі</option>
+                                        <option value="due">Лише з боргом</option>
+                                    </select>
                                 </div>
                             </div>
                             <div class="table-wrapper">
@@ -1374,6 +1377,8 @@
                                         <tr>
                                             <th>ПІБ</th>
                                             <th>Телефон</th>
+                                            <th>Ділянок</th>
+                                            <th>Накопич. борг</th>
                                             <th>Дії</th>
                                         </tr>
                                     </thead>
@@ -1382,54 +1387,7 @@
                             </div>
                         </div>
 
-                        <!-- Contracts List -->
-                        <div class="card table-card">
-                            <div class="card-header">
-                                <div class="card-title">Контракти</div>
-                                <div class="card-header-actions">
-                                    <button class="btn btn-secondary btn-small" id="contracts-report-btn">Звіт</button>
-                                    <button class="btn btn-secondary btn-small" id="contracts-debt-report-btn" title="Лише контракти, за якими є борг до орендодавця">Звіт: борг</button>
-                                    <button class="btn btn-primary btn-small" id="contract-add-btn" data-admin-only>Додати</button>
-                                </div>
-                            </div>
-                            <div class="table-filters" id="contracts-filters">
-                                <div class="form-field">
-                                    <label>Пошук</label>
-                                    <input type="text" id="contracts-filter-search" placeholder="ПІБ орендодавця або назва поля" autocomplete="off">
-                                </div>
-                                <div class="form-field">
-                                    <label>Орендодавець</label>
-                                    <select id="contracts-filter-landlord">
-                                        <option value="">Всі орендодавці</option>
-                                    </select>
-                                </div>
-                                <div class="form-field">
-                                    <label>Статус</label>
-                                    <select id="contracts-filter-status">
-                                        <option value="">Всі статуси</option>
-                                        <option value="active">Активні</option>
-                                        <option value="inactive">Неактивні</option>
-                                        <option value="due">Ми ще винні</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="table-wrapper">
-                                <table class="data-table" id="contracts-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Орендодавець</th>
-                                            <th>Поле</th>
-                                            <th>Період</th>
-                                            <th>Статус</th>
-                                            <th>Дії</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody></tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                        <!-- Payments List -->
+                        <!-- Payments journal -->
                         <div class="card table-card" style="grid-column: 1 / -1;">
                             <div class="card-header">
                                 <div class="card-title">Виплати</div>
@@ -1467,7 +1425,7 @@
                                         <tr>
                                             <th>Дата</th>
                                             <th>Орендодавець</th>
-                                            <th>Поле</th>
+                                            <th>Ділянка</th>
                                             <th>Тип</th>
                                             <th>Сума</th>
                                             <th>Дії</th>
@@ -2535,60 +2493,6 @@
         </div>
     </div>
 
-    <!-- Contracts Report Modal -->
-    <div class="modal hidden" id="contracts-report-modal">
-        <div class="modal-overlay"></div>
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>Звіт по контрактах</h3>
-                <button class="modal-close" id="contracts-report-close" aria-label="Закрити">×</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-grid report-grid">
-                    <div class="form-field">
-                        <label>Статус</label>
-                        <select id="contracts-report-status">
-                            <option value="">Всі</option>
-                            <option value="true">Активні</option>
-                            <option value="false">Неактивні</option>
-                        </select>
-                    </div>
-                    <div class="form-field">
-                        <label>Дата початку</label>
-                        <div class="date-field">
-                            <input type="text" id="contracts-report-start" class="date-input" placeholder="дд.мм.рррр" inputmode="numeric">
-                            <button type="button" class="date-picker-btn" id="contracts-report-start-btn" aria-label="Відкрити календар">
-                                <svg class="date-picker-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                    <rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                    <path d="M16 3v4M8 3v4M3 11h18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                </svg>
-                            </button>
-                            <input type="date" id="contracts-report-start-native" class="date-native">
-                        </div>
-                    </div>
-                    <div class="form-field">
-                        <label>Дата завершення</label>
-                        <div class="date-field">
-                            <input type="text" id="contracts-report-end" class="date-input" placeholder="дд.мм.рррр" inputmode="numeric">
-                            <button type="button" class="date-picker-btn" id="contracts-report-end-btn" aria-label="Відкрити календар">
-                                <svg class="date-picker-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                    <rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                    <path d="M16 3v4M8 3v4M3 11h18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                </svg>
-                            </button>
-                            <input type="date" id="contracts-report-end-native" class="date-native">
-                        </div>
-                    </div>
-                </div>
-                <div class="hint">Якщо фільтри не задані — буде сформовано звіт за весь час.</div>
-            </div>
-            <div class="modal-actions">
-                <button class="btn btn-secondary" id="contracts-report-cancel">Скасувати</button>
-                <button class="btn btn-primary" id="contracts-report-download">Скачати Excel</button>
-            </div>
-        </div>
-    </div>
-
     <!-- Payments Report Modal -->
     <div class="modal hidden" id="payments-report-modal">
         <div class="modal-overlay"></div>
@@ -3590,84 +3494,101 @@
         </div>
     </div>
 
-    <!-- Contract Add/Edit Modal -->
-    <div class="modal hidden" id="contract-modal">
+    <!-- Parcel Add/Edit Modal -->
+    <div class="modal hidden" id="parcel-modal">
         <div class="modal-overlay"></div>
         <div class="modal-content modal-wide">
             <div class="modal-header">
-                <h3 id="contract-modal-title">Додати контракт</h3>
-                <button class="modal-close" id="contract-modal-close" aria-label="Закрити">×</button>
+                <h3 id="parcel-modal-title">Новий договір</h3>
+                <button class="modal-close" id="parcel-modal-close" aria-label="Закрити">×</button>
             </div>
             <div class="modal-body">
-                <form id="contract-form">
-                    <div class="form-field full">
+                <form id="parcel-form">
+                    <div class="form-field full" id="parcel-landlord-field">
                         <label>Орендодавець</label>
-                        <select id="contract-landlord-select" data-searchable="true" data-empty-message="Немає орендодавців"></select>
-                        <input type="hidden" id="contract-landlord-id">
-                    </div>
-                    <div class="form-field full">
-                        <label>Назва поля</label>
-                        <input type="text" id="contract-field-name" required>
-                    </div>
-                    <div class="form-field full">
-                        <label>Позиції контракту</label>
-                        <div id="contract-items-table">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>Культура</th>
-                                        <th>Кількість, кг</th>
-                                        <th>Ціна, грн/кг</th>
-                                        <th class="contract-actions-col"></th>
-                                    </tr>
-                                </thead>
-                                <tbody id="contract-items-tbody">
-                                    <tr class="contract-item-row">
-                                        <td>
-                                            <select class="contract-item-culture" required>
-                                                <option value="">Оберіть культуру</option>
-                                            </select>
-                                        </td>
-                                        <td>
-                                            <input type="number" class="contract-item-quantity" min="0" step="0.01" placeholder="кг" required>
-                                        </td>
-                                        <td>
-                                            <input type="number" class="contract-item-price" min="0" step="0.01" placeholder="грн/кг" required>
-                                        </td>
-                                        <td>
-                                            <button type="button" class="btn btn-danger btn-small contract-item-remove">×</button>
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                            <button type="button" class="btn btn-secondary btn-small" id="contract-add-item">+ Додати позицію</button>
+                        <div class="lease-inline-row">
+                            <select id="parcel-landlord-select" data-searchable="true" data-empty-message="Немає орендодавців"></select>
+                            <button type="button" class="btn btn-secondary btn-small" id="parcel-landlord-add-btn" title="Створити нового орендодавця">+ Новий</button>
                         </div>
                     </div>
-                    <div class="form-field">
-                        <label>Дата укладення контракту</label>
+                    <div class="payment-cash-grid">
+                        <div class="form-field">
+                            <label>Кількість, га *</label>
+                            <input type="number" id="parcel-area-ha" min="0" step="0.01" placeholder="напр. 5.2" required>
+                        </div>
+                        <div class="form-field">
+                            <label>Умови оплати</label>
+                            <select id="parcel-terms">
+                                <option value="grain">Лише зерно</option>
+                                <option value="cash">Лише гроші</option>
+                                <option value="grain_cash">Гроші + зерно</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-field full">
+                        <label>Примітка / мітка ділянки</label>
+                        <input type="text" id="parcel-label" placeholder="напр. біля лісу (необов'язково)">
+                    </div>
+                    <div class="form-field full">
+                        <label>Дата початку оренди</label>
                         <div class="date-field">
-                            <input type="text" id="contract-date" class="date-input" placeholder="дд.мм.рррр" inputmode="numeric" required>
-                            <button type="button" class="date-picker-btn" id="contract-date-btn" aria-label="Відкрити календар">
+                            <input type="text" id="parcel-start-date" class="date-input" placeholder="дд.мм.рррр" inputmode="numeric" required>
+                            <button type="button" class="date-picker-btn" id="parcel-start-date-btn" aria-label="Відкрити календар">
                                 <svg class="date-picker-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                                     <rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                                     <path d="M16 3v4M8 3v4M3 11h18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                                 </svg>
                             </button>
-                            <input type="date" id="contract-date-native" class="date-native">
+                            <input type="date" id="parcel-start-date-native" class="date-native">
                         </div>
                     </div>
-                    <div class="form-field full">
-                        <label>Примітка</label>
-                        <textarea id="contract-note" rows="3"></textarea>
+
+                    <!-- Перший рік (тільки при створенні) -->
+                    <div id="parcel-year-section">
+                        <div class="lease-form-section-title">Умови першого року</div>
+                        <div class="form-field" style="max-width:160px;">
+                            <label>Рік *</label>
+                            <input type="number" id="parcel-year" min="1900" max="2100" step="1">
+                        </div>
+                        <div class="form-field full hidden" id="parcel-grain-section">
+                            <label>Зернове зобов'язання за рік</label>
+                            <table class="data-table">
+                                <thead>
+                                    <tr><th>Культура</th><th>Кількість, кг</th><th>Ціна, грн/кг</th><th></th></tr>
+                                </thead>
+                                <tbody id="parcel-grain-tbody"></tbody>
+                            </table>
+                            <button type="button" class="btn btn-secondary btn-small" id="parcel-add-grain">+ Додати культуру</button>
+                        </div>
+                        <div class="hidden full" id="parcel-cash-section">
+                            <div class="payment-cash-grid">
+                                <div class="form-field">
+                                    <label>Річна грошова сума</label>
+                                    <input type="number" id="parcel-cash-amount" min="0" step="0.01" placeholder="0.00">
+                                </div>
+                                <div class="form-field">
+                                    <label>Валюта</label>
+                                    <select id="parcel-cash-currency">
+                                        <option value="UAH">UAH — гривня</option>
+                                        <option value="USD">USD — долар</option>
+                                        <option value="EUR">EUR — євро</option>
+                                    </select>
+                                </div>
+                                <div class="form-field hidden" id="parcel-cash-rate-field">
+                                    <label>Курс до грн</label>
+                                    <input type="number" id="parcel-cash-rate" min="0" step="0.0001" placeholder="0.00" value="1">
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="form-field inline">
-                        <label class="pill-toggle">
-                            <input type="checkbox" id="contract-is-active" checked>
-                            <span>Активний контракт</span>
-                        </label>
+
+                    <div class="form-field full">
+                        <label>Примітка до договору</label>
+                        <textarea id="parcel-note" rows="2"></textarea>
                     </div>
                     <div class="form-actions full form-actions-stack-msg">
-                        <div class="form-hint" id="contract-message" role="status" aria-live="polite"></div>
+                        <div class="form-hint" id="parcel-message" role="status" aria-live="polite"></div>
+                        <button type="button" class="btn btn-secondary" id="parcel-modal-cancel">Скасувати</button>
                         <button type="submit" class="btn btn-primary">Зберегти</button>
                     </div>
                 </form>
@@ -3675,130 +3596,99 @@
         </div>
     </div>
 
-    <!-- Contract View Modal -->
-    <div class="modal hidden" id="contract-view-modal">
+    <!-- Landlord Card Modal (ділянки + роки) -->
+    <div class="modal hidden" id="landlord-card-modal">
         <div class="modal-overlay"></div>
         <div class="modal-content modal-wide">
             <div class="modal-header">
-                <h3>Деталі контракту</h3>
-                <button class="modal-close" id="contract-view-close" aria-label="Закрити">×</button>
+                <h3>Картка орендодавця</h3>
+                <button class="modal-close" id="card-modal-close" aria-label="Закрити">×</button>
             </div>
             <div class="modal-body">
-                <div class="contract-view-grid">
-                    <div class="contract-view-item">
-                        <div class="contract-view-label">Орендодавець</div>
-                        <div class="contract-view-value" id="view-contract-landlord">-</div>
+                <div class="lease-card-head">
+                    <div class="lease-card-info">
+                        <div class="lease-card-name" id="card-landlord-name">-</div>
+                        <div class="lease-card-phone" id="card-landlord-phone">—</div>
                     </div>
-                    <div class="contract-view-item">
-                        <div class="contract-view-label">Назва поля</div>
-                        <div class="contract-view-value" id="view-contract-field">-</div>
-                    </div>
-                    <div class="contract-view-item">
-                        <div class="contract-view-label">Дата контракту</div>
-                        <div class="contract-view-value" id="view-contract-date">-</div>
-                    </div>
-                    <div class="contract-view-item">
-                        <div class="contract-view-label">Статус</div>
-                        <div class="contract-view-value" id="view-contract-status">-</div>
-                    </div>
-                    <div class="contract-view-item full">
-                        <div class="contract-view-label">Позиції контракту</div>
-                        <div class="contract-view-value" id="view-contract-items">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>Культура</th>
-                                        <th>Кількість, кг</th>
-                                        <th>Ціна, грн/кг</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="view-contract-items-tbody"></tbody>
-                            </table>
-                        </div>
-                    </div>
-                    <div class="contract-view-item full">
-                        <div class="contract-view-label">Примітка</div>
-                        <div class="contract-view-value" id="view-contract-note">-</div>
-                    </div>
-
-                    <!-- Баланс за поточний орендний рік -->
-                    <div class="contract-view-item full">
-                        <div class="contract-view-label">Баланс за поточний орендний рік</div>
-                        <div class="contract-view-value" id="view-contract-balance">
-                            <div class="contract-balance-loading">Завантаження…</div>
-                        </div>
+                    <div class="lease-card-total">
+                        <span class="lease-card-total-label">Загальний баланс</span>
+                        <span id="card-total-balance">—</span>
                     </div>
                 </div>
+                <div class="lease-card-toolbar">
+                    <button class="btn btn-primary btn-small" id="card-add-parcel-btn">+ Додати ділянку</button>
+                </div>
+                <div id="card-parcels"></div>
             </div>
             <div class="modal-actions">
-                <button class="btn btn-secondary" id="contract-view-close-btn">Закрити</button>
+                <button class="btn btn-secondary" id="card-modal-close-btn">Закрити</button>
             </div>
         </div>
     </div>
 
-    <!-- Contract Delete Modal -->
-    <div class="modal hidden" id="contract-delete-modal">
-        <div class="modal-overlay"></div>
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>Видалити контракт</h3>
-                <button class="modal-close" id="contract-delete-close" aria-label="Закрити">×</button>
-            </div>
-            <div class="modal-body">
-                <p>Ви впевнені, що хочете видалити контракт <strong id="contract-delete-field"></strong>?</p>
-                <div class="form-actions full">
-                    <button class="btn btn-secondary" id="contract-delete-cancel">Скасувати</button>
-                    <button class="btn btn-danger" id="contract-delete-confirm">Видалити</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Contract Renew Modal -->
-    <div class="modal hidden" id="contract-renew-modal">
+    <!-- Period (year) Add/Edit Modal -->
+    <div class="modal hidden" id="period-modal">
         <div class="modal-overlay"></div>
         <div class="modal-content modal-wide">
             <div class="modal-header">
-                <h3>Перевипуск контракту</h3>
-                <button class="modal-close" id="contract-renew-close" aria-label="Закрити">×</button>
+                <h3 id="period-modal-title">Відкрити рік</h3>
+                <button class="modal-close" id="period-modal-close" aria-label="Закрити">×</button>
             </div>
             <div class="modal-body">
-                <div id="contract-renew-info" class="hint" style="margin-bottom:12px;"></div>
-                <div class="form-grid">
+                <form id="period-form">
+                    <input type="hidden" id="period-parcel-id">
                     <div class="form-field">
-                        <label>Дата початку нового контракту</label>
-                        <div class="date-field">
-                            <input type="text" id="contract-renew-date" class="date-input" placeholder="дд.мм.рррр" inputmode="numeric">
-                            <button type="button" class="date-picker-btn" id="contract-renew-date-btn" aria-label="Відкрити календар">
-                                <svg class="date-picker-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                    <rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                    <path d="M16 3v4M8 3v4M3 11h18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                </svg>
-                            </button>
-                            <input type="date" id="contract-renew-date-native" class="date-native">
+                        <label>Рік *</label>
+                        <input type="number" id="period-year" min="1900" max="2100" step="1" required>
+                    </div>
+
+                    <div class="form-field full hidden" id="period-grain-section">
+                        <label>Зернове зобов'язання за рік</label>
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Культура</th>
+                                    <th>Кількість, кг</th>
+                                    <th>Ціна, грн/кг</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="period-grain-tbody"></tbody>
+                        </table>
+                        <button type="button" class="btn btn-secondary btn-small" id="period-add-grain">+ Додати культуру</button>
+                    </div>
+
+                    <div class="hidden full" id="period-cash-section">
+                        <div class="payment-cash-grid">
+                            <div class="form-field">
+                                <label>Річна грошова сума</label>
+                                <input type="number" id="period-cash-amount" min="0" step="0.01" placeholder="0.00">
+                            </div>
+                            <div class="form-field">
+                                <label>Валюта</label>
+                                <select id="period-cash-currency">
+                                    <option value="UAH">UAH — гривня</option>
+                                    <option value="USD">USD — долар</option>
+                                    <option value="EUR">EUR — євро</option>
+                                </select>
+                            </div>
+                            <div class="form-field hidden" id="period-cash-rate-field">
+                                <label>Курс до грн</label>
+                                <input type="number" id="period-cash-rate" min="0" step="0.0001" placeholder="0.00" value="1">
+                            </div>
                         </div>
                     </div>
-                    <div class="form-field">
+
+                    <div class="form-field full">
                         <label>Примітка</label>
-                        <input type="text" id="contract-renew-note" placeholder="Необов'язково">
+                        <textarea id="period-note" rows="2"></textarea>
                     </div>
-                </div>
-                <h4 style="margin:16px 0 8px;">Позиції контракту</h4>
-                <table class="data-table" style="margin-bottom:8px;">
-                    <thead>
-                        <tr>
-                            <th>Культура</th>
-                            <th>Кількість, кг</th>
-                            <th>Ціна, грн/кг</th>
-                        </tr>
-                    </thead>
-                    <tbody id="contract-renew-items-tbody"></tbody>
-                </table>
-                <div id="contract-renew-message" class="form-message hidden"></div>
-            </div>
-            <div class="modal-actions">
-                <button class="btn btn-secondary" id="contract-renew-cancel">Скасувати</button>
-                <button class="btn btn-primary" id="contract-renew-submit">Перевипустити</button>
+                    <div class="form-actions full form-actions-stack-msg">
+                        <div class="form-hint" id="period-message" role="status" aria-live="polite"></div>
+                        <button type="button" class="btn btn-secondary" id="period-modal-cancel">Скасувати</button>
+                        <button type="submit" class="btn btn-primary">Зберегти</button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>
@@ -4194,7 +4084,7 @@
     <!-- Payment Add Modal -->
     <div class="modal hidden" id="payment-modal">
         <div class="modal-overlay"></div>
-        <div class="modal-content" id="payment-modal-content">
+        <div class="modal-content modal-wide" id="payment-modal-content">
             <div class="modal-header">
                 <h3>Додати виплату</h3>
                 <button class="modal-close" id="payment-modal-close" aria-label="Закрити">×</button>
@@ -4207,67 +4097,73 @@
                         <input type="hidden" id="payment-landlord-id">
                     </div>
 
-                    <div class="form-field full">
-                        <label>Контракт</label>
-                        <select id="payment-contract" required disabled>
+                    <div class="form-field">
+                        <label>Ділянка</label>
+                        <select id="payment-parcel-select" data-searchable="true" data-empty-message="Немає ділянок" required disabled>
                             <option value="">Спочатку оберіть орендодавця</option>
                         </select>
                     </div>
+                    <div class="form-field">
+                        <label>Рік</label>
+                        <select id="payment-period-select" required disabled>
+                            <option value="">Спочатку оберіть ділянку</option>
+                        </select>
+                    </div>
 
-                    <!-- Карточка баланса — появляется после выбора контракта -->
+                    <!-- Карточка баланса періоду -->
                     <div id="payment-balance-card" class="payment-balance-card full hidden">
                         <div class="balance-header">
-                            <span class="balance-title">Залишок на поточний період</span>
+                            <span class="balance-title">Залишок за рік</span>
                             <span class="balance-period" id="payment-balance-period"></span>
                         </div>
                         <div id="payment-balance-items"></div>
                     </div>
 
-                    <!-- Тип + дата — в одну строку -->
-                    <div class="form-field">
-                        <label>Тип виплати</label>
-                        <select id="payment-type" required>
-                            <option value="grain">Зерном</option>
-                            <option value="cash">Грошима</option>
-                        </select>
-                    </div>
+                    <div class="form-hint full" id="payment-sections-hint" style="margin:-2px 0 2px;">Заповніть зерно та/або гроші — кожне запишеться окремою виплатою.</div>
 
-                    <!-- Зерно: карточки культур из контракта -->
-                    <div id="payment-grain-fields" class="full">
-                        <div class="form-field">
-                            <label>Виплата зерном</label>
-                            <div id="payment-grain-items-list" class="grain-items-list">
-                                <!-- Заполняется динамически из баланса контракта -->
+                    <!-- Зерном: карточки культур з періоду -->
+                    <div id="payment-grain-fields" class="full hidden">
+                        <div class="lease-pay-block">
+                            <div class="lease-pay-head">
+                                <label>Виплата зерном</label>
+                                <button type="button" class="btn btn-secondary btn-small" id="payment-grain-fill-all">Весь залишок</button>
                             </div>
+                            <div id="payment-grain-items-list" class="grain-items-list"></div>
                         </div>
                     </div>
 
-                    <!-- Деньги: культура + валюта + курс + сума -->
-                    <div id="payment-cash-fields" class="hidden full">
-                        <div class="payment-cash-grid">
-                            <div class="form-field">
-                                <label>Списати з культури</label>
-                                <select id="payment-cash-culture"></select>
+                    <!-- Грошима: (для grain-only — культура) + валюта + курс + сума -->
+                    <div id="payment-cash-fields" class="full hidden">
+                        <div class="lease-pay-block">
+                            <div class="lease-pay-head">
+                                <label id="payment-cash-label">Виплата грошима</label>
+                                <button type="button" class="btn btn-secondary btn-small" id="payment-cash-fill-all">Весь залишок</button>
                             </div>
-                            <div class="form-field">
-                                <label>Валюта</label>
-                                <select id="payment-currency">
-                                    <option value="UAH">UAH — гривня</option>
-                                    <option value="USD">USD — долар</option>
-                                    <option value="EUR">EUR — євро</option>
-                                </select>
+                            <div class="payment-cash-grid">
+                                <div class="form-field hidden" id="payment-cash-culture-field">
+                                    <label>Зарахувати в культуру</label>
+                                    <select id="payment-cash-culture"></select>
+                                </div>
+                                <div class="form-field">
+                                    <label>Валюта</label>
+                                    <select id="payment-currency">
+                                        <option value="UAH">UAH — гривня</option>
+                                        <option value="USD">USD — долар</option>
+                                        <option value="EUR">EUR — євро</option>
+                                    </select>
+                                </div>
+                                <div class="form-field hidden" id="payment-rate-field">
+                                    <label>Курс до грн</label>
+                                    <input type="number" id="payment-rate" min="0" step="0.0001" placeholder="0.00">
+                                </div>
+                                <div class="form-field">
+                                    <label>Сума</label>
+                                    <input type="number" id="payment-amount" min="0" step="0.01" placeholder="0.00">
+                                    <div class="payment-uah-equiv hidden" id="payment-uah-equiv"></div>
+                                </div>
                             </div>
-                            <div class="form-field hidden" id="payment-rate-field">
-                                <label>Курс до грн</label>
-                                <input type="number" id="payment-rate" min="0" step="0.0001" placeholder="0.00">
-                            </div>
-                            <div class="form-field">
-                                <label>Сума</label>
-                                <input type="number" id="payment-amount" min="0" step="0.01" placeholder="0.00">
-                                <div class="payment-uah-equiv hidden" id="payment-uah-equiv"></div>
-                            </div>
+                            <div class="payment-cash-equivalent" id="payment-cash-equivalent"></div>
                         </div>
-                        <div class="payment-cash-equivalent" id="payment-cash-equivalent"></div>
                     </div>
 
                     <div class="form-field full">
@@ -4283,15 +4179,67 @@
         </div>
     </div>
     
+    <!-- Farmers balances report (UI view + Excel) -->
+    <div class="modal hidden" id="farmers-balances-modal">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-wide">
+            <div class="modal-header">
+                <h3>Залишки зерна у фермерів</h3>
+                <button class="modal-close" id="farmers-balances-close" aria-label="Закрити">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="table-wrapper" style="max-height:55vh; overflow:auto;">
+                    <table class="data-table balances-pivot" id="farmers-balances-table">
+                        <thead>
+                            <tr>
+                                <th>Фермер</th>
+                                <th>Культура</th>
+                                <th>Не викуплено, кг</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div id="farmers-balances-totals" class="farmers-balances-totals"></div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" id="farmers-balances-close-btn">Закрити</button>
+                <button class="btn btn-primary" id="farmers-balances-download-btn">Скачати Excel</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal hidden" id="people-balances-modal">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-wide">
+            <div class="modal-header">
+                <h3>Залишки зерна у людей</h3>
+                <button class="modal-close" id="people-balances-close" aria-label="Закрити">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="table-wrapper" style="max-height:55vh; overflow:auto;">
+                    <table class="data-table balances-pivot" id="people-balances-table">
+                        <thead></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" id="people-balances-close-btn">Закрити</button>
+                <button class="btn btn-primary" id="people-balances-download-btn">Скачати Excel</button>
+            </div>
+        </div>
+    </div>
+
     <script src="static/js/core.js?v=4"></script>
     <script src="static/js/cash.js?v=3"></script>
     <script src="static/js/vouchers.js?v=1"></script>
     <script src="static/js/users.js?v=1"></script>
-    <script src="static/js/people.js?v=3"></script>
-    <script src="static/js/fields.js?v=1"></script>
-    <script src="static/js/leases.js?v=2"></script>
+    <script src="static/js/people.js?v=4"></script>
+    <script src="static/js/fields.js?v=2"></script>
+    <script src="static/js/leases.js?v=10"></script>
     <script src="static/js/farmer-contracts.js?v=8"></script>
-    <script src="static/js/dashboard.js?v=254"></script>
+    <script src="static/js/dashboard.js?v=261"></script>
 </body>
 </html>
 

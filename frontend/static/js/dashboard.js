@@ -34,7 +34,7 @@ let openFarmerBalanceModal = null;
 // farmerContractsCache, farmerContractPaymentsCache, currentFarmerContractId,
 // openFarmerContractPaymentModal — у farmer-contracts.js
 // usersCache — у users.js
-// landlordsCache, contractsCache, paymentsCache + leases editing/deleting state — у leases.js
+// landlordsCache, parcelsCache, paymentsCache + leases editing/deleting state — у leases.js
 let editingIntakeId = null;
 let pendingDriverDeleteId = null;
 let editingShipmentId = null;
@@ -99,7 +99,7 @@ async function initializeDashboard() {
     initFarmerContractsSection();
     initWeightCalculations();
     initLandlords();
-    initContracts();
+    initParcels();
     initPayments();
     initVouchers();
     initPeopleSection();
@@ -358,7 +358,7 @@ async function refreshAfterMutation(scopes) {
         farmerMovements: ['/grain/farmer-movements'],
         farmerContracts: ['/farmer-contracts'],
         farmerContractPayments: ['/farmer-contracts'],
-        contracts: ['/leases/contracts'],
+        parcels: ['/leases/parcels'],
         payments: ['/leases/payments'],
         landlords: ['/leases/landlords'],
         vouchers: ['/vouchers'],
@@ -390,7 +390,7 @@ async function refreshAfterMutation(scopes) {
         farmerMovements:        () => typeof loadFarmerMovements === 'function' ? loadFarmerMovements() : null,
         farmerContracts:        () => typeof loadFarmerContracts === 'function' ? loadFarmerContracts() : null,
         farmerContractPayments: () => typeof loadFarmerContractPayments === 'function' ? loadFarmerContractPayments() : null,
-        contracts:              () => typeof loadContracts === 'function' ? loadContracts() : null,
+        parcels:                () => typeof loadParcels === 'function' ? loadParcels() : null,
         payments:               () => typeof loadPayments === 'function' ? loadPayments() : null,
         landlords:              () => typeof loadLandlords === 'function' ? loadLandlords() : null,
         vouchers:               () => typeof loadVouchersData === 'function' ? loadVouchersData() : null,
@@ -1263,8 +1263,8 @@ function renderOwnersTable(owners) {
     owners.forEach(owner => {
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td><strong>${owner.full_name}</strong></td>
-            <td>${owner.phone || emptyValueHtml()}</td>
+            <td>${escapeHtml(owner.full_name)}</td>
+            <td>${owner.phone ? escapeHtml(owner.phone) : emptyValueHtml()}</td>
             <td class="actions-cell">
                 <button class="btn-icon btn-icon-secondary" data-edit-owner="${owner.id}" title="Редагувати">${ICONS.edit}</button>
                 <button class="btn-icon btn-icon-secondary" data-balance="${owner.id}" title="Баланс">${ICONS.balance}</button>
@@ -3899,7 +3899,7 @@ function initNavigation() {
                 break;
             case 'landlords':
                 once('landlords', loadLandlords);
-                once('contracts', loadContracts);
+                once('parcels', loadParcels);
                 once('payments', loadPayments);
                 break;
             case 'fields': {
@@ -4710,6 +4710,29 @@ function openDriverEditModal(driver) {
 }
 
 function initUserAddModal() {
+    // Кнопка «Резервна копія БД» — скачує останній збережений .sql-бекап (super_admin).
+    document.getElementById('db-backup-btn')?.addEventListener('click', async (event) => {
+        const btn = event.currentTarget;
+        const original = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Готується...';
+        try {
+            const resp = await apiFetchBlob('/admin/db/backup/download');
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => null);
+                showToast(err?.detail || 'Не вдалося отримати резервну копію', 'error');
+                return;
+            }
+            await downloadBlob(resp, `zerno_backup_${new Date().toISOString().slice(0, 10)}.sql`);
+            showToast('Резервну копію завантажено', 'success');
+        } catch (e) {
+            showToast('Помилка завантаження резервної копії', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = original;
+        }
+    });
+
     const modal = document.getElementById('user-add-modal');
     const openBtn = document.getElementById('user-add-btn');
     const closeBtn = document.getElementById('user-add-close');
@@ -4912,7 +4935,7 @@ function initCustomSelects(targetSelect) {
                 }
             }
             // Позиционирование випадаючого меню в модальних вікнах
-            if (customWrapper.closest('#contract-modal') || customWrapper.closest('#farmer-contract-modal') || customWrapper.closest('#intake-create-modal')) {
+            if (customWrapper.closest('#parcel-modal') || customWrapper.closest('#period-modal') || customWrapper.closest('#payment-modal') || customWrapper.closest('#farmer-contract-modal') || customWrapper.closest('#intake-create-modal')) {
                 setTimeout(() => {
                     positionContractSelectOptions(customWrapper);
                 }, 0);
@@ -4943,19 +4966,21 @@ function initCustomSelects(targetSelect) {
     
     // Зміна розміру вікна — оновлення позиції випадаючих у модалках
     window.addEventListener('resize', () => {
-        document.querySelectorAll('#contract-modal .custom-select.open, #farmer-contract-modal .custom-select.open, #intake-create-modal .custom-select.open').forEach(wrapper => {
+        document.querySelectorAll('#parcel-modal .custom-select.open, #period-modal .custom-select.open, #payment-modal .custom-select.open, #farmer-contract-modal .custom-select.open, #intake-create-modal .custom-select.open').forEach(wrapper => {
             positionContractSelectOptions(wrapper);
         });
     });
 
     document.addEventListener('scroll', (event) => {
         const inTrackedModal = event.target.closest && (
-            event.target.closest('#contract-modal') ||
+            event.target.closest('#parcel-modal') ||
+            event.target.closest('#period-modal') ||
+            event.target.closest('#payment-modal') ||
             event.target.closest('#farmer-contract-modal') ||
             event.target.closest('#intake-create-modal')
         );
         if (!inTrackedModal) return;
-        document.querySelectorAll('#contract-modal .custom-select.open, #farmer-contract-modal .custom-select.open, #intake-create-modal .custom-select.open').forEach(wrapper => {
+        document.querySelectorAll('#parcel-modal .custom-select.open, #period-modal .custom-select.open, #payment-modal .custom-select.open, #farmer-contract-modal .custom-select.open, #intake-create-modal .custom-select.open').forEach(wrapper => {
             const trigger = wrapper.querySelector('.custom-select-trigger');
             if (!trigger) return;
             const tr = trigger.getBoundingClientRect();
@@ -5104,7 +5129,7 @@ function positionContractSelectOptions(wrapper) {
         return;
     }
 
-    const modal = wrapper.closest('#contract-modal, #farmer-contract-modal, #intake-create-modal');
+    const modal = wrapper.closest('#parcel-modal, #period-modal, #payment-modal, #farmer-contract-modal, #intake-create-modal');
     if (!modal) {
         return;
     }
@@ -5151,6 +5176,125 @@ function positionContractSelectOptions(wrapper) {
     }
 }
 
+// Зведена таблиця залишків (фермери/люди × культури) із сортуванням по колонках.
+function renderBalancesPivot(table, data, entityLabel) {
+    const thead = table.querySelector('thead');
+    const tbody = table.querySelector('tbody');
+    let tfoot = table.querySelector('tfoot');
+    if (!tfoot) { tfoot = document.createElement('tfoot'); table.appendChild(tfoot); }
+
+    const cultures = (data.totals || []).map(t => t.culture);
+    const cultureTotals = {};
+    (data.totals || []).forEach(t => { cultureTotals[t.culture] = t.total; });
+
+    const map = new Map();
+    (data.rows || []).forEach(r => {
+        if (!map.has(r.owner)) map.set(r.owner, {});
+        map.get(r.owner)[r.culture] = r.balance;
+    });
+    const items = [...map.keys()].map(name => {
+        const m = map.get(name);
+        let total = 0;
+        cultures.forEach(c => { if (m[c] != null) total += m[c]; });
+        return { name, m, total };
+    });
+
+    if (!items.length) {
+        thead.innerHTML = `<tr><th>${escapeHtml(entityLabel)}</th></tr>`;
+        tbody.innerHTML = '<tr><td colspan="99" class="table-empty-message">Немає записів із залишками</td></tr>';
+        tfoot.innerHTML = '';
+        return;
+    }
+
+    let sortKey = 'name';   // 'name' | <культура> | '__total__'
+    let sortDir = 1;        // 1 = за зростанням, -1 = за спаданням
+
+    function sortItems() {
+        items.sort((a, b) => {
+            if (sortKey === 'name') return a.name.localeCompare(b.name, 'uk') * sortDir;
+            if (sortKey === '__total__') return (a.total - b.total) * sortDir;
+            return ((a.m[sortKey] || 0) - (b.m[sortKey] || 0)) * sortDir;
+        });
+    }
+    const arrow = k => sortKey === k ? (sortDir === 1 ? ' ↑' : ' ↓') : '';
+    function renderHead() {
+        thead.innerHTML = '<tr>'
+            + `<th class="sortable" data-sort="name">${escapeHtml(entityLabel)}${arrow('name')}</th>`
+            + cultures.map(c => `<th class="sortable td-weight" data-sort="${escapeHtml(c)}">${escapeHtml(c)}${arrow(c)}</th>`).join('')
+            + `<th class="sortable td-weight" data-sort="__total__">Разом${arrow('__total__')}</th>`
+            + '</tr>';
+        thead.querySelectorAll('th[data-sort]').forEach(th => {
+            th.addEventListener('click', () => {
+                const k = th.getAttribute('data-sort');
+                if (sortKey === k) sortDir = -sortDir;
+                else { sortKey = k; sortDir = (k === 'name') ? 1 : -1; }  // числові колонки — спершу за спаданням
+                sortItems(); renderHead(); renderBody();
+            });
+        });
+    }
+    function renderBody() {
+        tbody.innerHTML = items.map(o => {
+            const cells = cultures.map(c => {
+                const v = o.m[c];
+                return v == null
+                    ? '<td class="td-weight td-muted">—</td>'
+                    : `<td class="td-weight">${formatWeight(v)}</td>`;
+            }).join('');
+            return `<tr><td>${escapeHtml(o.name)}</td>${cells}<td class="td-weight"><strong>${formatWeight(o.total)}</strong></td></tr>`;
+        }).join('');
+    }
+
+    let grand = 0;
+    const totalCells = cultures.map(c => {
+        const t = cultureTotals[c] || 0;
+        grand += t;
+        return `<td class="td-weight"><strong>${formatWeight(t)}</strong></td>`;
+    }).join('');
+    tfoot.innerHTML = `<tr><td><strong>Разом</strong></td>${totalCells}<td class="td-weight"><strong>${formatWeight(grand)}</strong></td></tr>`;
+
+    sortItems(); renderHead(); renderBody();
+}
+
+async function openBalancesModal({ modalId, tableId, endpoint, entityLabel }) {
+    const modal = document.getElementById(modalId);
+    if (!modal) return;
+    const table = document.getElementById(tableId);
+    const thead = table.querySelector('thead');
+    const tbody = table.querySelector('tbody');
+    const tfoot = table.querySelector('tfoot');
+    thead.innerHTML = `<tr><th>${escapeHtml(entityLabel)}</th></tr>`;
+    if (tfoot) tfoot.innerHTML = '';
+    tbody.innerHTML = '<tr><td colspan="99" class="table-empty-message">Завантаження…</td></tr>';
+    modal.classList.remove('hidden');
+    try {
+        const resp = await apiFetch(endpoint);
+        if (!resp.ok) throw new Error();
+        renderBalancesPivot(table, await resp.json(), entityLabel);
+    } catch (e) {
+        thead.innerHTML = `<tr><th>${escapeHtml(entityLabel)}</th></tr>`;
+        if (tfoot) tfoot.innerHTML = '';
+        tbody.innerHTML = '<tr><td colspan="99" class="table-empty-message">Помилка завантаження</td></tr>';
+    }
+}
+
+async function openFarmersBalancesModal() {
+    return openBalancesModal({
+        modalId: 'farmers-balances-modal',
+        tableId: 'farmers-balances-table',
+        endpoint: '/grain/owners/balances',
+        entityLabel: 'Фермер',
+    });
+}
+
+async function openPeopleBalancesModal() {
+    return openBalancesModal({
+        modalId: 'people-balances-modal',
+        tableId: 'people-balances-table',
+        endpoint: '/grain/persons/balances',
+        entityLabel: 'Людина',
+    });
+}
+
 function initOwnersSearch() {
     const ownersSearch = document.getElementById('owners-search');
     if (!ownersSearch) {
@@ -5164,28 +5308,36 @@ function initOwnersSearch() {
         }, 300);
     });
 
-    // Кнопка «Звіт залишків» — Excel-зведення по всіх фермерах з позитивним балансом.
-    document.getElementById('farmers-balances-export-btn')?.addEventListener('click', async (event) => {
-        const btn = event.currentTarget;
-        const originalText = btn.textContent;
-        btn.disabled = true;
-        btn.textContent = 'Готується...';
-        try {
-            const response = await apiFetchBlob('/grain/owners/balances/export');
-            if (!response.ok) {
-                const err = await response.json().catch(() => null);
-                showToast(err?.detail || 'Не вдалося сформувати звіт', 'error');
-                return;
+    // Кнопка «Звіт залишків» — відкриває модалку перегляду (UI) + кнопка Excel усередині.
+    document.getElementById('farmers-balances-export-btn')?.addEventListener('click', openFarmersBalancesModal);
+    const fbModal = document.getElementById('farmers-balances-modal');
+    if (fbModal) {
+        const closeFb = () => fbModal.classList.add('hidden');
+        document.getElementById('farmers-balances-close')?.addEventListener('click', closeFb);
+        document.getElementById('farmers-balances-close-btn')?.addEventListener('click', closeFb);
+        fbModal.querySelector('.modal-overlay')?.addEventListener('click', closeFb);
+        document.getElementById('farmers-balances-download-btn')?.addEventListener('click', async (event) => {
+            const btn = event.currentTarget;
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Готується...';
+            try {
+                const response = await apiFetchBlob('/grain/owners/balances/export');
+                if (!response.ok) {
+                    const err = await response.json().catch(() => null);
+                    showToast(err?.detail || 'Не вдалося сформувати звіт', 'error');
+                    return;
+                }
+                await downloadBlob(response, `farmers_balances_${new Date().toISOString().slice(0, 10)}.xlsx`);
+                showToast('Звіт сформовано', 'success');
+            } catch (e) {
+                showToast('Помилка експорту', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
             }
-            await downloadBlob(response, `farmers_balances_${new Date().toISOString().slice(0, 10)}.xlsx`);
-            showToast('Звіт сформовано', 'success');
-        } catch (e) {
-            showToast('Помилка експорту', 'error');
-        } finally {
-            btn.disabled = false;
-            btn.textContent = originalText;
-        }
-    });
+        });
+    }
 
     // Двохрежимний пікер фермера в картці приходу:
     //   режим A — обираємо існуючого зі списку (dropdown з пошуком)

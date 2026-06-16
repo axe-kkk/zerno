@@ -24,6 +24,14 @@ from backend.models import (
     StockAdjustmentType,
     FarmerGrainDeduction,
     FarmerGrainMovement,
+    Person,
+    FarmerContract,
+    FarmerContractStatus,
+    FarmerContractPayment,
+    FarmerContractPaymentType,
+    FarmerContractItem,
+    FarmerContractItemDirection,
+    FarmerContractItemType,
     User
 )
 from backend.schemas import (
@@ -557,15 +565,10 @@ async def export_owner_balance(
     )
 
 
-@router.get("/owners/balances/export")
-async def export_all_owners_balances(
-    session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
-):
-    """Зведений Excel-звіт: залишки зерна у всіх фермерів по культурах.
-    Один рядок = (Фермер, Культура, Залишок). Фермери без залишків не вкладаються.
-    """
-    # Прийнято фермером по культурі
+def _compute_owner_balances(session: Session):
+    """Спільний розрахунок залишків зерна у фермерів (для Excel і JSON).
+    Повертає (rows, totals_by_culture, cultures_map), де rows = list[(фермер, культура, залишок)]
+    лише з позитивним залишком, відсортовані за фермером/культурою."""
     received = session.exec(
         select(
             GrainIntake.owner_id,
@@ -581,7 +584,6 @@ async def export_all_owners_balances(
         .group_by(GrainIntake.owner_id, GrainIntake.culture_id)
     ).all()
 
-    # Списання
     deducted = session.exec(
         select(
             FarmerGrainDeduction.owner_id,
@@ -595,7 +597,6 @@ async def export_all_owners_balances(
     owners_map = {o.id: o.full_name for o in session.exec(select(GrainOwner)).all()}
     cultures_map = {c.id: c.name for c in session.exec(select(GrainCulture)).all()}
 
-    # Збираємо позитивні залишки
     rows = []
     totals_by_culture: dict[int, float] = {}
     for owner_id, culture_id, qty in received:
@@ -606,12 +607,47 @@ async def export_all_owners_balances(
         totals_by_culture[culture_id] = totals_by_culture.get(culture_id, 0.0) + balance
 
     rows.sort(key=lambda r: (r[0].lower(), r[1].lower()))
+    return rows, totals_by_culture, cultures_map
+
+
+@router.get("/owners/balances")
+async def list_owners_balances(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """JSON-версія звіту залишків (для перегляду в UI)."""
+    rows, totals_by_culture, cultures_map = _compute_owner_balances(session)
+    return {
+        "rows": [
+            {"owner": r[0], "culture": r[1], "balance": round(r[2], 2)} for r in rows
+        ],
+        "totals": [
+            {"culture": cultures_map.get(cid, "—"), "total": round(t, 2)}
+            for cid, t in sorted(totals_by_culture.items(), key=lambda kv: cultures_map.get(kv[0], ""))
+        ],
+    }
+
+
+def _build_balances_pivot_xlsx(rows, totals_by_culture, cultures_map, *, sheet_title: str, first_col: str) -> BytesIO:
+    """Зведений Excel: суб'єкти — рядки, культури — колонки, залишок — у клітинках,
+    плюс колонка «Разом» по суб'єкту і підсумковий рядок «Разом» по культурах.
+    `rows` = list[(назва, культура, залишок)]."""
+    from openpyxl.utils import get_column_letter
+
+    culture_ids = sorted(totals_by_culture.keys(), key=lambda cid: cultures_map.get(cid, ""))
+    culture_names = [cultures_map.get(cid, "—") for cid in culture_ids]
+
+    pivot: dict[str, dict[str, float]] = {}
+    for name, culture_name, balance in rows:
+        pivot.setdefault(name, {})[culture_name] = balance
+    names = sorted(pivot.keys(), key=lambda s: s.lower())
 
     workbook = Workbook()
     sheet = workbook.active
-    sheet.title = "Залишки фермерів"
+    sheet.title = sheet_title
 
-    headers = ["Фермер", "Культура", "Не викуплено, кг"]
+    headers = [first_col] + culture_names + ["Разом"]
+    ncols = len(headers)
     sheet.append(headers)
 
     header_fill = PatternFill("solid", fgColor="1F2937")
@@ -623,7 +659,7 @@ async def export_all_owners_balances(
         top=Side(style="thin", color="E5E7EB"),
         bottom=Side(style="thin", color="E5E7EB")
     )
-    for col in range(1, len(headers) + 1):
+    for col in range(1, ncols + 1):
         cell = sheet.cell(row=1, column=col)
         cell.fill = header_fill
         cell.font = header_font
@@ -631,42 +667,195 @@ async def export_all_owners_balances(
         cell.border = thin_border
 
     alt_fill = PatternFill("solid", fgColor="F8FAFC")
-    for r in rows:
-        sheet.append(list(r))
+    for name in names:
+        m = pivot[name]
+        row_total = 0.0
+        data_cells = []
+        for cname in culture_names:
+            v = m.get(cname)
+            if v is None:
+                data_cells.append(None)
+            else:
+                row_total += v
+                data_cells.append(v)
+        sheet.append([name] + data_cells + [row_total])
 
-    # Підсумок по культурах
-    if rows:
-        sheet.append([])  # порожній роздільник
-        summary_start = sheet.max_row + 1
-        sheet.append(["", "Підсумок по культурах", ""])
-        bold = Font(bold=True)
+    # Підсумковий рядок «Разом» по культурах
+    if names:
+        grand = 0.0
+        total_cells = []
+        for cid in culture_ids:
+            t = totals_by_culture.get(cid, 0.0)
+            grand += t
+            total_cells.append(t)
+        sheet.append(["Разом"] + total_cells + [grand])
         for cell in sheet[sheet.max_row]:
-            cell.font = bold
-        for culture_id, total in sorted(totals_by_culture.items(), key=lambda kv: cultures_map.get(kv[0], "")):
-            sheet.append(["", cultures_map.get(culture_id, "—"), total])
+            cell.font = Font(bold=True)
 
     # Стилізація рядків даних
     for row in range(2, sheet.max_row + 1):
         row_fill = alt_fill if row % 2 == 0 else None
-        for col in range(1, len(headers) + 1):
+        for col in range(1, ncols + 1):
             cell = sheet.cell(row=row, column=col)
             if row_fill:
                 cell.fill = row_fill
             cell.border = thin_border
-            if col == 3:
+            if col >= 2:
                 cell.number_format = "#,##0.00"
 
-    sheet.freeze_panes = "A2"
+    sheet.freeze_panes = "B2"
     if sheet.max_row > 1:
-        sheet.auto_filter.ref = f"A1:C{sheet.max_row}"
+        sheet.auto_filter.ref = f"A1:{get_column_letter(ncols)}{sheet.max_row}"
     sheet.column_dimensions["A"].width = 32
-    sheet.column_dimensions["B"].width = 22
-    sheet.column_dimensions["C"].width = 20
+    for i in range(2, ncols + 1):
+        sheet.column_dimensions[get_column_letter(i)].width = 16
 
     buffer = BytesIO()
     workbook.save(buffer)
     buffer.seek(0)
+    return buffer
+
+
+@router.get("/owners/balances/export")
+async def export_all_owners_balances(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """Зведений Excel-звіт залишків зерна у фермерів (фермери × культури)."""
+    rows, totals_by_culture, cultures_map = _compute_owner_balances(session)
+    buffer = _build_balances_pivot_xlsx(
+        rows, totals_by_culture, cultures_map, sheet_title="Залишки фермерів", first_col="Фермер"
+    )
     filename = f"farmers_balances_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _compute_person_balances(session: Session):
+    """Залишки зерна у людей (для Excel і JSON). Те саме, що get_person_balance, але
+    одразу по всіх людях. Залишок = перекази to_person (transfer) мінус GRAIN-витрати
+    у не-скасованих контрактах людини. Повертає (rows, totals_by_culture, cultures_map),
+    rows = list[(людина, культура, залишок)] лише з позитивним залишком."""
+    persons_map = {p.id: p.full_name for p in session.exec(select(Person)).all()}
+    cultures_map = {c.id: c.name for c in session.exec(select(GrainCulture)).all()}
+
+    balances: dict[tuple[int, int], float] = {}
+
+    # Надходження: перекази to_person (transfer)
+    incoming = session.exec(
+        select(
+            FarmerGrainMovement.to_person_id,
+            FarmerGrainMovement.culture_id,
+            func.sum(FarmerGrainMovement.quantity_kg),
+        )
+        .where(
+            FarmerGrainMovement.to_person_id.is_not(None),
+            FarmerGrainMovement.movement_type == "transfer",
+        )
+        .group_by(FarmerGrainMovement.to_person_id, FarmerGrainMovement.culture_id)
+    ).all()
+    for person_id, culture_id, qty in incoming:
+        if culture_id is None:
+            continue
+        balances[(person_id, culture_id)] = balances.get((person_id, culture_id), 0.0) + float(qty or 0.0)
+
+    # Контракти людей (не скасовані): contract_id -> person_id
+    contracts = session.exec(
+        select(FarmerContract.id, FarmerContract.person_id).where(
+            FarmerContract.person_id.is_not(None),
+            FarmerContract.status != FarmerContractStatus.CANCELLED.value,
+        )
+    ).all()
+    contract_person = {cid: pid for cid, pid in contracts}
+    contract_ids = list(contract_person.keys())
+
+    if contract_ids:
+        # GRAIN-оплати по контрактах
+        pays = session.exec(
+            select(
+                FarmerContractPayment.contract_id,
+                FarmerContractPayment.culture_id,
+                func.sum(FarmerContractPayment.quantity_kg),
+            )
+            .where(
+                FarmerContractPayment.contract_id.in_(contract_ids),
+                FarmerContractPayment.payment_type == FarmerContractPaymentType.GRAIN.value,
+                FarmerContractPayment.is_cancelled == False,
+                FarmerContractPayment.culture_id.is_not(None),
+            )
+            .group_by(FarmerContractPayment.contract_id, FarmerContractPayment.culture_id)
+        ).all()
+        for contract_id, culture_id, qty in pays:
+            pid = contract_person.get(contract_id)
+            if pid is None:
+                continue
+            balances[(pid, culture_id)] = balances.get((pid, culture_id), 0.0) - float(qty or 0.0)
+
+        # FROM_FARMER GRAIN-позиції (викуп: зерно одразу йде у нас)
+        items = session.exec(
+            select(
+                FarmerContractItem.contract_id,
+                FarmerContractItem.culture_id,
+                func.sum(FarmerContractItem.delivered_kg),
+            )
+            .where(
+                FarmerContractItem.contract_id.in_(contract_ids),
+                FarmerContractItem.direction == FarmerContractItemDirection.FROM_FARMER.value,
+                FarmerContractItem.item_type == FarmerContractItemType.GRAIN.value,
+                FarmerContractItem.culture_id.is_not(None),
+            )
+            .group_by(FarmerContractItem.contract_id, FarmerContractItem.culture_id)
+        ).all()
+        for contract_id, culture_id, qty in items:
+            pid = contract_person.get(contract_id)
+            if pid is None:
+                continue
+            balances[(pid, culture_id)] = balances.get((pid, culture_id), 0.0) - float(qty or 0.0)
+
+    rows = []
+    totals_by_culture: dict[int, float] = {}
+    for (person_id, culture_id), bal in balances.items():
+        if bal <= 0.0001:
+            continue
+        rows.append((persons_map.get(person_id, f"#{person_id}"), cultures_map.get(culture_id, "—"), bal))
+        totals_by_culture[culture_id] = totals_by_culture.get(culture_id, 0.0) + bal
+
+    rows.sort(key=lambda r: (r[0].lower(), r[1].lower()))
+    return rows, totals_by_culture, cultures_map
+
+
+@router.get("/persons/balances")
+async def list_persons_balances(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """JSON-версія звіту залишків зерна у людей (для перегляду в UI)."""
+    rows, totals_by_culture, cultures_map = _compute_person_balances(session)
+    return {
+        "rows": [
+            {"owner": r[0], "culture": r[1], "balance": round(r[2], 2)} for r in rows
+        ],
+        "totals": [
+            {"culture": cultures_map.get(cid, "—"), "total": round(t, 2)}
+            for cid, t in sorted(totals_by_culture.items(), key=lambda kv: cultures_map.get(kv[0], ""))
+        ],
+    }
+
+
+@router.get("/persons/balances/export")
+async def export_all_persons_balances(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """Зведений Excel-звіт залишків зерна у людей (люди × культури)."""
+    rows, totals_by_culture, cultures_map = _compute_person_balances(session)
+    buffer = _build_balances_pivot_xlsx(
+        rows, totals_by_culture, cultures_map, sheet_title="Залишки людей", first_col="Людина"
+    )
+    filename = f"persons_balances_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
     return StreamingResponse(
         buffer,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

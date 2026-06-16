@@ -399,57 +399,100 @@ class StockAdjustmentLog(BaseModel, table=True):
 
 
 class AgriField(BaseModel, table=True):
-    """Модель поля"""
+    """Модель поля (зерно підприємства). Більше не пов'язана з орендою —
+    оренда ведеться окремо через ділянки (LeaseParcel)."""
     __tablename__ = "agri_fields"
 
     name: str = Field(index=True, description="Назва поля")
     owner_name: str = Field(default="Підприємство", description="Власник поля")
-    landlord_id: Optional[int] = Field(default=None, foreign_key="landlords.id", description="Орендодавець (якщо є)")
-    lease_contract_id: Optional[int] = Field(default=None, foreign_key="lease_contracts.id", description="Контракт оренди (якщо є)")
     note: Optional[str] = Field(default=None, description="Примітка")
 
 
 class Landlord(BaseModel, table=True):
-    """Модель орендодавця"""
+    """Модель орендодавця (картка клієнта).
+    Одна картка може містити кілька ділянок (LeaseParcel) на різних умовах.
+    """
     __tablename__ = "landlords"
 
     full_name: str = Field(index=True, description="ПІБ орендодавця")
     phone: Optional[str] = Field(default=None, description="Телефон")
 
 
-class LeaseContract(BaseModel, table=True):
-    """Модель контракту оренди"""
-    __tablename__ = "lease_contracts"
+class LeaseParcelTerms(str, Enum):
+    """Умови, за якими орендодавець надав ділянку"""
+    GRAIN = "grain"            # лише зерно
+    CASH = "cash"              # лише гроші (₴$€)
+    GRAIN_CASH = "grain_cash"  # гроші + зерно
+
+
+class LeaseParcel(BaseModel, table=True):
+    """Ділянка орендодавця. У одного орендодавця може бути кілька ділянок,
+    кожна на своїх умовах. Площа (area_ha) — суто інформативна, у розрахунках
+    не бере участі. Зобов'язання ведуться по річних періодах (LeasePeriod).
+    """
+    __tablename__ = "lease_parcels"
 
     landlord_id: int = Field(foreign_key="landlords.id", description="ID орендодавця")
     landlord_full_name: str = Field(description="ПІБ орендодавця (знімок)")
-    field_name: str = Field(description="Назва поля")
-    contract_date: datetime = Field(description="Дата початку контракту")
-    end_date: Optional[datetime] = Field(default=None, description="Дата закінчення контракту")
-    parent_contract_id: Optional[int] = Field(default=None, foreign_key="lease_contracts.id", description="Попередній контракт (при перевипуску)")
-    is_active: bool = Field(default=True, description="Активний контракт")
+    area_ha: float = Field(gt=0, description="Кількість га")
+    label: Optional[str] = Field(default=None, description="Примітка/мітка ділянки")
+    # VARCHAR(16) — за конвенцією проєкту (без нативних PG enum)
+    payment_terms: str = Field(default="grain", sa_column=Column(String(16), default="grain"))
+    start_date: datetime = Field(description="Дата початку оренди")
+    is_active: bool = Field(default=True, description="Активна ділянка")
     note: Optional[str] = Field(default=None, description="Примітка")
 
 
-class LeaseContractItem(BaseModel, table=True):
-    """Позиція контракту оренди (культура, кількість, ціна)"""
-    __tablename__ = "lease_contract_items"
+class LeasePeriod(BaseModel, table=True):
+    """Орендний рік (період) у межах ділянки. Кожен рік відкривається окремо;
+    зобов'язання року = зернові позиції (LeasePeriodGrainItem) та/або фіксована
+    грошова сума (cash_amount). Баланс ділянки накопичувальний — рахується як
+    сума по всіх відкритих періодах мінус усі виплати.
+    """
+    __tablename__ = "lease_periods"
+    __table_args__ = (
+        UniqueConstraint("parcel_id", "year", name="uq_lease_period_parcel_year"),
+    )
 
-    contract_id: int = Field(foreign_key="lease_contracts.id", description="ID контракту")
-    culture_id: int = Field(foreign_key="grain_cultures.id", description="Культура для оплати")
+    parcel_id: int = Field(foreign_key="lease_parcels.id", description="ID ділянки")
+    year: int = Field(description="Рік періоду")
+    period_start: datetime = Field(description="Початок періоду")
+    period_end: datetime = Field(description="Кінець періоду")
+    cash_amount: float = Field(default=0.0, description="Річна грошова сума (для cash / grain_cash)")
+    cash_currency: Optional[str] = Field(default="UAH", sa_column=Column(String(8), default="UAH"))
+    cash_rate: float = Field(default=1.0, description="Курс грошової суми до грн (1.0 для UAH)")
+    note: Optional[str] = Field(default=None, description="Примітка")
+
+
+class LeasePeriodGrainItem(BaseModel, table=True):
+    """Зернова позиція зобов'язання за рік (культура, кількість, ціна цього року).
+    price_per_kg_uah — це «ціна на момент відкриття року». Поточною ціною культури
+    для оцінки боргу вважається ціна з найновішого (max year) періоду.
+    """
+    __tablename__ = "lease_period_grain_items"
+
+    period_id: int = Field(foreign_key="lease_periods.id", description="ID періоду")
+    culture_id: int = Field(foreign_key="grain_cultures.id", description="Культура")
     quantity_kg: float = Field(gt=0, description="Кількість зерна за рік, кг")
-    price_per_kg_uah: float = Field(gt=0, description="Курс гривні за кг зерна")
+    price_per_kg_uah: float = Field(gt=0, description="Ціна грн за кг зерна (цей рік)")
 
 
 class LeasePayment(BaseModel, table=True):
-    """Модель виплати по контракту оренди"""
+    """Модель виплати орендодавцю. Прив'язана до ділянки і конкретного року.
+    Для умов 'grain_cash' поле applies_to вказує, яку частину гасимо.
+    """
     __tablename__ = "lease_payments"
 
-    contract_id: int = Field(foreign_key="lease_contracts.id", description="ID контракту")
+    parcel_id: int = Field(foreign_key="lease_parcels.id", description="ID ділянки")
+    period_id: int = Field(foreign_key="lease_periods.id", description="ID періоду (рік)")
     payment_type: str = Field(description="Тип виплати: 'grain' або 'cash'")
+    applies_to: str = Field(default="grain", sa_column=Column(String(8), default="grain"),
+                            description="Що гасимо: 'grain' або 'cash' (для grain_cash)")
     # Для виплати грошима
     currency: Optional[str] = Field(default=None, description="Валюта (якщо виплата грошима)")
-    amount: Optional[float] = Field(default=None, description="Сума (якщо виплата грошима)")
+    amount: Optional[float] = Field(default=None, description="Сума у валюті виплати")
+    exchange_rate: Optional[float] = Field(default=None, description="Курс до грн")
+    amount_uah: Optional[float] = Field(default=None, description="Сума в грн")
     # Загальні поля
     payment_date: datetime = Field(description="Дата виплати")
     note: Optional[str] = Field(default=None, description="Примітка")

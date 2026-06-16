@@ -1,52 +1,59 @@
 // ═══════════════════════════════════════════════════════════
-// Оренда землі (Landlords + Contracts + Lease Payments)
-// landlordsCache читається в quick-add-helper-і у dashboard.js
-// (populateLandlordSelect/getLandlordQuickAdd) — лишається cross-file видимою.
-// Залежності з dashboard.js: populateLandlordSelect, getLandlordQuickAdd,
-// refreshAfterMutation, bindDatePicker, initCustomSelects, refreshCustomSelect,
-// culturesCache, ICONS і набір core-утиліт.
-// cancelPayment(...) викликається з HTML onclick — лишається глобально доступною
-// як top-level function у classic-script realm.
+// Оренда землі: орендодавці → ділянки (parcels) → роки (periods) → виплати.
+// Одна картка орендодавця містить кілька ділянок; у кожній ділянці —
+// річні періоди (вкладки), баланс накопичувальний. Залежності з dashboard.js:
+// populateLandlordSelect, refreshAfterMutation, bindDatePicker, parseDateInput,
+// formatDateInput, formatDateOnly, formatDate, initCustomSelects,
+// refreshCustomSelect, culturesCache, ICONS і core-утиліти
+// (apiFetch, apiFetchBlob, showToast, escapeHtml, emptyValueHtml, formatWeight,
+//  formatAmount, setFormMessage, clearFormValidationState, formShowValidationError,
+//  formBindInvalidHighlightClearing).
+// cancelPayment(...) викликається з HTML onclick — лишається глобальною.
 // ═══════════════════════════════════════════════════════════
 
 let landlordsCache = [];
-let contractsCache = [];
+let parcelsCache = [];
 let paymentsCache = [];
 let editingLandlordId = null;
 let deletingLandlordId = null;
-let editingContractId = null;
-let deletingContractId = null;
+let editingParcelId = null;
 let cancellingPaymentId = null;
+let onLandlordCreated = null;   // hook: викликається після створення орендодавця (inline «+ Новий»)
 
-/** Перевипуск дозволений лише після останнього дня дії (включно з end_date ще діє) */
-function isLeaseContractTermEndedStrict(contract) {
-    if (!contract.end_date) return false;
-    const end = toLocalDateOnly(contract.end_date);
-    return todayLocalDateOnly().getTime() > end.getTime();
-}
+// Стан картки орендодавця
+let cardLandlordId = null;
+let cardParcels = [];
+let cardPayments = [];
+let cardActivePeriod = {};   // parcelId -> periodId
+
+const TERMS_LABEL = { grain: 'Лише зерно', cash: 'Лише гроші', grain_cash: 'Гроші + зерно' };
+const TERMS_BADGE = {
+    grain: '<span class="inline-badge grain">Зерно</span>',
+    cash: '<span class="inline-badge cash">Гроші</span>',
+    grain_cash: '<span class="inline-badge grain">Зерно</span> <span class="inline-badge cash">Гроші</span>',
+};
 
 function getCultureName(cultureId) {
-    const found = culturesCache.find(culture => culture.id === cultureId);
+    const found = (culturesCache || []).find(c => c.id === cultureId);
     return found ? found.name : '-';
 }
 
-function getVehicleName(vehicleId) {
-    const found = vehicleTypesCache.find(vehicle => vehicle.id === vehicleId);
-    return found ? found.name : '-';
+// Годинник у шапці (викликається з dashboard.js initializeDashboard)
+function updateTime() {
+    const el = document.getElementById('current-time');
+    if (!el) return;
+    const now = new Date();
+    const timeString = now.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const dateString = now.toLocaleDateString('uk-UA', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    el.textContent = `${dateString} - ${timeString}`;
 }
 
-function getDriverName(driverId) {
-    const found = driversCache.find(driver => driver.id === driverId);
-    return found ? found.full_name : '-';
+function getCulturePrice(cultureId) {
+    const found = (culturesCache || []).find(c => c.id === cultureId);
+    return found ? (found.price_per_kg || 1) : 1;
 }
 
-function getFieldName(fieldId) {
-    if (!fieldId) return '-';
-    const found = fieldsCache.find(f => f.id === fieldId);
-    return found ? found.name : '-';
-}
-
-// Landlords management - переменные уже объявлены выше (строка 3526)
+// ═══════════════ Орендодавці ═══════════════
 
 async function loadLandlords() {
     const response = await apiFetch('/leases/landlords');
@@ -56,10 +63,8 @@ async function loadLandlords() {
     }
     landlordsCache = await response.json();
     renderLandlordsTable();
-    updateContractsFilterLandlords();
     updatePaymentsFilterLandlords();
-    // Перезаповнюємо всі landlord-селекти
-    ['contract-landlord-select', 'payment-landlord-select'].forEach(id => {
+    ['parcel-landlord-select', 'payment-landlord-select'].forEach(id => {
         if (document.getElementById(id) && typeof populateLandlordSelect === 'function') {
             populateLandlordSelect(id);
         }
@@ -68,46 +73,54 @@ async function loadLandlords() {
 
 function renderLandlordsTable() {
     const tableBody = document.querySelector('#landlords-table tbody');
-    if (!tableBody) {
-        return;
-    }
+    if (!tableBody) return;
     tableBody.innerHTML = '';
     const searchVal = (document.getElementById('landlords-filter-search')?.value || '').toLowerCase();
-    const filtered = landlordsCache.filter(l => {
-        if (searchVal && !l.full_name.toLowerCase().includes(searchVal)) return false;
-        return true;
+    const fStatus = document.getElementById('landlords-filter-status')?.value || '';
+
+    // Агрегати по ділянках (кількість + накопич. борг) на орендодавця
+    const agg = {};
+    (parcelsCache || []).forEach(p => {
+        const a = agg[p.landlord_id] || (agg[p.landlord_id] = { count: 0, debt: 0 });
+        a.count++;
+        a.debt += (p.cumulative_balance_uah || 0);
     });
+
+    let filtered = landlordsCache.filter(l => !searchVal || l.full_name.toLowerCase().includes(searchVal));
+    if (fStatus === 'due') filtered = filtered.filter(l => (agg[l.id]?.debt || 0) > 0.01);
+
     if (!filtered.length) {
-        tableBody.innerHTML = '<tr><td colspan="3" class="table-empty-message">Орендодавців не знайдено</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="5" class="table-empty-message">Орендодавців не знайдено</td></tr>';
         return;
     }
     filtered.forEach(landlord => {
+        const a = agg[landlord.id] || { count: 0, debt: 0 };
+        const hasDebt = a.debt > 0.01;
         const row = document.createElement('tr');
+        if (hasDebt) row.classList.add('row-overdue');
+        const balanceHtml = hasDebt
+            ? `<strong style="color:var(--danger)">${formatAmount(a.debt)} грн</strong>`
+            : (a.count ? '<span class="status-badge success">Виплачено</span>' : emptyValueHtml());
         row.innerHTML = `
-            <td><strong>${landlord.full_name}</strong></td>
-            <td>${landlord.phone || emptyValueHtml()}</td>
+            <td><strong>${escapeHtml(landlord.full_name)}</strong></td>
+            <td>${landlord.phone ? escapeHtml(landlord.phone) : emptyValueHtml()}</td>
+            <td>${a.count || 0}</td>
+            <td>${balanceHtml}</td>
             <td class="actions-cell">
+                <button class="btn-icon btn-icon-secondary" data-card="${landlord.id}" title="Відкрити картку">${ICONS.view}</button>
                 <button class="btn-icon btn-icon-secondary" data-edit="${landlord.id}" title="Редагувати">${ICONS.edit}</button>
                 <button class="btn-icon btn-icon-danger" data-delete="${landlord.id}" title="Видалити">${ICONS.delete}</button>
             </td>
         `;
-        row.querySelector(`[data-edit="${landlord.id}"]`).addEventListener('click', () => {
-            openLandlordEditModal(landlord);
-        });
-        row.querySelector(`[data-delete="${landlord.id}"]`).addEventListener('click', () => {
-            openLandlordDeleteModal(landlord);
-        });
+        row.querySelector('[data-card]').addEventListener('click', () => openLandlordCard(landlord.id));
+        row.querySelector('[data-edit]').addEventListener('click', () => openLandlordEditModal(landlord));
+        row.querySelector('[data-delete]').addEventListener('click', () => openLandlordDeleteModal(landlord));
         tableBody.appendChild(row);
     });
 }
 
 function initLandlords() {
-    const addBtn = document.getElementById('landlord-add-btn');
-    if (addBtn) {
-        addBtn.addEventListener('click', () => {
-            openLandlordAddModal();
-        });
-    }
+    document.getElementById('landlord-add-btn')?.addEventListener('click', openLandlordAddModal);
     initLandlordModal();
     initLandlordDeleteModal();
     initLandlordsFilter();
@@ -118,11 +131,10 @@ function openLandlordAddModal() {
     editingLandlordId = null;
     document.getElementById('landlord-modal-title').textContent = 'Додати орендодавця';
     const lf = document.getElementById('landlord-form');
-    if (lf) {
-        clearFormValidationState(lf, 'landlord-message');
-        lf.reset();
-    }
-    document.getElementById('landlord-modal').classList.remove('hidden');
+    if (lf) { clearFormValidationState(lf, 'landlord-message'); lf.reset(); }
+    const lm = document.getElementById('landlord-modal');
+    lm.style.zIndex = '';   // звичайне відкриття — скидаємо підняття z-index
+    lm.classList.remove('hidden');
 }
 
 function openLandlordEditModal(landlord) {
@@ -140,52 +152,38 @@ function initLandlordModal() {
     const form = document.getElementById('landlord-form');
     const closeBtn = document.getElementById('landlord-modal-close');
     const overlay = modal?.querySelector('.modal-overlay');
-    
-    if (!modal || !form || !closeBtn || !overlay) {
-        return;
-    }
+    if (!modal || !form || !closeBtn || !overlay) return;
 
     formBindInvalidHighlightClearing(form);
-    
-    const closeLandlordModal = () => {
+    const close = () => {
         clearFormValidationState(form, 'landlord-message');
         modal.classList.add('hidden');
+        modal.style.zIndex = '';
+        onLandlordCreated = null;
     };
-
-    closeBtn.addEventListener('click', closeLandlordModal);
-    overlay.addEventListener('click', closeLandlordModal);
-    document.getElementById('landlord-modal-cancel')?.addEventListener('click', closeLandlordModal);
+    closeBtn.addEventListener('click', close);
+    overlay.addEventListener('click', close);
+    document.getElementById('landlord-modal-cancel')?.addEventListener('click', close);
 
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
         const fullName = document.getElementById('landlord-full-name').value.trim();
         const phone = document.getElementById('landlord-phone').value.trim();
-        
         if (!fullName) {
             formShowValidationError(form, 'landlord-message', 'Вкажіть ПІБ', ['landlord-full-name']);
             return;
         }
-        
-        const payload = {
-            full_name: fullName,
-            phone: phone || null
-        };
-        
-        const url = editingLandlordId 
-            ? `/leases/landlords/${editingLandlordId}`
-            : '/leases/landlords';
+        const wasEditing = editingLandlordId;
+        const url = editingLandlordId ? `/leases/landlords/${editingLandlordId}` : '/leases/landlords';
         const method = editingLandlordId ? 'PATCH' : 'POST';
-        
-        const response = await apiFetch(url, {
-            method,
-            body: JSON.stringify(payload)
-        });
-        
+        const response = await apiFetch(url, { method, body: JSON.stringify({ full_name: fullName, phone: phone || null }) });
         if (response.ok) {
-            showToast(editingLandlordId ? 'Орендодавця оновлено' : 'Орендодавця додано', 'success');
-            clearFormValidationState(form, 'landlord-message');
-            closeLandlordModal();
-            await refreshAfterMutation(['landlords', 'contracts']);
+            const saved = await response.json().catch(() => null);
+            const cb = onLandlordCreated;
+            showToast(wasEditing ? 'Орендодавця оновлено' : 'Орендодавця додано', 'success');
+            close();
+            await refreshAfterMutation(['landlords', 'parcels', 'payments']);
+            if (!wasEditing && cb && saved) cb(saved);   // inline-додавання: підставити нового у форму договору
         } else {
             const error = await response.json().catch(() => null);
             setFormMessage('landlord-message', error?.detail || 'Помилка збереження', true);
@@ -199,31 +197,20 @@ function initLandlordDeleteModal() {
     const cancelBtn = document.getElementById('landlord-delete-cancel');
     const confirmBtn = document.getElementById('landlord-delete-confirm');
     const overlay = modal?.querySelector('.modal-overlay');
-    
-    if (!modal || !closeBtn || !cancelBtn || !confirmBtn || !overlay) {
-        return;
-    }
-    
-    const closeModal = () => {
-        modal.classList.add('hidden');
-        deletingLandlordId = null;
-    };
-    
-    closeBtn.addEventListener('click', closeModal);
-    cancelBtn.addEventListener('click', closeModal);
-    overlay.addEventListener('click', closeModal);
-    
+    if (!modal || !closeBtn || !cancelBtn || !confirmBtn || !overlay) return;
+
+    const close = () => { modal.classList.add('hidden'); deletingLandlordId = null; };
+    closeBtn.addEventListener('click', close);
+    cancelBtn.addEventListener('click', close);
+    overlay.addEventListener('click', close);
+
     confirmBtn.addEventListener('click', async () => {
-        if (!deletingLandlordId) {
-            return;
-        }
-        const response = await apiFetch(`/leases/landlords/${deletingLandlordId}`, {
-            method: 'DELETE'
-        });
+        if (!deletingLandlordId) return;
+        const response = await apiFetch(`/leases/landlords/${deletingLandlordId}`, { method: 'DELETE' });
         if (response.ok) {
             showToast('Орендодавця видалено', 'success');
-            closeModal();
-            await refreshAfterMutation(['landlords', 'contracts', 'fields', 'payments']);
+            close();
+            await refreshAfterMutation(['landlords', 'parcels', 'payments']);
         } else {
             const error = await response.json().catch(() => null);
             showToast(error?.detail || 'Помилка видалення', 'error');
@@ -237,862 +224,590 @@ function openLandlordDeleteModal(landlord) {
     document.getElementById('landlord-delete-modal').classList.remove('hidden');
 }
 
-// Contracts management
-async function loadContracts() {
-    const response = await apiFetch('/leases/contracts');
-    if (!response.ok) {
-        console.error('Помилка завантаження контрактів');
-        return;
-    }
-    contractsCache = await response.json();
-    renderContractsTable();
+// ═══════════════ Ділянки (parcels) ═══════════════
+
+async function loadParcels() {
+    const response = await apiFetch('/leases/parcels');
+    if (!response.ok) { console.error('Помилка завантаження ділянок'); return; }
+    parcelsCache = await response.json();
+    renderLandlordsTable();   // картка-центрична: ділянки агрегуються в таблиці орендодавців
 }
 
-function renderContractsTable() {
-    const tableBody = document.querySelector('#contracts-table tbody');
-    if (!tableBody) {
-        return;
-    }
-    tableBody.innerHTML = '';
-    const filterLandlord = document.getElementById('contracts-filter-landlord')?.value || '';
-    const filterStatus = document.getElementById('contracts-filter-status')?.value || '';
-    const filterSearch = (document.getElementById('contracts-filter-search')?.value || '').trim().toLowerCase();
-    const filtered = contractsCache.filter(c => {
-        if (filterLandlord && String(c.landlord_id) !== filterLandlord) return false;
-        if (filterStatus === 'active' && !c.is_active) return false;
-        if (filterStatus === 'inactive' && c.is_active) return false;
-        if (filterStatus === 'due' && !(c.has_debt || (c.remaining_cash_uah && c.remaining_cash_uah > 0.01))) return false;
-        if (filterSearch) {
-            const hay = `${c.landlord_full_name || ''} ${c.field_name || ''} #${c.id}`.toLowerCase();
-            if (!hay.includes(filterSearch)) return false;
-        }
-        return true;
-    });
-    if (!filtered.length) {
-        tableBody.innerHTML = '<tr><td colspan="5" class="table-empty-message">Контрактів не знайдено</td></tr>';
-        return;
-    }
-    filtered.forEach(contract => {
-        const row = document.createElement('tr');
-        if (!contract.is_active) row.classList.add('row-muted');
-        if (contract.is_overdue) row.classList.add('row-overdue');
-
-        const expired = contract.is_expired;
-        let statusBadge;
-        if (contract.is_overdue) {
-            statusBadge = '<span class="status-badge danger">Не виплачено</span>';
-        } else if (expired) {
-            statusBadge = '<span class="status-badge warning">Завершений</span>';
-        } else if (contract.is_active) {
-            statusBadge = '<span class="status-badge success">Активний</span>';
-        } else {
-            statusBadge = '<span class="status-badge muted">Неактивний</span>';
-        }
-
-        const endDateStr = contract.end_date ? formatDateOnly(contract.end_date) : emptyValueHtml();
-        const dateRange = `${formatDateOnly(contract.contract_date)} — ${endDateStr}`;
-
-        const termEndedStrict = isLeaseContractTermEndedStrict(contract);
-        const canRenew = Boolean(contract.is_active && termEndedStrict);
-        let renewTitle = 'Перевипустити';
-        if (!contract.is_active) {
-            renewTitle = 'Контракт не активний';
-        } else if (!contract.end_date) {
-            renewTitle = 'Вкажіть дату закінчення контракту для перевипуску';
-        } else if (!termEndedStrict) {
-            renewTitle = 'Доступно після закінчення строку дії контракту';
-        }
-
-        const renewBtnClass = canRenew ? 'btn-icon-primary' : 'btn-icon-secondary';
-        const renewDisabled = canRenew ? '' : ' disabled';
-
-        let actionsHtml = `
-            <button type="button" class="btn-icon btn-icon-secondary" data-view="${contract.id}" title="Переглянути">${ICONS.view}</button>
-            <button type="button" class="btn-icon btn-icon-secondary" data-edit="${contract.id}" title="Редагувати">${ICONS.edit}</button>
-            <button type="button" class="btn-icon ${renewBtnClass}" data-renew="${contract.id}" title="${renewTitle}"${renewDisabled}>${ICONS.renew}</button>
-            <button type="button" class="btn-icon btn-icon-danger" data-delete="${contract.id}" title="Видалити">${ICONS.delete}</button>`;
-
-        row.innerHTML = `
-            <td><strong>${contract.landlord_full_name}</strong></td>
-            <td>${contract.field_name}</td>
-            <td>${dateRange}</td>
-            <td>${statusBadge}</td>
-            <td class="actions-cell">${actionsHtml}</td>
-        `;
-        row.querySelector(`[data-view="${contract.id}"]`).addEventListener('click', () => {
-            openContractViewModal(contract);
-        });
-        row.querySelector(`[data-edit="${contract.id}"]`).addEventListener('click', () => {
-            openContractEditModal(contract);
-        });
-        const renewBtn = row.querySelector(`[data-renew="${contract.id}"]`);
-        if (renewBtn && canRenew) {
-            renewBtn.addEventListener('click', () => openContractRenewModal(contract));
-        }
-        row.querySelector(`[data-delete="${contract.id}"]`).addEventListener('click', () => {
-            openContractDeleteModal(contract);
-        });
-        tableBody.appendChild(row);
-    });
+function initParcels() {
+    document.getElementById('parcel-add-btn')?.addEventListener('click', () => openContractCreateModal());
+    initParcelModal();
+    initLandlordCardModal();
+    initPeriodModal();
+    initParcelsReportModal();
+    initParcelsDebtReportBtn();
 }
 
-function initContracts() {
-    const addBtn = document.getElementById('contract-add-btn');
-    if (addBtn) {
-        addBtn.addEventListener('click', () => {
-            openContractAddModal();
-        });
+// ── Спільні хелпери «умов року» (використовують і форма договору, і модалка року) ──
+function leaseAddGrainRow(tbody, item) {
+    const tr = document.createElement('tr');
+    tr.className = 'lease-grain-row';
+    const opts = '<option value="">Культура</option>' +
+        (culturesCache || []).map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+    tr.innerHTML = `
+        <td><select class="g-culture">${opts}</select></td>
+        <td><input type="number" class="g-qty" min="0" step="0.01" placeholder="кг"></td>
+        <td><input type="number" class="g-price" min="0" step="0.01" placeholder="грн/кг"></td>
+        <td><button type="button" class="btn btn-danger btn-small g-remove">×</button></td>`;
+    tbody.appendChild(tr);
+    const sel = tr.querySelector('.g-culture');
+    const qty = tr.querySelector('.g-qty');
+    const price = tr.querySelector('.g-price');
+    if (item) {
+        sel.value = item.culture_id;
+        qty.value = item.quantity_kg;
+        price.value = (item.price_per_kg_uah != null ? item.price_per_kg_uah : '');
     }
-    initContractModal();
-    initContractDeleteModal();
-    initContractViewModal();
-    initContractRenewModal();
-    initContractLandlordSearch();
-    initContractsFilter();
-    initContractsReportModal();
-    initContractsDebtReportBtn();
-    
-    const addItemBtn = document.getElementById('contract-add-item');
-    if (addItemBtn) {
-        addItemBtn.addEventListener('click', addContractItem);
-    }
+    sel.addEventListener('change', () => { if (!price.value && sel.value) price.value = getCulturePrice(parseInt(sel.value)); });
+    tr.querySelector('.g-remove').addEventListener('click', () => tr.remove());
+    if (typeof initCustomSelects === 'function') setTimeout(() => initCustomSelects(sel), 30);
 }
 
-let renewingContractId = null;
-
-function openContractRenewModal(contract) {
-    const modal = document.getElementById('contract-renew-modal');
-    if (!modal) return;
-
-    renewingContractId = contract.id;
-
-    const info = document.getElementById('contract-renew-info');
-    info.textContent = `Перевипуск контракту: ${contract.landlord_full_name} — ${contract.field_name}`;
-
-    const dateInput = document.getElementById('contract-renew-date');
-    const dateNative = document.getElementById('contract-renew-date-native');
-    if (contract.end_date) {
-        const d = new Date(contract.end_date);
-        const dd = String(d.getDate()).padStart(2, '0');
-        const mm = String(d.getMonth() + 1).padStart(2, '0');
-        const yyyy = d.getFullYear();
-        dateInput.value = `${dd}.${mm}.${yyyy}`;
-        dateNative.value = `${yyyy}-${mm}-${dd}`;
-    } else {
-        dateInput.value = '';
-        dateNative.value = '';
-    }
-
-    document.getElementById('contract-renew-note').value = '';
-
-    const tbody = document.getElementById('contract-renew-items-tbody');
-    const items = contract.contract_items || [];
-    tbody.innerHTML = items.map(item => `
-        <tr data-culture-id="${item.culture_id}">
-            <td>${item.culture_name || 'Культура #' + item.culture_id}</td>
-            <td><input type="number" class="renew-qty" value="${item.quantity_kg}" min="0" step="0.01" style="width:120px;"></td>
-            <td><input type="number" class="renew-price" value="${item.price_per_kg_uah}" min="0" step="0.01" style="width:120px;"></td>
-        </tr>
-    `).join('');
-
-    const msg = document.getElementById('contract-renew-message');
-    if (msg) { msg.classList.add('hidden'); msg.textContent = ''; }
-
-    modal.classList.remove('hidden');
+function leaseToggleRate(prefix) {
+    const cur = document.getElementById(`${prefix}-cash-currency`).value;
+    const field = document.getElementById(`${prefix}-cash-rate-field`);
+    const input = document.getElementById(`${prefix}-cash-rate`);
+    if (cur === 'UAH') { field.classList.add('hidden'); input.value = 1; }
+    else field.classList.remove('hidden');
 }
 
-function initContractRenewModal() {
-    const modal = document.getElementById('contract-renew-modal');
-    const closeBtn = document.getElementById('contract-renew-close');
-    const cancelBtn = document.getElementById('contract-renew-cancel');
-    const submitBtn = document.getElementById('contract-renew-submit');
-    const overlay = modal?.querySelector('.modal-overlay');
-    const dateInput = document.getElementById('contract-renew-date');
-    const dateNative = document.getElementById('contract-renew-date-native');
-    const dateBtn = document.getElementById('contract-renew-date-btn');
-
-    if (!modal || !submitBtn) return;
-
-    const close = () => modal.classList.add('hidden');
-    closeBtn?.addEventListener('click', close);
-    cancelBtn?.addEventListener('click', close);
-    overlay?.addEventListener('click', close);
-    if (dateInput && dateNative && dateBtn) {
-        bindDatePicker(dateInput, dateNative, dateBtn);
-    }
-
-    submitBtn.addEventListener('click', async () => {
-        const dateIso = parseDateInput(dateInput.value, 'дата початку');
-        if (dateIso === undefined) return;
-        if (!dateIso) {
-            setFormMessage('contract-renew-message', 'Вкажіть дату початку', true);
-            return;
-        }
-
-        const rows = document.querySelectorAll('#contract-renew-items-tbody tr');
-        const items = [];
-        for (const row of rows) {
-            const cultureId = parseInt(row.dataset.cultureId);
-            const qty = parseFloat(row.querySelector('.renew-qty').value);
-            const price = parseFloat(row.querySelector('.renew-price').value);
-            if (!qty || qty <= 0 || !price || price <= 0) {
-                setFormMessage('contract-renew-message', 'Вкажіть кількість і ціну для кожної позиції', true);
-                return;
-            }
-            items.push({ culture_id: cultureId, quantity_kg: qty, price_per_kg_uah: price });
-        }
-
-        const note = document.getElementById('contract-renew-note').value.trim();
-
-        submitBtn.disabled = true;
-        submitBtn.textContent = 'Збереження...';
-        try {
-            const response = await apiFetch(`/leases/contracts/${renewingContractId}/renew`, {
-                method: 'POST',
-                body: JSON.stringify({
-                    contract_date: new Date(dateIso).toISOString(),
-                    contract_items: items,
-                    note: note || null
-                })
-            });
-            if (response.ok) {
-                showToast('Контракт перевипущено');
-                close();
-                await refreshAfterMutation(['contracts', 'fields', 'landlords', 'dashboard']);
-            } else {
-                const err = await response.json().catch(() => ({}));
-                setFormMessage('contract-renew-message', err.detail || 'Помилка перевипуску', true);
-            }
-        } finally {
-            submitBtn.disabled = false;
-            submitBtn.textContent = 'Перевипустити';
-        }
-    });
-}
-
-function resetContractItems() {
-    const tbody = document.getElementById('contract-items-tbody');
-    if (!tbody) {
-        return;
-    }
-    tbody.innerHTML = `
-        <tr class="contract-item-row">
-            <td>
-                <select class="contract-item-culture" required>
-                    <option value="">Оберіть культуру</option>
-                </select>
-            </td>
-            <td>
-                <input type="number" class="contract-item-quantity" min="0" step="0.01" placeholder="кг" required>
-            </td>
-            <td>
-                <input type="number" class="contract-item-price" min="0" step="0.01" placeholder="грн/кг" required>
-            </td>
-            <td>
-                <button type="button" class="btn btn-danger btn-small contract-item-remove">×</button>
-            </td>
-        </tr>
-    `;
-    updateContractItemSelects();
-    updateContractItemRemoveButtons();
-}
-
-function addContractItem() {
-    const tbody = document.getElementById('contract-items-tbody');
-    if (!tbody) {
-        return;
-    }
-    const newRow = document.createElement('tr');
-    newRow.className = 'contract-item-row';
-    newRow.innerHTML = `
-        <td>
-            <select class="contract-item-culture" required>
-                <option value="">Оберіть культуру</option>
-            </select>
-        </td>
-        <td>
-            <input type="number" class="contract-item-quantity" min="0" step="0.01" placeholder="кг" required>
-        </td>
-        <td>
-            <input type="number" class="contract-item-price" min="0" step="0.01" placeholder="грн/кг" required>
-        </td>
-        <td>
-            <button type="button" class="btn btn-danger btn-small contract-item-remove">×</button>
-        </td>
-    `;
-    tbody.appendChild(newRow);
-    updateContractItemSelects();
-    updateContractItemRemoveButtons();
-    // Инициализируем кастомный select для новой строки
-    setTimeout(() => {
-        const newSelect = newRow.querySelector('.contract-item-culture');
-        if (newSelect && typeof initCustomSelects === 'function') {
-            initCustomSelects(newSelect);
-        }
-    }, 50);
-}
-
-function updateContractItemSelects() {
-    const selects = document.querySelectorAll('.contract-item-culture');
-    selects.forEach(select => {
-        if (!culturesCache.length) {
-            return;
-        }
-        const currentValue = select.value;
-        select.innerHTML = '<option value="">Оберіть культуру</option>' +
-            culturesCache.map(culture => 
-                `<option value="${culture.id}">${culture.name}</option>`
-            ).join('');
-        if (currentValue) {
-            select.value = currentValue;
-        }
-        // Применяем кастомные стили к выпадающему меню
-        refreshCustomSelect(select);
-    });
-}
-
-function updateContractItemRemoveButtons() {
-    const rows = document.querySelectorAll('#contract-items-tbody .contract-item-row');
-    rows.forEach((row, index) => {
-        const removeBtn = row.querySelector('.contract-item-remove');
-        if (removeBtn && index > 0) {
-            // Стили для отображения кнопки удаления управляются через CSS
-            removeBtn.onclick = () => {
-                row.remove();
-                updateContractItemRemoveButtons();
-            };
-        }
-    });
-}
-
-function openContractAddModal() {
-    editingContractId = null;
-    document.getElementById('contract-modal-title').textContent = 'Додати контракт';
-    const cform = document.getElementById('contract-form');
-    if (cform) {
-        clearFormValidationState(cform, 'contract-message');
-        cform.reset();
-    }
-    document.getElementById('contract-landlord-id').value = '';
-    const landlordSel = document.getElementById('contract-landlord-select');
-    if (landlordSel) {
-        if (typeof populateLandlordSelect === 'function') populateLandlordSelect('contract-landlord-select');
-        landlordSel.value = '';
-        if (typeof refreshCustomSelect === 'function') refreshCustomSelect(landlordSel);
-    }
-    document.getElementById('contract-is-active').checked = true;
-    resetContractItems();
-    document.getElementById('contract-modal').classList.remove('hidden');
-    // Убеждаемся, что кастомные select инициализированы после открытия модального окна
-    setTimeout(() => {
-        updateContractItemSelects();
-        const selects = document.querySelectorAll('#contract-items-table .contract-item-culture');
-        selects.forEach(select => {
-            if (select && typeof initCustomSelects === 'function') {
-                initCustomSelects(select);
-            }
-        });
-    }, 100);
-}
-
-function openContractEditModal(contract) {
-    editingContractId = contract.id;
-    document.getElementById('contract-modal-title').textContent = 'Редагувати контракт';
-    const landlordSelE = document.getElementById('contract-landlord-select');
-    if (landlordSelE) {
-        if (typeof populateLandlordSelect === 'function') populateLandlordSelect('contract-landlord-select');
-        landlordSelE.value = String(contract.landlord_id || '');
-        if (typeof refreshCustomSelect === 'function') refreshCustomSelect(landlordSelE);
-    }
-    document.getElementById('contract-landlord-id').value = contract.landlord_id;
-    document.getElementById('contract-field-name').value = contract.field_name;
-    const contractDate = new Date(contract.contract_date);
-    document.getElementById('contract-date-native').value = contractDate.toISOString().split('T')[0];
-    document.getElementById('contract-date').value = formatDateInput(contractDate);
-    document.getElementById('contract-note').value = contract.note || '';
-    document.getElementById('contract-is-active').checked = contract.is_active;
-    const cform = document.getElementById('contract-form');
-    if (cform) clearFormValidationState(cform, 'contract-message');
-    
-    // Загружаем позиции контракта
-    const tbody = document.getElementById('contract-items-tbody');
+function leaseSetupYear(prefix, terms, period) {
+    const showGrain = terms === 'grain' || terms === 'grain_cash';
+    const showCash = terms === 'cash' || terms === 'grain_cash';
+    document.getElementById(`${prefix}-grain-section`).classList.toggle('hidden', !showGrain);
+    document.getElementById(`${prefix}-cash-section`).classList.toggle('hidden', !showCash);
+    const tbody = document.getElementById(`${prefix}-grain-tbody`);
     tbody.innerHTML = '';
-    if (contract.contract_items && contract.contract_items.length > 0) {
-        contract.contract_items.forEach((item, index) => {
-            const row = document.createElement('tr');
-            row.className = 'contract-item-row';
-            row.innerHTML = `
-                <td>
-                    <select class="contract-item-culture" required>
-                        <option value="">Оберіть культуру</option>
-                    </select>
-                </td>
-                <td>
-                    <input type="number" class="contract-item-quantity" min="0" step="0.01" placeholder="кг" value="${item.quantity_kg}" required>
-                </td>
-                <td>
-                    <input type="number" class="contract-item-price" min="0" step="0.01" placeholder="грн/кг" value="${item.price_per_kg_uah}" required>
-                </td>
-                <td>
-                    <button type="button" class="btn btn-danger btn-small contract-item-remove">×</button>
-                </td>
-            `;
-            tbody.appendChild(row);
-        });
-    } else {
-        resetContractItems();
+    if (showGrain) {
+        const items = (period && period.grain_items && period.grain_items.length) ? period.grain_items : [null];
+        items.forEach(it => leaseAddGrainRow(tbody, it));
     }
-    updateContractItemSelects();
-    // Устанавливаем значения культур
-    if (contract.contract_items && contract.contract_items.length > 0) {
-        const selects = document.querySelectorAll('.contract-item-culture');
-        contract.contract_items.forEach((item, index) => {
-            if (selects[index]) {
-                selects[index].value = item.culture_id;
-                refreshCustomSelect(selects[index]);
-            }
-        });
+    if (showCash) {
+        document.getElementById(`${prefix}-cash-amount`).value = period ? period.cash_amount : '';
+        const cur = document.getElementById(`${prefix}-cash-currency`);
+        cur.value = period ? (period.cash_currency || 'UAH') : 'UAH';
+        document.getElementById(`${prefix}-cash-rate`).value = period ? (period.cash_rate || 1) : 1;
+        if (typeof refreshCustomSelect === 'function') refreshCustomSelect(cur);
+        leaseToggleRate(prefix);
     }
-    updateContractItemRemoveButtons();
-    updateContractLandlordBadge();
-    document.getElementById('contract-modal').classList.remove('hidden');
 }
 
-function initContractModal() {
-    const modal = document.getElementById('contract-modal');
-    const form = document.getElementById('contract-form');
-    const closeBtn = document.getElementById('contract-modal-close');
-    const overlay = modal?.querySelector('.modal-overlay');
-    const dateBtn = document.getElementById('contract-date-btn');
-    const dateInput = document.getElementById('contract-date');
-    const dateNative = document.getElementById('contract-date-native');
-    
-    if (!modal || !form || !closeBtn || !overlay) {
-        return;
+function leaseReadYear(prefix, terms, form, msgId, includeYear) {
+    const showGrain = terms === 'grain' || terms === 'grain_cash';
+    const showCash = terms === 'cash' || terms === 'grain_cash';
+    const out = { cash_amount: 0, cash_currency: 'UAH', cash_rate: 1, grain_items: [] };
+    if (includeYear) {
+        const year = parseInt(document.getElementById(`${prefix}-year`).value);
+        if (!year || year < 1900) { formShowValidationError(form, msgId, 'Вкажіть коректний рік', [`${prefix}-year`]); return null; }
+        out.year = year;
     }
+    if (showGrain) {
+        const rows = document.querySelectorAll(`#${prefix}-grain-tbody .lease-grain-row`);
+        for (const row of rows) {
+            const cid = row.querySelector('.g-culture').value;
+            const qty = parseFloat(row.querySelector('.g-qty').value);
+            const price = parseFloat(row.querySelector('.g-price').value);
+            if (!cid) continue;
+            if (!qty || qty <= 0) { formShowValidationError(form, msgId, 'Вкажіть кількість для кожної культури', [], [row]); return null; }
+            out.grain_items.push({ culture_id: parseInt(cid), quantity_kg: qty, price_per_kg_uah: (price && price > 0) ? price : null });
+        }
+        if (!out.grain_items.length) { formShowValidationError(form, msgId, 'Додайте хоча б одну культуру', [`${prefix}-add-grain`]); return null; }
+    }
+    if (showCash) {
+        out.cash_amount = parseFloat(document.getElementById(`${prefix}-cash-amount`).value);
+        out.cash_currency = document.getElementById(`${prefix}-cash-currency`).value;
+        out.cash_rate = parseFloat(document.getElementById(`${prefix}-cash-rate`).value) || 1;
+        if (!out.cash_amount || out.cash_amount <= 0) { formShowValidationError(form, msgId, 'Вкажіть річну грошову суму', [`${prefix}-cash-amount`]); return null; }
+        if (out.cash_currency !== 'UAH' && (!out.cash_rate || out.cash_rate <= 0)) { formShowValidationError(form, msgId, `Вкажіть курс ${out.cash_currency} до грн`, [`${prefix}-cash-rate`]); return null; }
+    }
+    return out;
+}
+
+// Комбінована форма «Новий договір»: орендодавець + ділянка + перший рік разом
+function openContractCreateModal(presetLandlordId = null) {
+    editingParcelId = null;
+    document.getElementById('parcel-modal-title').textContent = presetLandlordId ? 'Нова ділянка' : 'Новий договір';
+    const form = document.getElementById('parcel-form');
+    if (form) { clearFormValidationState(form, 'parcel-message'); form.reset(); }
+    const sel = document.getElementById('parcel-landlord-select');
+    if (sel) {
+        if (typeof populateLandlordSelect === 'function') populateLandlordSelect('parcel-landlord-select');
+        sel.value = presetLandlordId ? String(presetLandlordId) : '';
+        sel.disabled = !!presetLandlordId;
+        if (typeof refreshCustomSelect === 'function') refreshCustomSelect(sel);
+    }
+    document.getElementById('parcel-landlord-add-btn')?.classList.toggle('hidden', !!presetLandlordId);
+    document.getElementById('parcel-terms').value = 'grain';
+    if (typeof refreshCustomSelect === 'function') refreshCustomSelect(document.getElementById('parcel-terms'));
+    const today = new Date();
+    document.getElementById('parcel-start-date').value = formatDateInput(today);
+    document.getElementById('parcel-start-date-native').value = today.toISOString().split('T')[0];
+    document.getElementById('parcel-year').value = today.getFullYear();
+    document.getElementById('parcel-year-section').classList.remove('hidden');
+    leaseSetupYear('parcel', 'grain', null);
+    document.getElementById('parcel-modal').classList.remove('hidden');
+    setTimeout(() => {
+        ['parcel-terms', 'parcel-cash-currency'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el && typeof initCustomSelects === 'function') initCustomSelects(el);
+        });
+    }, 60);
+}
+
+function openParcelEditModal(parcel) {
+    editingParcelId = parcel.id;
+    document.getElementById('parcel-modal-title').textContent = 'Редагувати ділянку';
+    const form = document.getElementById('parcel-form');
+    if (form) clearFormValidationState(form, 'parcel-message');
+    const sel = document.getElementById('parcel-landlord-select');
+    if (sel) {
+        if (typeof populateLandlordSelect === 'function') populateLandlordSelect('parcel-landlord-select');
+        sel.value = String(parcel.landlord_id);
+        sel.disabled = true;
+        if (typeof refreshCustomSelect === 'function') refreshCustomSelect(sel);
+    }
+    document.getElementById('parcel-landlord-add-btn')?.classList.add('hidden');
+    document.getElementById('parcel-area-ha').value = parcel.area_ha;
+    document.getElementById('parcel-label').value = parcel.label || '';
+    document.getElementById('parcel-terms').value = parcel.payment_terms;
+    if (typeof refreshCustomSelect === 'function') refreshCustomSelect(document.getElementById('parcel-terms'));
+    const d = new Date(parcel.start_date);
+    document.getElementById('parcel-start-date').value = formatDateInput(d);
+    document.getElementById('parcel-start-date-native').value = d.toISOString().split('T')[0];
+    document.getElementById('parcel-note').value = parcel.note || '';
+    document.getElementById('parcel-year-section').classList.add('hidden');   // редагування — лише метадані
+    document.getElementById('parcel-modal').classList.remove('hidden');
+}
+
+function initParcelModal() {
+    const modal = document.getElementById('parcel-modal');
+    const form = document.getElementById('parcel-form');
+    const closeBtn = document.getElementById('parcel-modal-close');
+    const overlay = modal?.querySelector('.modal-overlay');
+    const dateInput = document.getElementById('parcel-start-date');
+    const dateNative = document.getElementById('parcel-start-date-native');
+    const dateBtn = document.getElementById('parcel-start-date-btn');
+    if (!modal || !form) return;
 
     formBindInvalidHighlightClearing(form);
+    if (dateInput && dateNative && dateBtn) bindDatePicker(dateInput, dateNative, dateBtn);
 
-    const contractItemsTableWrap = document.getElementById('contract-items-table')?.closest('.form-field');
-    
-    const closeModal = () => {
-        clearFormValidationState(form, 'contract-message');
+    const close = () => {
+        clearFormValidationState(form, 'parcel-message');
         modal.classList.add('hidden');
-        form.reset();
-        document.getElementById('contract-landlord-id').value = '';
-        const lsel = document.getElementById('contract-landlord-select');
-        if (lsel) {
-            lsel.value = '';
-            if (typeof refreshCustomSelect === 'function') refreshCustomSelect(lsel);
-        }
-        resetContractItems();
-        editingContractId = null;
+        const sel = document.getElementById('parcel-landlord-select');
+        if (sel) sel.disabled = false;
+        editingParcelId = null;
     };
-    
-    closeBtn.addEventListener('click', closeModal);
-    overlay.addEventListener('click', closeModal);
-    
-    if (dateBtn && dateNative) {
-        dateBtn.addEventListener('click', () => {
-            dateNative.showPicker();
-        });
-        dateNative.addEventListener('change', () => {
-            const date = new Date(dateNative.value);
-            dateInput.value = formatDateInput(date);
-        });
-    }
-    
-    // Обработчик для чекбокса "Активний контракт" - сохраняет сразу при изменении
-    const isActiveCheckbox = document.getElementById('contract-is-active');
-    if (isActiveCheckbox) {
-        const pillToggleLabel = isActiveCheckbox.closest('.pill-toggle');
-        const pillToggleSpan = pillToggleLabel?.querySelector('span');
-        let shouldProcessChange = false;
-        
-        // Обработчик mousedown на label - проверяем, был ли клик на чекбоксе или span
-        if (pillToggleLabel) {
-            pillToggleLabel.addEventListener('mousedown', (event) => {
-                // Разрешаем обработку только если клик был на чекбоксе или span
-                shouldProcessChange = (event.target === isActiveCheckbox || event.target === pillToggleSpan);
-                
-                // Если клик был не на чекбоксе и не на span, предотвращаем стандартное поведение
-                if (!shouldProcessChange) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                }
-            });
+    closeBtn?.addEventListener('click', close);
+    overlay?.addEventListener('click', close);
+    document.getElementById('parcel-modal-cancel')?.addEventListener('click', close);
+
+    // умови → показ полів першого року (лише у режимі створення)
+    document.getElementById('parcel-terms')?.addEventListener('change', (e) => {
+        if (!editingParcelId && !document.getElementById('parcel-year-section').classList.contains('hidden')) {
+            leaseSetupYear('parcel', e.target.value, null);
         }
-        
-        // Обрабатываем изменение только если клик был на чекбоксе или span
-        isActiveCheckbox.addEventListener('change', async (event) => {
-            // Если клик был не на чекбоксе или span, отменяем изменение
-            if (!shouldProcessChange) {
-                event.target.checked = !event.target.checked;
-                shouldProcessChange = false;
-                return;
-            }
-            shouldProcessChange = false;
-            
-            // Сохраняем только если редактируется существующий контракт
-            if (editingContractId) {
-                const isActive = event.target.checked;
-                try {
-                    const response = await apiFetch(`/leases/contracts/${editingContractId}`, {
-                        method: 'PATCH',
-                        body: JSON.stringify({ is_active: isActive })
-                    });
-                    
-                    if (response.ok) {
-                        showToast(isActive ? 'Контракт активовано' : 'Контракт деактивовано', 'success');
-                        await refreshAfterMutation(['contracts', 'payments', 'fields']);
-                    } else {
-                        // Откатываем изменение чекбокса при ошибке
-                        event.target.checked = !isActive;
-                        const error = await response.json().catch(() => null);
-                        showToast(error?.detail || 'Помилка оновлення статусу', 'error');
-                    }
-                } catch (error) {
-                    // Откатываем изменение чекбокса при ошибке
-                    event.target.checked = !isActive;
-                    console.error('Помилка оновлення статусу контракту:', error);
-                    showToast('Помилка оновлення статусу', 'error');
-                }
-            }
-        });
-    }
-    
+    });
+    document.getElementById('parcel-add-grain')?.addEventListener('click', () =>
+        leaseAddGrainRow(document.getElementById('parcel-grain-tbody'), null));
+    document.getElementById('parcel-cash-currency')?.addEventListener('change', () => leaseToggleRate('parcel'));
+
+    // inline «+ Новий орендодавець»
+    document.getElementById('parcel-landlord-add-btn')?.addEventListener('click', () => {
+        onLandlordCreated = (created) => {
+            if (typeof populateLandlordSelect === 'function') populateLandlordSelect('parcel-landlord-select');
+            const s = document.getElementById('parcel-landlord-select');
+            if (s) { s.value = String(created.id); if (typeof refreshCustomSelect === 'function') refreshCustomSelect(s); }
+        };
+        openLandlordAddModal();
+        const lm = document.getElementById('landlord-modal');
+        if (lm) lm.style.zIndex = '100050';   // над модалкою договору
+    });
+
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
-        const landlordSelEl = document.getElementById('contract-landlord-select');
-        const landlordId = landlordSelEl?.value || document.getElementById('contract-landlord-id').value;
-        if (landlordId) document.getElementById('contract-landlord-id').value = landlordId;
-        const fieldName = document.getElementById('contract-field-name').value.trim();
-        
-        // Получаем позиции контракта из таблицы
-        const contractItems = [];
-        const filledContractRows = [];
-        const itemRows = document.querySelectorAll('#contract-items-tbody .contract-item-row');
-        itemRows.forEach(row => {
-            const cultureSelect = row.querySelector('.contract-item-culture');
-            const quantityInput = row.querySelector('.contract-item-quantity');
-            const priceInput = row.querySelector('.contract-item-price');
-            
-            if (cultureSelect && cultureSelect.value && quantityInput && priceInput) {
-                contractItems.push({
-                    culture_id: parseInt(cultureSelect.value),
-                    quantity_kg: parseFloat(quantityInput.value) || 0,
-                    price_per_kg_uah: parseFloat(priceInput.value) || 0
-                });
-                filledContractRows.push(row);
-            }
-        });
-        
-        const dateNative = document.getElementById('contract-date-native').value;
-        const note = document.getElementById('contract-note').value.trim();
-        const isActive = document.getElementById('contract-is-active').checked;
-        
-        if (!landlordId) {
-            formShowValidationError(form, 'contract-message', 'Виберіть орендодавця', ['contract-landlord-select']);
-            return;
-        }
-        if (!fieldName) {
-            formShowValidationError(form, 'contract-message', 'Вкажіть назву поля', ['contract-field-name']);
-            return;
-        }
-        if (contractItems.length === 0) {
-            formShowValidationError(form, 'contract-message', 'Додайте хоча б одну позицію контракту', [], contractItemsTableWrap ? [contractItemsTableWrap] : []);
-            return;
-        }
-        // Проверяем валидность каждой позиции
-        for (let i = 0; i < contractItems.length; i++) {
-            const item = contractItems[i];
-            const errRow = filledContractRows[i];
-            if (!item.culture_id || item.culture_id <= 0) {
-                formShowValidationError(form, 'contract-message', `Виберіть культуру для позиції ${i + 1}`, [], errRow ? [errRow] : []);
-                return;
-            }
-            if (Number.isNaN(item.quantity_kg) || item.quantity_kg <= 0) {
-                formShowValidationError(form, 'contract-message', `Вкажіть коректну кількість для позиції ${i + 1}`, [], errRow ? [errRow] : []);
-                return;
-            }
-            if (Number.isNaN(item.price_per_kg_uah) || item.price_per_kg_uah <= 0) {
-                formShowValidationError(form, 'contract-message', `Вкажіть коректну ціну для позиції ${i + 1}`, [], errRow ? [errRow] : []);
-                return;
-            }
-        }
-        if (!dateNative) {
-            formShowValidationError(form, 'contract-message', 'Вкажіть дату контракту', ['contract-date']);
-            return;
-        }
-        
-        const contractDate = new Date(dateNative + 'T00:00:00');
-        
+        const landlordId = document.getElementById('parcel-landlord-select')?.value;
+        const areaHa = parseFloat(document.getElementById('parcel-area-ha').value);
+        const label = document.getElementById('parcel-label').value.trim();
+        const terms = document.getElementById('parcel-terms').value;
+        const startIso = parseDateInput(dateInput.value, 'дата початку');
+        const note = document.getElementById('parcel-note').value.trim();
+
+        if (!landlordId) { formShowValidationError(form, 'parcel-message', 'Виберіть орендодавця', ['parcel-landlord-select']); return; }
+        if (!areaHa || areaHa <= 0) { formShowValidationError(form, 'parcel-message', 'Вкажіть кількість га', ['parcel-area-ha']); return; }
+        if (startIso === undefined) return;
+        if (!startIso) { formShowValidationError(form, 'parcel-message', 'Вкажіть дату початку', ['parcel-start-date']); return; }
+
         const payload = {
-            landlord_id: parseInt(landlordId),
-            field_name: fieldName,
-            contract_items: contractItems,
-            contract_date: contractDate.toISOString(),
+            area_ha: areaHa,
+            label: label || null,
+            payment_terms: terms,
+            start_date: new Date(startIso).toISOString(),
             note: note || null,
-            is_active: isActive
         };
-        
-        const url = editingContractId 
-            ? `/leases/contracts/${editingContractId}`
-            : '/leases/contracts';
-        const method = editingContractId ? 'PATCH' : 'POST';
-        
-        const response = await apiFetch(url, {
-            method,
-            body: JSON.stringify(payload)
-        });
-        
+        let url, method;
+        if (editingParcelId) {
+            url = `/leases/parcels/${editingParcelId}`; method = 'PATCH';
+        } else {
+            payload.landlord_id = parseInt(landlordId);
+            const fp = leaseReadYear('parcel', terms, form, 'parcel-message', true);
+            if (!fp) return;
+            payload.first_period = fp;
+            url = '/leases/parcels'; method = 'POST';
+        }
+        const response = await apiFetch(url, { method, body: JSON.stringify(payload) });
         if (response.ok) {
-            showToast(editingContractId ? 'Контракт оновлено' : 'Контракт додано', 'success');
-            clearFormValidationState(form, 'contract-message');
-            form.reset();
-            document.getElementById('contract-landlord-id').value = '';
-            const lsel2 = document.getElementById('contract-landlord-select');
-            if (lsel2) {
-                lsel2.value = '';
-                if (typeof refreshCustomSelect === 'function') refreshCustomSelect(lsel2);
-            }
-            resetContractItems();
-            editingContractId = null;
-            modal.classList.add('hidden');
-            await refreshAfterMutation(['contracts', 'payments', 'fields', 'landlords', 'dashboard']);
+            showToast(editingParcelId ? 'Ділянку оновлено' : 'Договір створено', 'success');
+            close();
+            await refreshAfterMutation(['parcels', 'payments', 'landlords']);
+            if (cardLandlordId) await refreshLandlordCard();
         } else {
             const error = await response.json().catch(() => null);
-            setFormMessage('contract-message', error?.detail || 'Помилка збереження', true);
+            setFormMessage('parcel-message', error?.detail || 'Помилка збереження', true);
         }
     });
 }
 
-function initContractLandlordSearch() {
-    const select = document.getElementById('contract-landlord-select');
-    const landlordIdInput = document.getElementById('contract-landlord-id');
-    if (!select || !landlordIdInput) return;
+async function deleteParcel(parcel) {
+    if (!confirm(`Видалити ділянку ${formatAmount(parcel.area_ha)} га (${parcel.landlord_full_name})?\nУсі її роки буде видалено.`)) return;
+    const response = await apiFetch(`/leases/parcels/${parcel.id}`, { method: 'DELETE' });
+    if (response.ok) {
+        showToast('Ділянку видалено', 'success');
+        await refreshAfterMutation(['parcels', 'payments', 'landlords']);
+        if (cardLandlordId) await refreshLandlordCard();
+    } else {
+        const error = await response.json().catch(() => null);
+        showToast(error?.detail || 'Помилка видалення', 'error');
+    }
+}
 
-    if (typeof populateLandlordSelect === 'function') populateLandlordSelect('contract-landlord-select');
+// ═══════════════ Картка орендодавця (ділянки + роки) ═══════════════
 
-    select.addEventListener('change', () => {
-        landlordIdInput.value = select.value || '';
+async function openLandlordCard(landlordId, focusParcelId = null) {
+    cardLandlordId = landlordId;
+    document.getElementById('landlord-card-modal').classList.remove('hidden');
+    const container = document.getElementById('card-parcels');
+    if (container) container.innerHTML = '<div class="contract-balance-loading">Завантаження…</div>';
+    await refreshLandlordCard(focusParcelId);
+}
+
+async function refreshLandlordCard(focusParcelId = null) {
+    if (!cardLandlordId) return;
+    const landlord = landlordsCache.find(l => l.id === cardLandlordId);
+    const [pResp, payResp] = await Promise.all([
+        apiFetch(`/leases/parcels?landlord_id=${cardLandlordId}`),
+        apiFetch(`/leases/payments?landlord_id=${cardLandlordId}`),
+    ]);
+    cardParcels = pResp.ok ? await pResp.json() : [];
+    cardPayments = payResp.ok ? await payResp.json() : [];
+    // default active period = найновіший рік кожної ділянки
+    cardParcels.forEach(p => {
+        if (focusParcelId && p.id === focusParcelId && p.periods.length) {
+            cardActivePeriod[p.id] = p.periods[p.periods.length - 1].id;
+        }
+        if (!cardActivePeriod[p.id] || !p.periods.some(per => per.id === cardActivePeriod[p.id])) {
+            cardActivePeriod[p.id] = p.periods.length ? p.periods[p.periods.length - 1].id : null;
+        }
     });
+    renderLandlordCard(landlord);
 }
 
-function updateContractLandlordBadge() {
-    // Заглушка для обратной совместимости — старый бейдж видалено,
-    // селект сам показує обраного орендодавця.
-}
+function renderLandlordCard(landlord) {
+    document.getElementById('card-landlord-name').textContent = landlord ? landlord.full_name : '-';
+    document.getElementById('card-landlord-phone').textContent = landlord && landlord.phone ? landlord.phone : '—';
+    const total = cardParcels.reduce((acc, p) => acc + (p.cumulative_balance_uah || 0), 0);
+    const totalEl = document.getElementById('card-total-balance');
+    totalEl.innerHTML = total > 0.01
+        ? `<strong style="color:var(--danger)">${formatAmount(total)} грн</strong>`
+        : '<span class="status-badge success">Боргів немає</span>';
 
-function initContractDeleteModal() {
-    const modal = document.getElementById('contract-delete-modal');
-    const closeBtn = document.getElementById('contract-delete-close');
-    const cancelBtn = document.getElementById('contract-delete-cancel');
-    const confirmBtn = document.getElementById('contract-delete-confirm');
-    const overlay = modal?.querySelector('.modal-overlay');
-    
-    if (!modal || !closeBtn || !cancelBtn || !confirmBtn || !overlay) {
+    const container = document.getElementById('card-parcels');
+    if (!cardParcels.length) {
+        container.innerHTML = '<div class="grain-items-placeholder">Ділянок ще немає. Додайте першу.</div>';
         return;
     }
-    
-    const closeModal = () => {
-        modal.classList.add('hidden');
-        deletingContractId = null;
-    };
-    
-    closeBtn.addEventListener('click', closeModal);
-    cancelBtn.addEventListener('click', closeModal);
-    overlay.addEventListener('click', closeModal);
-    
-    confirmBtn.addEventListener('click', async () => {
-        if (!deletingContractId) {
-            return;
-        }
-        const response = await apiFetch(`/leases/contracts/${deletingContractId}`, {
-            method: 'DELETE'
-        });
-        if (response.ok) {
-            showToast('Контракт видалено', 'success');
-            closeModal();
-            await refreshAfterMutation(['contracts', 'payments', 'fields', 'dashboard']);
-        } else {
-            const error = await response.json().catch(() => null);
-            showToast(error?.detail || 'Помилка видалення', 'error');
-        }
-    });
+    container.innerHTML = cardParcels.map(p => renderParcelBlock(p)).join('');
+    attachCardHandlers();
 }
 
-async function openContractViewModal(contract) {
-    document.getElementById('view-contract-landlord').textContent = contract.landlord_full_name;
-    document.getElementById('view-contract-field').textContent = contract.field_name;
-    document.getElementById('view-contract-date').textContent = formatDateOnly(contract.contract_date);
-    const setStatusBadge = (html) => {
-        const el = document.getElementById('view-contract-status');
-        if (el) el.innerHTML = html;
-    };
-    // Початковий статус — з кешу (потім оновимо за актуальним балансом).
-    if (contract.is_overdue) {
-        setStatusBadge('<span class="status-badge danger">Не виплачено</span>');
-    } else if (contract.is_expired) {
-        setStatusBadge('<span class="status-badge warning">Завершений</span>');
-    } else if (contract.is_active) {
-        setStatusBadge('<span class="status-badge success">Активний</span>');
-    } else {
-        setStatusBadge('<span class="status-badge muted">Неактивний</span>');
-    }
-    const noteEl = document.getElementById('view-contract-note');
-    if (noteEl) {
-        noteEl.innerHTML = contract.note ? escapeHtml(contract.note) : emptyValueHtml();
-    }
-    
-    // Заполняем позиции контракта
-    const itemsTbody = document.getElementById('view-contract-items-tbody');
-    itemsTbody.innerHTML = '';
-    if (contract.contract_items && contract.contract_items.length > 0) {
-        contract.contract_items.forEach(item => {
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td>${item.culture_name ? escapeHtml(item.culture_name) : emptyValueHtml()}</td>
-                <td>${formatWeight(item.quantity_kg)}</td>
-                <td>${item.price_per_kg_uah.toFixed(2)}</td>
-            `;
-            itemsTbody.appendChild(row);
-        });
-    } else {
-        const row = document.createElement('tr');
-        row.innerHTML = '<td colspan="3" style="text-align: center; color: var(--text-secondary);">Позиції відсутні</td>';
-        itemsTbody.appendChild(row);
-    }
+function renderParcelBlock(parcel) {
+    const balance = parcel.cumulative_balance_uah > 0.01
+        ? `<span class="lease-parcel-debt">Борг: ${formatAmount(parcel.cumulative_balance_uah)} грн</span>`
+        : '<span class="status-badge success">Виплачено</span>';
 
-    // Баланс за поточний рік — показываем загрузку
-    const balanceEl = document.getElementById('view-contract-balance');
-    balanceEl.innerHTML = '<div class="contract-balance-loading">Завантаження…</div>';
-    
-    document.getElementById('contract-view-modal').classList.remove('hidden');
+    const tabs = parcel.periods.map(per => {
+        const active = cardActivePeriod[parcel.id] === per.id ? ' active' : '';
+        const debt = per.remaining_cash_uah > 0.01 ? ' lease-period-tab-debt' : '';
+        return `<button class="lease-period-tab${active}${debt}" data-tab-parcel="${parcel.id}" data-tab-period="${per.id}">${per.year}</button>`;
+    }).join('');
 
-    // Загружаем баланс асинхронно
-    try {
-        const response = await apiFetch(`/leases/contracts/${contract.id}/balance`);
-        if (!response.ok) throw new Error();
-        const balance = await response.json();
-        renderContractViewBalance(balance);
+    const activePeriod = parcel.periods.find(per => per.id === cardActivePeriod[parcel.id]);
+    const panel = activePeriod ? renderPeriodPanel(parcel, activePeriod)
+        : '<div class="grain-items-placeholder">Рік ще не відкрито. Натисніть «Відкрити рік».</div>';
 
-        // Оновлюємо статус у модалці за актуальним залишком/прострочкою.
-        const totalRemainingUah = (balance.items || []).reduce((acc, it) => acc + (parseFloat(it.remaining_cash_uah) || 0), 0);
-        const hasDebt = totalRemainingUah > 0.01;
-        if (balance.is_expired && hasDebt) {
-            setStatusBadge('<span class="status-badge danger">Не виплачено</span>');
-        } else if (balance.is_expired) {
-            setStatusBadge('<span class="status-badge warning">Завершений</span>');
-        } else if (contract.is_active) {
-            setStatusBadge('<span class="status-badge success">Активний</span>');
-        } else {
-            setStatusBadge('<span class="status-badge muted">Неактивний</span>');
-        }
-    } catch (e) {
-        console.error('Помилка завантаження балансу контракту', e);
-        balanceEl.innerHTML = '<div style="color:var(--text-secondary);font-size:13px;">Не вдалося завантажити баланс</div>';
-    }
-}
-
-function renderContractViewBalance(balance) {
-    const balanceEl = document.getElementById('view-contract-balance');
-    if (!balanceEl) return;
-
-    const fmtDate = (s) => {
-        const d = new Date(s);
-        return d.toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: 'numeric' });
-    };
-
-    const periodText = `${fmtDate(balance.period_start)} — ${fmtDate(balance.period_end)}`;
-    const expired = balance.is_expired;
-
-    let totalOwed = 0;
-    let totalPaidCash = 0;
-    balance.items.forEach(item => {
-        totalOwed += item.annual_quantity_kg * item.price_per_kg_uah;
-        totalPaidCash += item.paid_kg * item.price_per_kg_uah;
-    });
-    const totalRemaining = totalOwed - totalPaidCash;
-    const allDone = balance.items.every(item => item.remaining_kg <= 0);
-
-    let html = `
-        <div class="contract-balance-section">
-            <div class="contract-balance-period">${periodText}${expired ? ' <span class="status-badge warning" style="margin-left:8px;">Завершений</span>' : ''}</div>
-            <div class="contract-balance-items">
-    `;
-
-    balance.items.forEach(item => {
-        const pct = item.annual_quantity_kg > 0
-            ? Math.round((item.paid_kg / item.annual_quantity_kg) * 100) : 0;
-        const done = item.remaining_kg <= 0;
-
-        html += `
-            <div class="balance-item${done ? ' balance-item-done' : ''}">
-                <div class="balance-item-header">
-                    <span class="balance-culture-name">${item.culture_name}</span>
-                    <span class="balance-culture-stats">${formatWeight(item.paid_kg)} / ${formatWeight(item.annual_quantity_kg)} кг</span>
-                </div>
-                <div class="balance-bar">
-                    <div class="balance-bar-fill${done ? ' balance-bar-done' : ''}" style="width: ${Math.min(pct, 100)}%"></div>
-                </div>
-                <div class="balance-item-footer">
-                    ${done
-                        ? '<span style="color:var(--primary)">✓ Повністю виплачено</span>'
-                        : `Залишок: <strong>${formatWeight(item.remaining_kg)} кг</strong> (${formatWeight(item.remaining_cash_uah)} грн)`
-                    }
-                </div>
+    return `
+    <div class="lease-parcel-card" data-parcel="${parcel.id}">
+        <div class="lease-parcel-head">
+            <div class="lease-parcel-title">
+                <strong>${formatAmount(parcel.area_ha)} га</strong>
+                ${parcel.label ? `<span class="lease-parcel-label">${escapeHtml(parcel.label)}</span>` : ''}
+                ${TERMS_BADGE[parcel.payment_terms] || ''}
+                ${parcel.is_active ? '' : '<span class="status-badge muted">Неактивна</span>'}
             </div>
-        `;
+            <div class="lease-parcel-balance">${balance}</div>
+        </div>
+        <div class="lease-parcel-actions">
+            <button class="btn btn-primary btn-small" data-open-period="${parcel.id}">+ Відкрити рік</button>
+            <button class="btn btn-secondary btn-small" data-add-payment="${parcel.id}">Додати виплату</button>
+            <button class="btn-icon btn-icon-secondary" data-edit-parcel="${parcel.id}" title="Редагувати ділянку">${ICONS.edit}</button>
+            <button class="btn-icon btn-icon-danger" data-delete-parcel="${parcel.id}" title="Видалити ділянку">${ICONS.delete}</button>
+        </div>
+        ${parcel.periods.length ? `<div class="lease-period-tabs">${tabs}</div>` : ''}
+        <div class="lease-period-panel">${panel}</div>
+    </div>`;
+}
+
+function renderPeriodPanel(parcel, period) {
+    let html = '';
+    // Зернова частина
+    if ((parcel.payment_terms === 'grain' || parcel.payment_terms === 'grain_cash') && period.grain_items.length) {
+        html += `<div class="lease-table-scroll"><table class="data-table lease-period-table"><thead><tr>
+            <th>Культура</th><th>Зобов'язання</th><th>Сплачено</th><th>Залишок</th>
+            <th>Поточна ціна</th><th>Залишок, грн</th></tr></thead><tbody>`;
+        period.grain_items.forEach(gi => {
+            const done = gi.remaining_kg <= 0.01;
+            html += `<tr${done ? ' class="balance-item-done"' : ''}>
+                <td>${escapeHtml(gi.culture_name || '-')}</td>
+                <td>${formatWeight(gi.quantity_kg)} кг</td>
+                <td>${formatWeight(gi.paid_kg)} кг</td>
+                <td><strong>${formatWeight(gi.remaining_kg)} кг</strong></td>
+                <td>${formatAmount(gi.current_price_per_kg_uah)} грн/кг</td>
+                <td>${formatAmount(gi.remaining_cash_uah)} грн</td>
+            </tr>`;
+        });
+        html += '</tbody></table></div>';
+    }
+    // Грошова частина
+    if (parcel.payment_terms === 'cash' || parcel.payment_terms === 'grain_cash') {
+        const oblig = (period.cash_amount || 0);
+        html += `<div class="lease-cash-line">
+            Грошова частина: <strong>${formatAmount(period.cash_paid_uah)} / ${formatAmount(oblig * (period.cash_rate || 1))} грн</strong>
+            ${period.cash_currency && period.cash_currency !== 'UAH' ? `(${formatAmount(oblig)} ${period.cash_currency} × ${period.cash_rate})` : ''}
+            — залишок <strong>${formatAmount(period.cash_remaining_uah)} грн</strong>
+        </div>`;
+    }
+    // Разом по періоду
+    html += `<div class="lease-period-total">Залишок за ${period.year}: <strong>${formatAmount(period.remaining_cash_uah)} грн</strong>
+        <span class="lease-period-actions">
+            <button class="btn-icon btn-icon-secondary" data-edit-period="${period.id}" title="Редагувати рік">${ICONS.edit}</button>
+            <button class="btn-icon btn-icon-danger" data-delete-period="${period.id}" title="Видалити рік">${ICONS.delete}</button>
+        </span></div>`;
+
+    // Виплати за цей рік
+    const payments = cardPayments.filter(p => p.parcel_id === parcel.id && p.period_id === period.id);
+    if (payments.length) {
+        html += '<div class="lease-payments-list"><div class="lease-payments-title">Виплати:</div>';
+        payments.forEach(p => {
+            let sum;
+            if (p.payment_type === 'cash') {
+                sum = `${formatAmount(p.amount || 0)} ${p.currency || '₴'}`;
+                if (p.applies_to === 'grain') sum += ' → зерно';
+            } else {
+                sum = (p.grain_items || []).map(g => `${formatWeight(g.quantity_kg)} ${escapeHtml(g.culture_name || '')}`).join(', ');
+            }
+            const typeBadge = p.payment_type === 'grain'
+                ? '<span class="inline-badge grain">Зерном</span>'
+                : '<span class="inline-badge cash">Грошима</span>';
+            const cancelled = p.is_cancelled ? ' <span class="status-badge danger">Скасовано</span>' : '';
+            const cancelBtn = p.is_cancelled ? '' :
+                `<button class="btn-icon btn-icon-danger" data-cancel-payment="${p.id}" title="Скасувати">${ICONS.cancel}</button>`;
+            html += `<div class="lease-payment-row${p.is_cancelled ? ' row-cancelled' : ''}">
+                <span>${formatDate(p.payment_date)}</span>
+                <span>${typeBadge}${cancelled}</span>
+                <span>${sum}</span>
+                <span class="lease-payment-actions">${cancelBtn}</span>
+            </div>`;
+        });
+        html += '</div>';
+    }
+    return html;
+}
+
+function attachCardHandlers() {
+    const container = document.getElementById('card-parcels');
+    if (!container) return;
+    container.querySelectorAll('.lease-period-tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+            cardActivePeriod[parseInt(btn.dataset.tabParcel)] = parseInt(btn.dataset.tabPeriod);
+            const landlord = landlordsCache.find(l => l.id === cardLandlordId);
+            renderLandlordCard(landlord);
+        });
     });
-
-    html += '</div>';
-
-    // Итого
-    if (allDone) {
-        html += `<div class="contract-balance-total contract-balance-done">✓ Усі виплати за цей період здійснено</div>`;
-    } else {
-        html += `<div class="contract-balance-total">Загалом залишок: <strong>${formatWeight(totalRemaining)} грн</strong></div>`;
-    }
-
-    html += '</div>';
-    balanceEl.innerHTML = html;
+    container.querySelectorAll('[data-open-period]').forEach(btn =>
+        btn.addEventListener('click', () => openPeriodModal(parseInt(btn.dataset.openPeriod))));
+    container.querySelectorAll('[data-add-payment]').forEach(btn =>
+        btn.addEventListener('click', () => {
+            const parcelId = parseInt(btn.dataset.addPayment);
+            openPaymentAddModal(cardLandlordId, parcelId, cardActivePeriod[parcelId]);
+        }));
+    container.querySelectorAll('[data-edit-parcel]').forEach(btn =>
+        btn.addEventListener('click', () => {
+            const p = cardParcels.find(x => x.id === parseInt(btn.dataset.editParcel));
+            if (p) openParcelEditModal(p);
+        }));
+    container.querySelectorAll('[data-delete-parcel]').forEach(btn =>
+        btn.addEventListener('click', () => {
+            const p = cardParcels.find(x => x.id === parseInt(btn.dataset.deleteParcel));
+            if (p) deleteParcel(p);
+        }));
+    container.querySelectorAll('[data-edit-period]').forEach(btn =>
+        btn.addEventListener('click', () => openPeriodEditModal(parseInt(btn.dataset.editPeriod))));
+    container.querySelectorAll('[data-delete-period]').forEach(btn =>
+        btn.addEventListener('click', () => deletePeriod(parseInt(btn.dataset.deletePeriod))));
+    container.querySelectorAll('[data-cancel-payment]').forEach(btn =>
+        btn.addEventListener('click', () => cancelPayment(parseInt(btn.dataset.cancelPayment))));
 }
 
-function initContractViewModal() {
-    const modal = document.getElementById('contract-view-modal');
-    const closeBtn = document.getElementById('contract-view-close');
-    const closeBtnBottom = document.getElementById('contract-view-close-btn');
-    const overlay = modal?.querySelector('.modal-overlay');
-    
-    if (!modal || !closeBtn || !closeBtnBottom || !overlay) {
-        return;
+function initLandlordCardModal() {
+    const modal = document.getElementById('landlord-card-modal');
+    if (!modal) return;
+    const close = () => { modal.classList.add('hidden'); cardLandlordId = null; };
+    document.getElementById('card-modal-close')?.addEventListener('click', close);
+    document.getElementById('card-modal-close-btn')?.addEventListener('click', close);
+    modal.querySelector('.modal-overlay')?.addEventListener('click', close);
+    document.getElementById('card-add-parcel-btn')?.addEventListener('click', () => openContractCreateModal(cardLandlordId));
+}
+
+// ═══════════════ Роки (periods) ═══════════════
+
+let periodParcelForModal = null;
+let editingPeriodId = null;
+
+function findParcel(parcelId) {
+    return cardParcels.find(p => p.id === parcelId) || parcelsCache.find(p => p.id === parcelId);
+}
+
+function openPeriodModal(parcelId) {
+    editingPeriodId = null;
+    const parcel = findParcel(parcelId);
+    if (!parcel) return;
+    periodParcelForModal = parcel;
+    document.getElementById('period-modal-title').textContent = 'Відкрити рік';
+    const form = document.getElementById('period-form');
+    if (form) { clearFormValidationState(form, 'period-message'); form.reset(); }
+    document.getElementById('period-parcel-id').value = parcelId;
+    const years = parcel.periods.map(p => p.year);
+    const nextYear = years.length ? Math.max(...years) + 1 : new Date(parcel.start_date).getFullYear();
+    document.getElementById('period-year').value = nextYear;
+    document.getElementById('period-year').disabled = false;
+    // Копія минулого року: ті самі культури/кг та сума; ціна — поточна ринкова
+    const latest = parcel.periods.length ? parcel.periods[parcel.periods.length - 1] : null;
+    const prefill = latest ? {
+        grain_items: (latest.grain_items || []).map(gi => ({
+            culture_id: gi.culture_id, quantity_kg: gi.quantity_kg, price_per_kg_uah: getCulturePrice(gi.culture_id)
+        })),
+        cash_amount: latest.cash_amount,
+        cash_currency: latest.cash_currency,
+        cash_rate: latest.cash_rate,
+    } : null;
+    leaseSetupYear('period', parcel.payment_terms, prefill);
+    document.getElementById('period-modal').classList.remove('hidden');
+    setTimeout(() => {
+        const c = document.getElementById('period-cash-currency');
+        if (c && typeof initCustomSelects === 'function') initCustomSelects(c);
+    }, 60);
+}
+
+function openPeriodEditModal(periodId) {
+    let parcel = null, period = null;
+    for (const p of cardParcels) {
+        const per = p.periods.find(x => x.id === periodId);
+        if (per) { parcel = p; period = per; break; }
     }
-    
-    const closeModal = () => {
+    if (!parcel || !period) return;
+    editingPeriodId = periodId;
+    periodParcelForModal = parcel;
+    document.getElementById('period-modal-title').textContent = `Рік ${period.year}`;
+    const form = document.getElementById('period-form');
+    if (form) clearFormValidationState(form, 'period-message');
+    document.getElementById('period-parcel-id').value = parcel.id;
+    document.getElementById('period-year').value = period.year;
+    document.getElementById('period-year').disabled = true;
+    leaseSetupYear('period', parcel.payment_terms, period);
+    document.getElementById('period-modal').classList.remove('hidden');
+}
+
+function initPeriodModal() {
+    const modal = document.getElementById('period-modal');
+    const form = document.getElementById('period-form');
+    if (!modal || !form) return;
+    formBindInvalidHighlightClearing(form);
+
+    const close = () => {
+        clearFormValidationState(form, 'period-message');
         modal.classList.add('hidden');
+        document.getElementById('period-year').disabled = false;
+        editingPeriodId = null;
     };
-    
-    closeBtn.addEventListener('click', closeModal);
-    closeBtnBottom.addEventListener('click', closeModal);
-    overlay.addEventListener('click', closeModal);
+    document.getElementById('period-modal-close')?.addEventListener('click', close);
+    document.getElementById('period-modal-cancel')?.addEventListener('click', close);
+    modal.querySelector('.modal-overlay')?.addEventListener('click', close);
+    document.getElementById('period-add-grain')?.addEventListener('click', () =>
+        leaseAddGrainRow(document.getElementById('period-grain-tbody'), null));
+    document.getElementById('period-cash-currency')?.addEventListener('change', () => leaseToggleRate('period'));
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const parcelId = parseInt(document.getElementById('period-parcel-id').value);
+        const parcel = periodParcelForModal;
+        const data = leaseReadYear('period', parcel.payment_terms, form, 'period-message', true);
+        if (!data) return;
+        const note = document.getElementById('period-note').value.trim();
+        const body = JSON.stringify({ ...data, note: note || null });
+        let url, method;
+        if (editingPeriodId) {
+            url = `/leases/periods/${editingPeriodId}`; method = 'PATCH';
+        } else {
+            url = `/leases/parcels/${parcelId}/periods`; method = 'POST';
+        }
+        const response = await apiFetch(url, { method, body });
+        if (response.ok) {
+            showToast(editingPeriodId ? 'Рік оновлено' : 'Рік відкрито', 'success');
+            const newPeriod = await response.json();
+            close();
+            await refreshAfterMutation(['parcels', 'payments', 'landlords']);
+            cardActivePeriod[parcelId] = newPeriod.id;
+            if (cardLandlordId) await refreshLandlordCard();
+        } else {
+            const error = await response.json().catch(() => null);
+            setFormMessage('period-message', error?.detail || 'Помилка збереження', true);
+        }
+    });
 }
 
-function openContractDeleteModal(contract) {
-    deletingContractId = contract.id;
-    document.getElementById('contract-delete-field').textContent = contract.field_name;
-    document.getElementById('contract-delete-modal').classList.remove('hidden');
+async function deletePeriod(periodId) {
+    if (!confirm('Видалити цей рік? Дію не можна скасувати.')) return;
+    const response = await apiFetch(`/leases/periods/${periodId}`, { method: 'DELETE' });
+    if (response.ok) {
+        showToast('Рік видалено', 'success');
+        await refreshAfterMutation(['parcels', 'payments']);
+        if (cardLandlordId) await refreshLandlordCard();
+    } else {
+        const error = await response.json().catch(() => null);
+        showToast(error?.detail || 'Помилка видалення', 'error');
+    }
 }
 
-// ===== Payments management =====
-let paymentBalance = null;
+// ═══════════════ Виплати ═══════════════
 
 async function loadPayments() {
     const response = await apiFetch('/leases/payments');
-    if (!response.ok) {
-        console.error('Помилка завантаження виплат');
-        return;
-    }
+    if (!response.ok) { console.error('Помилка завантаження виплат'); return; }
     paymentsCache = await response.json();
     renderPaymentsTable();
 }
@@ -1101,13 +816,14 @@ function renderPaymentsTable() {
     const tableBody = document.querySelector('#payments-table tbody');
     if (!tableBody) return;
     tableBody.innerHTML = '';
-    const filterLandlord = document.getElementById('payments-filter-landlord')?.value || '';
-    const filterType = document.getElementById('payments-filter-type')?.value || '';
-    const filterStatus = document.getElementById('payments-filter-status')?.value || '';
-    const showCancelled = filterStatus === 'all';
+    const fLandlord = document.getElementById('payments-filter-landlord')?.value || '';
+    const fType = document.getElementById('payments-filter-type')?.value || '';
+    const fStatus = document.getElementById('payments-filter-status')?.value || '';
+    const showCancelled = fStatus === 'all';
+    const landlordName = landlordsCache.find(l => String(l.id) === fLandlord)?.full_name;
     const filtered = paymentsCache.filter(p => {
-        if (filterLandlord && p.landlord_full_name !== landlordsCache.find(l => String(l.id) === filterLandlord)?.full_name) return false;
-        if (filterType && p.payment_type !== filterType) return false;
+        if (fLandlord && p.landlord_full_name !== landlordName) return false;
+        if (fType && p.payment_type !== fType) return false;
         if (!showCancelled && p.is_cancelled) return false;
         return true;
     });
@@ -1117,39 +833,29 @@ function renderPaymentsTable() {
     }
     filtered.forEach(payment => {
         const row = document.createElement('tr');
-        if (payment.is_cancelled) {
-            row.classList.add('row-cancelled');
-        }
+        if (payment.is_cancelled) row.classList.add('row-cancelled');
         let sumText = emptyValueHtml();
-        if (payment.grain_items && payment.grain_items.length > 0) {
-            const grainParts = payment.grain_items.map(item =>
-                `<span class="inline-badge grain">${formatWeight(item.quantity_kg)} ${item.culture_name ? escapeHtml(item.culture_name) : emptyValueHtml()}</span>`
-            ).join(' ');
-            if (payment.payment_type === 'cash') {
-                sumText = `<strong>${formatAmount(payment.amount || 0)} ${payment.currency || '₴'}</strong> ${grainParts}`;
-            } else {
-                sumText = grainParts;
-            }
-        } else if (payment.payment_type === 'cash') {
+        if (payment.payment_type === 'cash') {
             sumText = `<strong>${formatAmount(payment.amount || 0)} ${payment.currency || '₴'}</strong>`;
+            if (payment.applies_to === 'grain') sumText += ' <span class="inline-badge grain">в зерно</span>';
+        } else if (payment.grain_items && payment.grain_items.length) {
+            sumText = payment.grain_items.map(g =>
+                `<span class="inline-badge grain">${formatWeight(g.quantity_kg)} ${escapeHtml(g.culture_name || '')}</span>`
+            ).join(' ');
         }
-
         const typeBadge = payment.payment_type === 'grain'
             ? '<span class="inline-badge grain">Зерном</span>'
             : '<span class="inline-badge cash">Грошима</span>';
-
-        const statusBadge = payment.is_cancelled
-            ? ' <span class="status-badge danger">Скасовано</span>'
-            : '';
-
-        const cancelBtn = payment.is_cancelled
-            ? ''
-            : `<button class="btn-icon btn-icon-danger" onclick="cancelPayment(${payment.id})" title="Скасувати виплату">${ICONS.cancel}</button>`;
-
+        const statusBadge = payment.is_cancelled ? ' <span class="status-badge danger">Скасовано</span>' : '';
+        const parcelText = payment.area_ha != null
+            ? `${formatAmount(payment.area_ha)} га${payment.label ? ' · ' + escapeHtml(payment.label) : ''}${payment.period_year ? ' · ' + payment.period_year : ''}`
+            : emptyValueHtml();
+        const cancelBtn = payment.is_cancelled ? '' :
+            `<button class="btn-icon btn-icon-danger" onclick="cancelPayment(${payment.id})" title="Скасувати виплату">${ICONS.cancel}</button>`;
         row.innerHTML = `
             <td>${formatDate(payment.payment_date)}</td>
             <td><strong>${payment.landlord_full_name ? escapeHtml(payment.landlord_full_name) : emptyValueHtml()}</strong></td>
-            <td>${payment.contract_field_name ? escapeHtml(payment.contract_field_name) : emptyValueHtml()}</td>
+            <td>${parcelText}</td>
             <td>${typeBadge}${statusBadge}</td>
             <td>${sumText}</td>
             <td class="actions-cell">${cancelBtn}</td>
@@ -1159,71 +865,50 @@ function renderPaymentsTable() {
 }
 
 function cancelPayment(paymentId) {
-    const payment = paymentsCache.find(p => p.id === paymentId);
+    const payment = (cardPayments.find(p => p.id === paymentId)) || paymentsCache.find(p => p.id === paymentId);
     if (!payment) return;
-
     cancellingPaymentId = paymentId;
-
     const info = document.getElementById('payment-cancel-info');
     if (info) {
         let details = `${formatDate(payment.payment_date)} — ${payment.landlord_full_name || '?'}`;
         if (payment.payment_type === 'grain' && payment.grain_items?.length) {
-            const parts = payment.grain_items.map(i => `${formatWeight(i.quantity_kg)} ${i.culture_name || ''}`).join(', ');
-            details += ` (${parts})`;
+            details += ` (${payment.grain_items.map(i => `${formatWeight(i.quantity_kg)} ${i.culture_name || ''}`).join(', ')})`;
         } else if (payment.payment_type === 'cash') {
-            details += ` (${payment.amount?.toFixed(2) || 0} ${payment.currency || 'грн'})`;
+            details += ` (${formatAmount(payment.amount || 0)} ${payment.currency || 'грн'})`;
         }
         info.textContent = details;
     }
-
     document.getElementById('payment-cancel-modal').classList.remove('hidden');
 }
 
 function initPaymentCancelModal() {
     const modal = document.getElementById('payment-cancel-modal');
-    const closeBtn = document.getElementById('payment-cancel-close');
-    const cancelBtn = document.getElementById('payment-cancel-cancel');
     const confirmBtn = document.getElementById('payment-cancel-confirm');
-    const overlay = modal?.querySelector('.modal-overlay');
     if (!modal || !confirmBtn) return;
-
-    const closeModal = () => {
-        modal.classList.add('hidden');
-        cancellingPaymentId = null;
-    };
-
-    closeBtn?.addEventListener('click', closeModal);
-    cancelBtn?.addEventListener('click', closeModal);
-    overlay?.addEventListener('click', closeModal);
+    const close = () => { modal.classList.add('hidden'); cancellingPaymentId = null; };
+    document.getElementById('payment-cancel-close')?.addEventListener('click', close);
+    document.getElementById('payment-cancel-cancel')?.addEventListener('click', close);
+    modal.querySelector('.modal-overlay')?.addEventListener('click', close);
 
     confirmBtn.addEventListener('click', async () => {
         if (!cancellingPaymentId) return;
         confirmBtn.disabled = true;
         confirmBtn.textContent = 'Скасування...';
-
         try {
-            const response = await apiFetch(`/leases/payments/${cancellingPaymentId}/cancel`, {
-                method: 'POST'
-            });
-
+            const response = await apiFetch(`/leases/payments/${cancellingPaymentId}/cancel`, { method: 'POST' });
             if (response.ok) {
                 const cancelled = await response.json();
                 showToast('Виплату скасовано', 'success');
-                closeModal();
-                const scopes = ['payments', 'contracts', 'dashboard'];
-                if (cancelled.payment_type === 'grain') {
-                    scopes.push('stock', 'stockAdjustments');
-                } else {
-                    scopes.push('cash', 'cashTransactions');
-                }
+                close();
+                const scopes = ['payments', 'parcels', 'dashboard'];
+                if (cancelled.payment_type === 'grain') scopes.push('stock', 'stockAdjustments');
+                else scopes.push('cash', 'cashTransactions');
                 await refreshAfterMutation(scopes);
+                if (cardLandlordId) await refreshLandlordCard();
             } else {
                 const error = await response.json().catch(() => null);
                 showToast(error?.detail || 'Не вдалося скасувати виплату', 'error');
             }
-        } catch (err) {
-            console.error('Помилка скасування виплати:', err);
-            showToast('Помилка скасування виплати', 'error');
         } finally {
             confirmBtn.disabled = false;
             confirmBtn.textContent = 'Так, скасувати';
@@ -1232,571 +917,436 @@ function initPaymentCancelModal() {
 }
 
 function initPayments() {
-    const addBtn = document.getElementById('payment-add-btn');
-    if (addBtn) {
-        addBtn.addEventListener('click', () => openPaymentAddModal());
-    }
+    document.getElementById('payment-add-btn')?.addEventListener('click', () => openPaymentAddModal());
     initPaymentModal();
     initPaymentCancelModal();
     initPaymentsFilter();
     initPaymentsReportModal();
 }
 
-function openPaymentAddModal() {
-    const paymentForm = document.getElementById('payment-form');
-    if (paymentForm) {
-        clearFormValidationState(paymentForm, 'payment-message');
-        paymentForm.reset();
-    }
-    const psel = document.getElementById('payment-landlord-select');
-    if (psel) {
-        if (typeof populateLandlordSelect === 'function') populateLandlordSelect('payment-landlord-select');
-        psel.value = '';
-        if (typeof refreshCustomSelect === 'function') refreshCustomSelect(psel);
-    }
-    document.getElementById('payment-landlord-id').value = '';
-    const contractSel = document.getElementById('payment-contract');
-    if (contractSel) {
-        contractSel.value = '';
-        contractSel.disabled = true;
-        contractSel.innerHTML = '<option value="">Спочатку оберіть орендодавця</option>';
-    }
-    document.getElementById('payment-type').value = 'grain';
-    document.getElementById('payment-currency').value = 'UAH';
-    document.getElementById('payment-rate').value = '';
-    document.getElementById('payment-rate-field').classList.add('hidden');
-    paymentBalance = null;
-    document.getElementById('payment-balance-card').classList.add('hidden');
-    document.getElementById('payment-grain-items-list').innerHTML =
-        '<div class="grain-items-placeholder">Оберіть контракт</div>';
-    updatePaymentFields();
+// Стан платіжної модалки
+let payParcels = [];          // ділянки обраного орендодавця
+let payPeriodBalance = null;  // баланс обраного періоду
+let payParcel = null;         // обрана ділянка
 
+function openPaymentAddModal(presetLandlordId = null, presetParcelId = null, presetPeriodId = null) {
+    const form = document.getElementById('payment-form');
+    if (form) { clearFormValidationState(form, 'payment-message'); form.reset(); }
+    payParcels = []; payPeriodBalance = null; payParcel = null;
+
+    const lsel = document.getElementById('payment-landlord-select');
+    if (lsel) {
+        if (typeof populateLandlordSelect === 'function') populateLandlordSelect('payment-landlord-select');
+        lsel.value = presetLandlordId ? String(presetLandlordId) : '';
+        if (typeof refreshCustomSelect === 'function') refreshCustomSelect(lsel);
+    }
+    resetSelect('payment-parcel-select', 'Спочатку оберіть орендодавця');
+    resetSelect('payment-period-select', 'Спочатку оберіть ділянку');
+    document.getElementById('payment-balance-card').classList.add('hidden');
+    document.getElementById('payment-grain-fields').classList.add('hidden');
+    document.getElementById('payment-cash-fields').classList.add('hidden');
+    document.getElementById('payment-grain-items-list').innerHTML = '';
     document.getElementById('payment-modal').classList.remove('hidden');
 
-    setTimeout(() => {
-        const contractSelect = document.getElementById('payment-contract');
-        const typeSelect = document.getElementById('payment-type');
-        if (contractSelect && typeof initCustomSelects === 'function') initCustomSelects(contractSelect);
-        if (typeSelect && typeof initCustomSelects === 'function') initCustomSelects(typeSelect);
-    }, 100);
+    setTimeout(async () => {
+        ['payment-parcel-select', 'payment-period-select', 'payment-cash-culture', 'payment-currency']
+            .forEach(id => { const el = document.getElementById(id); if (el && typeof initCustomSelects === 'function') initCustomSelects(el); });
+        if (presetLandlordId) {
+            await onPaymentLandlordChange(presetLandlordId);
+            if (presetParcelId) {
+                const psel = document.getElementById('payment-parcel-select');
+                psel.value = String(presetParcelId);
+                if (typeof refreshCustomSelect === 'function') refreshCustomSelect(psel);
+                await onPaymentParcelChange(presetParcelId, !presetPeriodId);
+                if (presetPeriodId) {
+                    const persel = document.getElementById('payment-period-select');
+                    persel.value = String(presetPeriodId);
+                    if (typeof refreshCustomSelect === 'function') refreshCustomSelect(persel);
+                    await onPaymentPeriodChange();
+                }
+            }
+        }
+    }, 80);
 }
 
-let paymentLandlordContractsCache = [];
-
-function updatePaymentContractSelectForLandlord() {
-    const select = document.getElementById('payment-contract');
-    if (!select) return;
-    if (!paymentLandlordContractsCache.length) {
-        select.disabled = true;
-        select.innerHTML = '<option value="">Немає контрактів з боргом</option>';
-        if (typeof refreshCustomSelect === 'function') refreshCustomSelect(select);
-        return;
-    }
-    select.disabled = false;
-    select.innerHTML = '<option value="">Оберіть контракт</option>' +
-        paymentLandlordContractsCache
-            .map(c => {
-                const inactive = !c.is_active ? ' [старий]' : '';
-                const debt = (c.remaining_cash_uah && c.remaining_cash_uah > 0.01)
-                    ? ` — борг ${formatAmount(c.remaining_cash_uah)} грн`
-                    : '';
-                return `<option value="${c.id}">${c.landlord_full_name} — ${c.field_name}${inactive}${debt}</option>`;
-            })
-            .join('');
-    if (typeof refreshCustomSelect === 'function') refreshCustomSelect(select);
+function resetSelect(id, placeholder) {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    sel.innerHTML = `<option value="">${placeholder}</option>`;
+    sel.disabled = true;
+    if (typeof refreshCustomSelect === 'function') refreshCustomSelect(sel);
 }
 
 async function onPaymentLandlordChange(landlordId) {
-    paymentLandlordContractsCache = [];
-    const contractSel = document.getElementById('payment-contract');
-    if (contractSel) {
-        contractSel.value = '';
-        contractSel.disabled = true;
-        contractSel.innerHTML = '<option value="">Завантаження…</option>';
-        if (typeof refreshCustomSelect === 'function') refreshCustomSelect(contractSel);
-    }
-    paymentBalance = null;
+    payParcels = []; payParcel = null; payPeriodBalance = null;
+    resetSelect('payment-parcel-select', 'Завантаження…');
+    resetSelect('payment-period-select', 'Спочатку оберіть ділянку');
     document.getElementById('payment-balance-card').classList.add('hidden');
-    document.getElementById('payment-grain-items-list').innerHTML =
-        '<div class="grain-items-placeholder">Оберіть контракт</div>';
-    if (!landlordId) {
-        if (contractSel) {
-            contractSel.innerHTML = '<option value="">Спочатку оберіть орендодавця</option>';
-            if (typeof refreshCustomSelect === 'function') refreshCustomSelect(contractSel);
-        }
+    if (!landlordId) { resetSelect('payment-parcel-select', 'Спочатку оберіть орендодавця'); return; }
+    try {
+        const resp = await apiFetch(`/leases/parcels?landlord_id=${encodeURIComponent(landlordId)}`);
+        payParcels = resp.ok ? await resp.json() : [];
+    } catch (e) { payParcels = []; }
+    const sel = document.getElementById('payment-parcel-select');
+    if (!payParcels.length) {
+        resetSelect('payment-parcel-select', 'Немає ділянок');
         return;
     }
+    sel.disabled = false;
+    sel.innerHTML = '<option value="">Оберіть ділянку</option>' + payParcels.map(p => {
+        const debt = p.cumulative_balance_uah > 0.01 ? ` — борг ${formatAmount(p.cumulative_balance_uah)} грн` : '';
+        return `<option value="${p.id}">${formatAmount(p.area_ha)} га${p.label ? ' · ' + escapeHtml(p.label) : ''} (${TERMS_LABEL[p.payment_terms]})${debt}</option>`;
+    }).join('');
+    if (typeof refreshCustomSelect === 'function') refreshCustomSelect(sel);
+}
 
-    try {
-        const resp = await apiFetch(`/leases/contracts?landlord_id=${encodeURIComponent(landlordId)}&due_only=true`);
-        if (!resp.ok) throw new Error();
-        paymentLandlordContractsCache = await resp.json();
-    } catch (e) {
-        paymentLandlordContractsCache = [];
+async function onPaymentParcelChange(parcelId, autoPick = true) {
+    payParcel = payParcels.find(p => p.id === parseInt(parcelId)) || null;
+    payPeriodBalance = null;
+    document.getElementById('payment-balance-card').classList.add('hidden');
+    const persel = document.getElementById('payment-period-select');
+    document.getElementById('payment-grain-fields').classList.add('hidden');
+    document.getElementById('payment-cash-fields').classList.add('hidden');
+    if (!payParcel || !payParcel.periods.length) {
+        resetSelect('payment-period-select', 'Немає відкритих років');
+        return;
     }
-    updatePaymentContractSelectForLandlord();
+    persel.disabled = false;
+    persel.innerHTML = '<option value="">Оберіть рік</option>' + payParcel.periods.map(per => {
+        const debt = per.remaining_cash_uah > 0.01 ? ` — залишок ${formatAmount(per.remaining_cash_uah)} грн` : ' — виплачено';
+        return `<option value="${per.id}">${per.year}${debt}</option>`;
+    }).join('');
+    if (typeof refreshCustomSelect === 'function') refreshCustomSelect(persel);
+    // Авто-вибір року: один період → він; кілька → останній із боргом (інакше останній).
+    if (autoPick) {
+        const withDebt = payParcel.periods.filter(p => p.remaining_cash_uah > 0.01);
+        const target = withDebt.length ? withDebt[withDebt.length - 1] : payParcel.periods[payParcel.periods.length - 1];
+        persel.value = String(target.id);
+        if (typeof refreshCustomSelect === 'function') refreshCustomSelect(persel);
+        await onPaymentPeriodChange();
+    }
 }
 
-function initPaymentLandlordSearch() {
-    const select = document.getElementById('payment-landlord-select');
-    const idInput = document.getElementById('payment-landlord-id');
-    if (!select || !idInput) return;
-
-    if (typeof populateLandlordSelect === 'function') populateLandlordSelect('payment-landlord-select');
-
-    select.addEventListener('change', async () => {
-        const id = select.value;
-        idInput.value = id || '';
-        await onPaymentLandlordChange(id || '');
-    });
+// Режим грошової виплати: для «лише зерно» гроші йдуть у рахунок зерна (потрібна культура),
+// для cash / grain_cash — у грошову частину.
+function paymentMoneyMode() {
+    return (payParcel && payParcel.payment_terms === 'grain') ? 'grain' : 'cash';
 }
 
-async function onPaymentContractChange() {
-    const contractId = document.getElementById('payment-contract').value;
+// Показ блоків «Зерном» / «Грошима» одночасно (без перемикача типу).
+function setupPaymentSections() {
+    const grainFields = document.getElementById('payment-grain-fields');
+    const cashFields = document.getElementById('payment-cash-fields');
+    const cultureField = document.getElementById('payment-cash-culture-field');
+    const cashLabel = document.getElementById('payment-cash-label');
+    if (!payParcel) { grainFields.classList.add('hidden'); cashFields.classList.add('hidden'); return; }
+    const terms = payParcel.payment_terms;
+    const showGrain = (terms === 'grain' || terms === 'grain_cash');
+    grainFields.classList.toggle('hidden', !showGrain);
+    cashFields.classList.remove('hidden');   // гроші можна завжди
+    const moneyToGrain = (terms === 'grain');
+    cultureField.classList.toggle('hidden', !moneyToGrain);
+    if (cashLabel) cashLabel.textContent = moneyToGrain ? 'Виплата грошима (в рахунок зерна)' : 'Виплата грошима';
+    updatePaymentCashEquivalent();
+}
+
+async function onPaymentPeriodChange() {
+    const periodId = document.getElementById('payment-period-select').value;
     const balanceCard = document.getElementById('payment-balance-card');
-    const grainList = document.getElementById('payment-grain-items-list');
-
-    if (!contractId) {
+    if (!periodId) {
         balanceCard.classList.add('hidden');
-        paymentBalance = null;
-        if (grainList) grainList.innerHTML =
-            '<div class="grain-items-placeholder">Оберіть контракт</div>';
+        document.getElementById('payment-grain-fields').classList.add('hidden');
+        document.getElementById('payment-cash-fields').classList.add('hidden');
+        payPeriodBalance = null;
         return;
     }
-
     try {
-        const response = await apiFetch(`/leases/contracts/${contractId}/balance`);
-        if (!response.ok) throw new Error();
-        paymentBalance = await response.json();
+        const resp = await apiFetch(`/leases/periods/${periodId}/balance`);
+        if (!resp.ok) throw new Error();
+        payPeriodBalance = await resp.json();
         renderPaymentBalance();
         populatePaymentGrainItems();
         populatePaymentCashCulture();
         balanceCard.classList.remove('hidden');
+        setupPaymentSections();
     } catch (e) {
-        console.error('Помилка завантаження залишку', e);
-        paymentBalance = null;
+        payPeriodBalance = null;
         balanceCard.classList.add('hidden');
     }
 }
 
 function renderPaymentBalance() {
-    if (!paymentBalance) return;
-    const periodEl = document.getElementById('payment-balance-period');
+    if (!payPeriodBalance) return;
+    document.getElementById('payment-balance-period').textContent = `Рік ${payPeriodBalance.year}`;
     const itemsEl = document.getElementById('payment-balance-items');
-
-    const fmtDate = (s) => {
-        const d = new Date(s);
-        return d.toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: 'numeric' });
-    };
-    periodEl.textContent = `${fmtDate(paymentBalance.period_start)} — ${fmtDate(paymentBalance.period_end)}`;
-
-    itemsEl.innerHTML = paymentBalance.items.map(item => {
-        const pct = item.annual_quantity_kg > 0
-            ? Math.round((item.paid_kg / item.annual_quantity_kg) * 100) : 0;
-        const allPaid = item.remaining_kg <= 0;
-        return `
-            <div class="balance-item${allPaid ? ' balance-item-done' : ''}">
-                <div class="balance-item-header">
-                    <span class="balance-culture-name">${item.culture_name}</span>
-                    <span class="balance-culture-stats">${item.paid_kg} / ${item.annual_quantity_kg} кг</span>
-                </div>
-                <div class="balance-bar">
-                    <div class="balance-bar-fill${allPaid ? ' balance-bar-done' : ''}" style="width: ${Math.min(pct, 100)}%"></div>
-                </div>
-                <div class="balance-item-footer">
-                    ${allPaid
-                        ? '<span style="color:var(--primary)">✓ Повністю виплачено</span>'
-                        : `Залишок: <strong>${item.remaining_kg} кг</strong> (${item.remaining_cash_uah} грн)`
-                    }
-                </div>
+    let html = (payPeriodBalance.grain_items || []).map(item => {
+        const pct = item.quantity_kg > 0 ? Math.round((item.paid_kg / item.quantity_kg) * 100) : 0;
+        const done = item.remaining_kg <= 0.01;
+        return `<div class="balance-item${done ? ' balance-item-done' : ''}">
+            <div class="balance-item-header">
+                <span class="balance-culture-name">${escapeHtml(item.culture_name || '')}</span>
+                <span class="balance-culture-stats">${formatWeight(item.paid_kg)} / ${formatWeight(item.quantity_kg)} кг</span>
             </div>
-        `;
+            <div class="balance-bar"><div class="balance-bar-fill${done ? ' balance-bar-done' : ''}" style="width:${Math.min(pct, 100)}%"></div></div>
+            <div class="balance-item-footer">${done ? '<span style="color:var(--primary)">✓ Виплачено</span>'
+                : `Залишок: <strong>${formatWeight(item.remaining_kg)} кг</strong> (${formatAmount(item.remaining_cash_uah)} грн)`}</div>
+        </div>`;
     }).join('');
+    const cashPaid = payPeriodBalance.cash_paid_uah || 0;
+    const cashRem = payPeriodBalance.cash_remaining_uah || 0;
+    const cashOblig = cashPaid + cashRem;
+    if (cashOblig > 0.01) {
+        const pct = cashOblig > 0 ? Math.round((cashPaid / cashOblig) * 100) : 0;
+        const done = cashRem <= 0.01;
+        html += `<div class="balance-item${done ? ' balance-item-done' : ''}">
+            <div class="balance-item-header">
+                <span class="balance-culture-name">Гроші</span>
+                <span class="balance-culture-stats">${formatAmount(cashPaid)} / ${formatAmount(cashOblig)} грн</span>
+            </div>
+            <div class="balance-bar"><div class="balance-bar-fill${done ? ' balance-bar-done' : ''}" style="width:${Math.min(pct, 100)}%"></div></div>
+            <div class="balance-item-footer">${done ? '<span style="color:var(--primary)">✓ Виплачено</span>' : `Залишок: <strong>${formatAmount(cashRem)} грн</strong>`}</div>
+        </div>`;
+    }
+    const total = payPeriodBalance.remaining_cash_uah || 0;
+    html += `<div class="payment-balance-total">${total > 0.01
+        ? `Разом залишок: <strong>${formatAmount(total)} грн</strong>`
+        : '<span style="color:var(--primary)">✓ Рік повністю виплачено</span>'}</div>`;
+    itemsEl.innerHTML = html;
 }
 
 function populatePaymentGrainItems() {
-    if (!paymentBalance) return;
+    if (!payPeriodBalance) return;
     const list = document.getElementById('payment-grain-items-list');
     if (!list) return;
-
-    const available = paymentBalance.items.filter(item => item.remaining_kg > 0);
-
-    if (available.length === 0) {
-        list.innerHTML = '<div class="grain-items-done">✓ Усе виплачено за цей період</div>';
+    const available = (payPeriodBalance.grain_items || []).filter(item => item.remaining_kg > 0);
+    if (!available.length) {
+        list.innerHTML = '<div class="grain-items-done">✓ Зерно за цей рік виплачено</div>';
         return;
     }
-
-    list.innerHTML = available.map(item => {
-        const pct = item.annual_quantity_kg > 0
-            ? Math.round((item.paid_kg / item.annual_quantity_kg) * 100) : 0;
-        return `
+    list.innerHTML = available.map(item => `
         <div class="grain-pay-card" data-culture-id="${item.culture_id}">
             <div class="grain-pay-header">
-                <span class="grain-pay-name">${item.culture_name}</span>
-                <span class="grain-pay-stats">${formatWeight(item.paid_kg)} / ${formatWeight(item.annual_quantity_kg)} кг</span>
-            </div>
-            <div class="grain-pay-bar">
-                <div class="grain-pay-bar-fill" style="width: ${Math.min(pct, 100)}%"></div>
+                <span class="grain-pay-name">${escapeHtml(item.culture_name || '')}</span>
+                <span class="grain-pay-stats">${formatWeight(item.paid_kg)} / ${formatWeight(item.quantity_kg)} кг</span>
             </div>
             <div class="grain-pay-input-row">
-                <input type="number" class="grain-item-quantity"
-                       min="0" max="${item.remaining_kg}" step="0.01"
-                       placeholder="0" data-max="${item.remaining_kg}">
+                <input type="number" class="grain-item-quantity" min="0" max="${item.remaining_kg}" step="0.01" placeholder="0" data-max="${item.remaining_kg}">
                 <span class="grain-pay-separator">із</span>
                 <span class="grain-pay-max">${formatWeight(item.remaining_kg)} кг</span>
             </div>
-        </div>`;
-    }).join('');
+        </div>`).join('');
 }
 
 function populatePaymentCashCulture() {
-    if (!paymentBalance) return;
+    if (!payPeriodBalance) return;
     const select = document.getElementById('payment-cash-culture');
     if (!select) return;
-
     select.innerHTML = '<option value="">Оберіть культуру</option>' +
-        paymentBalance.items
-            .filter(item => item.remaining_kg > 0)
-            .map(item => `<option value="${item.culture_id}"
-                data-remaining-kg="${item.remaining_kg}"
-                data-price="${item.price_per_kg_uah}"
-                data-max-cash="${item.remaining_cash_uah}">
-                ${item.culture_name} (залишок: ${item.remaining_kg} кг)
+        (payPeriodBalance.grain_items || []).filter(item => item.remaining_kg > 0).map(item =>
+            `<option value="${item.culture_id}" data-remaining-kg="${item.remaining_kg}" data-price="${item.current_price_per_kg_uah}" data-max-cash="${item.remaining_cash_uah}">
+                ${escapeHtml(item.culture_name || '')} (залишок: ${formatWeight(item.remaining_kg)} кг)
             </option>`).join('');
-
-    if (typeof initCustomSelects === 'function') {
-        setTimeout(() => initCustomSelects(select), 50);
-    }
+    if (typeof initCustomSelects === 'function') setTimeout(() => initCustomSelects(select), 30);
     updatePaymentCashEquivalent();
 }
 
 function updatePaymentCashEquivalent() {
-    const select = document.getElementById('payment-cash-culture');
-    const amountInput = document.getElementById('payment-amount');
+    const appliesTo = paymentMoneyMode();
     const equivEl = document.getElementById('payment-cash-equivalent');
     const uahEquivEl = document.getElementById('payment-uah-equiv');
+    const amountInput = document.getElementById('payment-amount');
     const currencySelect = document.getElementById('payment-currency');
     const rateInput = document.getElementById('payment-rate');
-    if (!select || !amountInput || !equivEl) return;
-
+    const select = document.getElementById('payment-cash-culture');
+    if (!amountInput) return;
     const currency = currencySelect ? currencySelect.value : 'UAH';
-    const opt = select.options[select.selectedIndex];
+    const rate = rateInput ? (parseFloat(rateInput.value) || 0) : 0;
+    const amount = parseFloat(amountInput.value) || 0;
 
-    // Инлайн эквивалент под полем суммы (для валюты)
     if (uahEquivEl) {
-        const rate = rateInput ? (parseFloat(rateInput.value) || 0) : 0;
-        const amount = parseFloat(amountInput.value) || 0;
         if (currency !== 'UAH' && rate > 0 && amount > 0) {
-            const uahTotal = amount * rate;
-            uahEquivEl.innerHTML = `= <strong>${formatWeight(uahTotal)} грн</strong>`;
+            uahEquivEl.innerHTML = `= <strong>${formatAmount(amount * rate)} грн</strong>`;
             uahEquivEl.classList.remove('hidden');
-        } else if (currency !== 'UAH' && rate > 0) {
-            uahEquivEl.innerHTML = `1 ${currency} = ${formatWeight(rate)} грн`;
-            uahEquivEl.classList.remove('hidden');
-        } else {
-            uahEquivEl.classList.add('hidden');
-        }
+        } else { uahEquivEl.classList.add('hidden'); }
     }
 
-    if (!opt || !opt.value) {
-        equivEl.innerHTML = '';
-        amountInput.max = '';
+    if (!equivEl) return;
+    if (appliesTo === 'cash') {
+        // гасимо грошову частину
+        const remaining = payPeriodBalance ? payPeriodBalance.cash_remaining_uah : 0;
+        const amountUah = currency === 'UAH' ? amount : amount * rate;
+        equivEl.innerHTML = amountUah > 0
+            ? `${formatAmount(amountUah)} грн з ${formatAmount(remaining)} грн залишку`
+            : `Залишок грошової частини: <strong>${formatAmount(remaining)} грн</strong>`;
         return;
     }
-
+    // гасимо зерновий борг грошима
+    const opt = select?.options[select.selectedIndex];
+    if (!opt || !opt.value) { equivEl.innerHTML = ''; return; }
     const remainingKg = parseFloat(opt.dataset.remainingKg);
     const price = parseFloat(opt.dataset.price);
     const maxCash = parseFloat(opt.dataset.maxCash);
-    const amount = parseFloat(amountInput.value) || 0;
-    const rate = rateInput ? (parseFloat(rateInput.value) || 0) : 0;
     const amountUah = currency === 'UAH' ? amount : amount * rate;
-
-    if (currency === 'UAH') {
-        amountInput.max = maxCash;
-    } else if (rate > 0) {
-        amountInput.max = (maxCash / rate).toFixed(2);
+    if (amountUah > 0 && price > 0) {
+        const equivKg = (amountUah / price).toFixed(2);
+        const over = parseFloat(equivKg) > remainingKg;
+        equivEl.innerHTML = `Еквівалент: <strong${over ? ' style="color:var(--danger)"' : ''}>${equivKg} кг</strong> з ${formatWeight(remainingKg)} кг (${formatAmount(price)} грн/кг)`;
     } else {
-        amountInput.removeAttribute('max');
-    }
-
-    if (currency === 'UAH') {
-        if (amount > 0 && price > 0) {
-            const equivKg = (amount / price).toFixed(2);
-            const overLimit = parseFloat(equivKg) > remainingKg;
-            equivEl.innerHTML = `Еквівалент: <strong${overLimit ? ' style="color:var(--danger)"' : ''}>${equivKg} кг</strong> з ${formatWeight(remainingKg)} кг залишку (${formatWeight(price)} грн/кг)`;
-        } else {
-            equivEl.innerHTML = `Максимум: <strong>${formatWeight(maxCash)} грн</strong> (${formatWeight(remainingKg)} кг × ${formatWeight(price)} грн/кг)`;
-        }
-    } else {
-        if (rate > 0 && amount > 0 && price > 0) {
-            const uahTotal = amount * rate;
-            const equivKg = (amountUah / price).toFixed(2);
-            const overLimit = parseFloat(equivKg) > remainingKg;
-            equivEl.innerHTML = `${formatWeight(uahTotal)} грн → <strong${overLimit ? ' style="color:var(--danger)"' : ''}>${equivKg} кг</strong> з ${formatWeight(remainingKg)} кг залишку`;
-        } else if (rate > 0) {
-            const maxForeign = (maxCash / rate).toFixed(2);
-            equivEl.innerHTML = `Максимум: <strong>${formatWeight(parseFloat(maxForeign))} ${currency}</strong> (${formatWeight(maxCash)} грн за курсом ${formatWeight(rate)})`;
-        } else {
-            equivEl.innerHTML = `<span style="color:var(--warning)">Вкажіть курс ${currency} до грн</span>`;
-        }
+        equivEl.innerHTML = `Максимум: <strong>${formatAmount(maxCash)} грн</strong> (${formatWeight(remainingKg)} кг × ${formatAmount(price)} грн/кг)`;
     }
 }
 
 function initPaymentModal() {
     const modal = document.getElementById('payment-modal');
     const form = document.getElementById('payment-form');
-    const closeBtn = document.getElementById('payment-modal-close');
-    const overlay = modal?.querySelector('.modal-overlay');
-    const paymentTypeSelect = document.getElementById('payment-type');
-    const contractSelect = document.getElementById('payment-contract');
-    const cashCultureSelect = document.getElementById('payment-cash-culture');
-    const cashAmountInput = document.getElementById('payment-amount');
-    const currencySelect = document.getElementById('payment-currency');
-    if (!modal || !form || !closeBtn || !overlay) return;
-
+    if (!modal || !form) return;
     formBindInvalidHighlightClearing(form);
+    const close = () => { clearFormValidationState(form, 'payment-message'); modal.classList.add('hidden'); };
+    document.getElementById('payment-modal-close')?.addEventListener('click', close);
+    modal.querySelector('.modal-overlay')?.addEventListener('click', close);
 
-    const closePaymentModal = () => {
-        clearFormValidationState(form, 'payment-message');
-        modal.classList.add('hidden');
-    };
-    closeBtn.addEventListener('click', closePaymentModal);
-    overlay.addEventListener('click', closePaymentModal);
+    document.getElementById('payment-landlord-select')?.addEventListener('change', (e) => {
+        document.getElementById('payment-landlord-id').value = e.target.value || '';
+        onPaymentLandlordChange(e.target.value || '');
+    });
+    document.getElementById('payment-parcel-select')?.addEventListener('change', (e) => onPaymentParcelChange(e.target.value));
+    document.getElementById('payment-period-select')?.addEventListener('change', onPaymentPeriodChange);
+    document.getElementById('payment-cash-culture')?.addEventListener('change', updatePaymentCashEquivalent);
+    document.getElementById('payment-amount')?.addEventListener('input', updatePaymentCashEquivalent);
+    document.getElementById('payment-rate')?.addEventListener('input', updatePaymentCashEquivalent);
 
-    initPaymentLandlordSearch();
-
-    // При выборе контракта — загрузить баланс
-    if (contractSelect) {
-        contractSelect.addEventListener('change', onPaymentContractChange);
-    }
-
-    if (paymentTypeSelect) {
-        paymentTypeSelect.addEventListener('change', updatePaymentFields);
-    }
-
-    // Обновлять эквивалент при изменении культуры/суммы/валюты
-    if (cashCultureSelect) {
-        cashCultureSelect.addEventListener('change', updatePaymentCashEquivalent);
-    }
-    if (cashAmountInput) {
-        cashAmountInput.addEventListener('input', updatePaymentCashEquivalent);
-    }
-    if (currencySelect) {
-        currencySelect.addEventListener('change', () => {
-            const rateField = document.getElementById('payment-rate-field');
-            const rateInput = document.getElementById('payment-rate');
-            if (currencySelect.value === 'UAH') {
-                rateField.classList.add('hidden');
-                rateInput.value = '';
-            } else {
-                rateField.classList.remove('hidden');
-            }
-            updatePaymentCashEquivalent();
+    // «Весь залишок» — зерном: заповнити всі позиції максимумом
+    document.getElementById('payment-grain-fill-all')?.addEventListener('click', () => {
+        document.querySelectorAll('#payment-grain-items-list .grain-pay-card .grain-item-quantity').forEach(inp => {
+            inp.value = inp.dataset.max;
         });
-    }
-    const rateInput = document.getElementById('payment-rate');
-    if (rateInput) {
-        rateInput.addEventListener('input', updatePaymentCashEquivalent);
-    }
+    });
+    // «Весь залишок» — грошима: підставити повний залишок у суму
+    document.getElementById('payment-cash-fill-all')?.addEventListener('click', () => {
+        if (!payPeriodBalance) return;
+        const appliesTo = paymentMoneyMode();
+        const currency = document.getElementById('payment-currency').value;
+        const rate = parseFloat(document.getElementById('payment-rate').value) || 1;
+        let remainingUah = 0;
+        if (appliesTo === 'cash') {
+            remainingUah = payPeriodBalance.cash_remaining_uah || 0;
+        } else {
+            const sel = document.getElementById('payment-cash-culture');
+            const opt = sel.options[sel.selectedIndex];
+            remainingUah = (opt && opt.dataset.maxCash) ? parseFloat(opt.dataset.maxCash) : 0;
+        }
+        const amount = currency === 'UAH' ? remainingUah : (rate > 0 ? remainingUah / rate : 0);
+        document.getElementById('payment-amount').value = (Math.round(amount * 100) / 100) || '';
+        updatePaymentCashEquivalent();
+    });
+    document.getElementById('payment-currency')?.addEventListener('change', () => {
+        const cur = document.getElementById('payment-currency').value;
+        const rateField = document.getElementById('payment-rate-field');
+        const rateInput = document.getElementById('payment-rate');
+        if (cur === 'UAH') { rateField.classList.add('hidden'); rateInput.value = ''; }
+        else rateField.classList.remove('hidden');
+        updatePaymentCashEquivalent();
+    });
 
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
-        const contractId = document.getElementById('payment-contract').value;
-        const paymentType = document.getElementById('payment-type').value;
+        const parcelId = document.getElementById('payment-parcel-select').value;
+        const periodId = document.getElementById('payment-period-select').value;
         const note = document.getElementById('payment-note').value.trim();
+        if (!parcelId) { formShowValidationError(form, 'payment-message', 'Виберіть ділянку', ['payment-parcel-select']); return; }
+        if (!periodId) { formShowValidationError(form, 'payment-message', 'Виберіть рік', ['payment-period-select']); return; }
+        if (!payPeriodBalance) { formShowValidationError(form, 'payment-message', 'Зачекайте, завантажується залишок', ['payment-period-select']); return; }
 
-        if (!contractId) {
-            formShowValidationError(form, 'payment-message', 'Виберіть контракт', ['payment-contract']);
-            return;
-        }
-        if (!paymentBalance) {
-            formShowValidationError(form, 'payment-message', 'Зачекайте, завантажується залишок', ['payment-contract']);
-            return;
-        }
-
-        const payload = {
-            contract_id: parseInt(contractId),
-            payment_type: paymentType,
+        const terms = payParcel ? payParcel.payment_terms : 'grain';
+        const moneyMode = paymentMoneyMode();
+        const base = {
+            parcel_id: parseInt(parcelId),
+            period_id: parseInt(periodId),
             payment_date: new Date().toISOString(),
             note: note || null,
-            grain_items: []
         };
+        const payloads = [];
 
-        if (paymentType === 'grain') {
-            const rows = document.querySelectorAll('#payment-grain-items-list .grain-pay-card');
-            for (const row of rows) {
-                const cultureId = row.dataset.cultureId;
+        // 1) Зерном — окремий запис
+        if (terms === 'grain' || terms === 'grain_cash') {
+            const grain_items = [];
+            for (const row of document.querySelectorAll('#payment-grain-items-list .grain-pay-card')) {
                 const input = row.querySelector('.grain-item-quantity');
                 const qty = parseFloat(input.value);
                 if (isNaN(qty) || qty <= 0) continue;
-
                 const maxQty = parseFloat(input.dataset.max);
                 if (qty > maxQty + 0.01) {
-                    formShowValidationError(form, 'payment-message',
-                        `Перевищено залишок: макс. ${maxQty} кг`, [], [row]);
+                    formShowValidationError(form, 'payment-message', `Перевищено залишок: макс. ${formatWeight(maxQty)} кг`, [], [row]);
                     return;
                 }
-                payload.grain_items.push({
-                    culture_id: parseInt(cultureId),
-                    quantity_kg: qty
-                });
+                grain_items.push({ culture_id: parseInt(row.dataset.cultureId), quantity_kg: qty });
             }
-            if (payload.grain_items.length === 0) {
-                const grainBlock = document.getElementById('payment-grain-fields');
-                formShowValidationError(form, 'payment-message',
-                    'Вкажіть кількість хоча б для однієї культури', [], [grainBlock].filter(Boolean));
-                return;
-            }
-        } else {
-            // Cash
-            const cultureId = document.getElementById('payment-cash-culture').value;
-            const amount = parseFloat(document.getElementById('payment-amount').value);
+            if (grain_items.length) payloads.push({ ...base, payment_type: 'grain', applies_to: 'grain', grain_items });
+        }
+
+        // 2) Грошима — окремий запис
+        const amount = parseFloat(document.getElementById('payment-amount').value);
+        if (!isNaN(amount) && amount > 0) {
             const currency = document.getElementById('payment-currency').value;
             const rate = parseFloat(document.getElementById('payment-rate').value) || 0;
-
-            if (!cultureId) {
-                formShowValidationError(form, 'payment-message', 'Виберіть культуру', ['payment-cash-culture']);
-                return;
-            }
-            if (isNaN(amount) || amount <= 0) {
-                formShowValidationError(form, 'payment-message', 'Вкажіть суму', ['payment-amount']);
-                return;
-            }
-            if (currency !== 'UAH' && (!rate || rate <= 0)) {
-                formShowValidationError(form, 'payment-message', `Вкажіть курс ${currency} до грн`, ['payment-rate']);
-                return;
-            }
-
-            const amountUah = currency === 'UAH' ? amount : amount * rate;
-
-            const balItem = paymentBalance.items.find(i => i.culture_id == cultureId);
-            if (!balItem) {
-                formShowValidationError(form, 'payment-message', 'Культуру не знайдено', ['payment-cash-culture']);
-                return;
-            }
-            const equivKg = balItem.price_per_kg_uah > 0
-                ? amountUah / balItem.price_per_kg_uah : 0;
-            if (equivKg > balItem.remaining_kg + 0.01) {
-                const maxMsg = currency === 'UAH'
-                    ? `макс. ${balItem.remaining_cash_uah} грн`
-                    : `макс. ${(balItem.remaining_cash_uah / rate).toFixed(2)} ${currency}`;
-                formShowValidationError(form, 'payment-message',
-                    `Сума перевищує залишок: ${maxMsg}`, ['payment-amount']);
-                return;
-            }
-
-            payload.currency = currency;
-            payload.amount = amount;
-            payload.grain_items.push({
-                culture_id: parseInt(cultureId),
-                quantity_kg: parseFloat(equivKg.toFixed(2))
-            });
-        }
-
-        const response = await apiFetch('/leases/payments', {
-            method: 'POST',
-            body: JSON.stringify(payload)
-        });
-
-        if (response.ok) {
-            showToast('Виплату додано', 'success');
-            paymentBalance = null;
-            document.getElementById('payment-balance-card').classList.add('hidden');
-            clearFormValidationState(form, 'payment-message');
-            modal.classList.add('hidden');
-            const scopes = ['payments', 'contracts', 'dashboard'];
-            if (paymentType === 'grain') {
-                scopes.push('stock', 'stockAdjustments');
+            if (currency !== 'UAH' && (!rate || rate <= 0)) { formShowValidationError(form, 'payment-message', `Вкажіть курс ${currency} до грн`, ['payment-rate']); return; }
+            const cashPayload = { ...base, payment_type: 'cash', currency, amount, exchange_rate: currency === 'UAH' ? 1 : rate, grain_items: [] };
+            if (moneyMode === 'grain') {
+                const cultureId = document.getElementById('payment-cash-culture').value;
+                if (!cultureId) { formShowValidationError(form, 'payment-message', 'Виберіть культуру для зарахування грошей', ['payment-cash-culture']); return; }
+                cashPayload.applies_to = 'grain';
+                cashPayload.grain_items.push({ culture_id: parseInt(cultureId), quantity_kg: 0.01 });  // бекенд порахує кг
             } else {
-                scopes.push('cash', 'cashTransactions');
+                cashPayload.applies_to = 'cash';
             }
-            await refreshAfterMutation(scopes);
-        } else {
-            const error = await response.json().catch(() => null);
-            setFormMessage('payment-message', error?.detail || 'Помилка збереження', true);
+            payloads.push(cashPayload);
         }
+
+        if (!payloads.length) {
+            formShowValidationError(form, 'payment-message', 'Вкажіть кількість зерна та/або суму грошей', []);
+            return;
+        }
+
+        // POST кожну (зерно + гроші = два окремі записи)
+        const scopes = new Set(['payments', 'parcels', 'dashboard', 'landlords']);
+        let okCount = 0;
+        for (const pl of payloads) {
+            const response = await apiFetch('/leases/payments', { method: 'POST', body: JSON.stringify(pl) });
+            if (!response.ok) {
+                const error = await response.json().catch(() => null);
+                const msg = error?.detail || 'Помилка збереження';
+                if (okCount > 0) {
+                    showToast('Частину збережено. ' + msg, 'error');
+                    close();
+                    await refreshAfterMutation([...scopes]);
+                    if (cardLandlordId) await refreshLandlordCard();
+                } else {
+                    setFormMessage('payment-message', msg, true);
+                }
+                return;
+            }
+            okCount++;
+            if (pl.payment_type === 'grain') { scopes.add('stock'); scopes.add('stockAdjustments'); }
+            else { scopes.add('cash'); scopes.add('cashTransactions'); }
+        }
+        showToast(okCount > 1 ? 'Виплати додано' : 'Виплату додано', 'success');
+        close();
+        await refreshAfterMutation([...scopes]);
+        if (cardLandlordId) await refreshLandlordCard();
     });
 }
 
-function updatePaymentFields() {
-    const paymentType = document.getElementById('payment-type').value;
-    const grainFields = document.getElementById('payment-grain-fields');
-    const cashFields = document.getElementById('payment-cash-fields');
-
-    if (paymentType === 'grain') {
-        grainFields.classList.remove('hidden');
-        cashFields.classList.add('hidden');
-    } else {
-        grainFields.classList.add('hidden');
-        cashFields.classList.remove('hidden');
-        updatePaymentCashEquivalent();
-    }
-}
-
-// NOTE: список контрактів для виплат формується після вибору орендодавця (див. initPaymentLandlordSearch).
-
-
-// formatDateInput — у core.js
-
-function updateTime() {
-    const now = new Date();
-    const timeString = now.toLocaleTimeString('uk-UA', {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-    });
-    const dateString = now.toLocaleDateString('uk-UA', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-    });
-
-    document.getElementById('current-time').textContent =
-        `${dateString} - ${timeString}`;
-}
-
-// ===== Filters for Landlords / Contracts / Payments =====
+// ═══════════════ Фільтри ═══════════════
 
 function initLandlordsFilter() {
-    const searchInput = document.getElementById('landlords-filter-search');
-    if (searchInput) {
-        searchInput.addEventListener('input', () => renderLandlordsTable());
-    }
-}
-
-function initContractsFilter() {
-    const landlordSel = document.getElementById('contracts-filter-landlord');
-    const statusSel = document.getElementById('contracts-filter-status');
-    const searchInput = document.getElementById('contracts-filter-search');
-    if (landlordSel) landlordSel.addEventListener('change', () => renderContractsTable());
-    if (statusSel) statusSel.addEventListener('change', () => renderContractsTable());
-    if (searchInput) {
-        let timer;
-        searchInput.addEventListener('input', () => {
-            clearTimeout(timer);
-            timer = setTimeout(renderContractsTable, 150);
-        });
-    }
-}
-
-function updateContractsFilterLandlords() {
-    const sel = document.getElementById('contracts-filter-landlord');
-    if (!sel) return;
-    const val = sel.value;
-    sel.innerHTML = '<option value="">Всі орендодавці</option>' +
-        landlordsCache.map(l => `<option value="${l.id}">${l.full_name}</option>`).join('');
-    sel.value = val;
-    refreshCustomSelect(sel);
+    document.getElementById('landlords-filter-search')?.addEventListener('input', () => renderLandlordsTable());
+    document.getElementById('landlords-filter-status')?.addEventListener('change', () => renderLandlordsTable());
 }
 
 function initPaymentsFilter() {
-    const landlordSel = document.getElementById('payments-filter-landlord');
-    const typeSel = document.getElementById('payments-filter-type');
-    const statusSel = document.getElementById('payments-filter-status');
-    if (landlordSel) landlordSel.addEventListener('change', () => renderPaymentsTable());
-    if (typeSel) typeSel.addEventListener('change', () => renderPaymentsTable());
-    if (statusSel) statusSel.addEventListener('change', () => renderPaymentsTable());
+    document.getElementById('payments-filter-landlord')?.addEventListener('change', renderPaymentsTable);
+    document.getElementById('payments-filter-type')?.addEventListener('change', renderPaymentsTable);
+    document.getElementById('payments-filter-status')?.addEventListener('change', renderPaymentsTable);
 }
 
 function updatePaymentsFilterLandlords() {
@@ -1804,18 +1354,17 @@ function updatePaymentsFilterLandlords() {
     if (!sel) return;
     const val = sel.value;
     sel.innerHTML = '<option value="">Всі орендодавці</option>' +
-        landlordsCache.map(l => `<option value="${l.id}">${l.full_name}</option>`).join('');
+        landlordsCache.map(l => `<option value="${l.id}">${escapeHtml(l.full_name)}</option>`).join('');
     sel.value = val;
-    refreshCustomSelect(sel);
+    if (typeof refreshCustomSelect === 'function') refreshCustomSelect(sel);
 }
 
-// ===== Report modals =====
+// ═══════════════ Звіти ═══════════════
+// downloadBlob(response, filename) визначено у core.js (приймає Response).
 
 function initLandlordsReportModal() {
     const modal = document.getElementById('landlords-report-modal');
     const openBtn = document.getElementById('landlords-report-btn');
-    const closeBtn = document.getElementById('landlords-report-close');
-    const cancelBtn = document.getElementById('landlords-report-cancel');
     const downloadBtn = document.getElementById('landlords-report-download');
     const overlay = modal?.querySelector('.modal-overlay');
     const searchInput = document.getElementById('landlords-report-search');
@@ -1823,54 +1372,35 @@ function initLandlordsReportModal() {
     if (!modal || !openBtn || !downloadBtn) return;
 
     let timeout;
-    const openModal = () => {
+    const open = () => {
         if (searchInput) searchInput.value = '';
         if (suggestions) { suggestions.innerHTML = ''; suggestions.classList.add('hidden'); }
         modal.classList.remove('hidden');
     };
-    const closeModal = () => modal.classList.add('hidden');
+    const close = () => modal.classList.add('hidden');
+    openBtn.addEventListener('click', open);
+    document.getElementById('landlords-report-close')?.addEventListener('click', close);
+    document.getElementById('landlords-report-cancel')?.addEventListener('click', close);
+    overlay?.addEventListener('click', close);
 
-    openBtn.addEventListener('click', openModal);
-    closeBtn?.addEventListener('click', closeModal);
-    cancelBtn?.addEventListener('click', closeModal);
-    overlay?.addEventListener('click', closeModal);
-
-    // Autocomplete suggestions
     if (searchInput && suggestions) {
         searchInput.addEventListener('input', () => {
             clearTimeout(timeout);
             const value = searchInput.value.trim();
-            if (!value) {
-                suggestions.innerHTML = '';
-                suggestions.classList.add('hidden');
-                return;
-            }
+            if (!value) { suggestions.innerHTML = ''; suggestions.classList.add('hidden'); return; }
             timeout = setTimeout(() => {
-                const matches = landlordsCache.filter(l =>
-                    l.full_name.toLowerCase().includes(value.toLowerCase())
-                );
+                const matches = landlordsCache.filter(l => l.full_name.toLowerCase().includes(value.toLowerCase()));
                 suggestions.innerHTML = '';
-                if (!matches.length) {
-                    suggestions.classList.add('hidden');
-                    return;
-                }
+                if (!matches.length) { suggestions.classList.add('hidden'); return; }
                 matches.forEach(l => {
                     const item = document.createElement('div');
                     item.className = 'suggestion-item';
                     item.textContent = l.full_name;
-                    item.addEventListener('click', () => {
-                        searchInput.value = l.full_name;
-                        suggestions.classList.add('hidden');
-                    });
+                    item.addEventListener('click', () => { searchInput.value = l.full_name; suggestions.classList.add('hidden'); });
                     suggestions.appendChild(item);
                 });
                 suggestions.classList.remove('hidden');
             }, 150);
-        });
-        document.addEventListener('click', (e) => {
-            if (!suggestions.contains(e.target) && e.target !== searchInput) {
-                suggestions.classList.add('hidden');
-            }
         });
     }
 
@@ -1878,113 +1408,40 @@ function initLandlordsReportModal() {
         const search = searchInput?.value || '';
         const params = new URLSearchParams();
         if (search) params.append('search', search);
-        const path = `/leases/landlords/export${params.toString() ? `?${params}` : ''}`;
-        const response = await apiFetchBlob(path);
-        if (!response.ok) {
-            const error = await response.json().catch(() => null);
-            showToast(error?.detail || 'Не вдалося сформувати звіт', 'error');
-            return;
-        }
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = 'landlords_report.xlsx';
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.URL.revokeObjectURL(url);
+        const response = await apiFetchBlob(`/leases/landlords/export${params.toString() ? `?${params}` : ''}`);
+        if (!response.ok) { showToast('Не вдалося сформувати звіт', 'error'); return; }
+        downloadBlob(response,'landlords_report.xlsx');
         showToast('Звіт сформовано', 'success');
-        closeModal();
+        close();
     });
 }
 
-function initContractsDebtReportBtn() {
-    const btn = document.getElementById('contracts-debt-report-btn');
-    if (!btn) return;
-    btn.addEventListener('click', async () => {
-        const response = await apiFetchBlob('/leases/contracts/debt-export');
-        if (!response.ok) {
-            const error = await response.json().catch(() => null);
-            showToast(error?.detail || 'Не вдалося сформувати звіт по боргу', 'error');
-            return;
-        }
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `lease_debt_${new Date().toISOString().slice(0, 10)}.xlsx`;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.URL.revokeObjectURL(url);
+function initParcelsDebtReportBtn() {
+    document.getElementById('parcels-debt-report-btn')?.addEventListener('click', async () => {
+        const response = await apiFetchBlob('/leases/parcels/debt-export');
+        if (!response.ok) { showToast('Не вдалося сформувати звіт по боргу', 'error'); return; }
+        downloadBlob(response,`lease_debt_${new Date().toISOString().slice(0, 10)}.xlsx`);
         showToast('Звіт по боргу сформовано', 'success');
     });
 }
 
-function initContractsReportModal() {
-    const modal = document.getElementById('contracts-report-modal');
-    const openBtn = document.getElementById('contracts-report-btn');
-    const closeBtn = document.getElementById('contracts-report-close');
-    const cancelBtn = document.getElementById('contracts-report-cancel');
-    const downloadBtn = document.getElementById('contracts-report-download');
-    const overlay = modal?.querySelector('.modal-overlay');
-    const startInput = document.getElementById('contracts-report-start');
-    const endInput = document.getElementById('contracts-report-end');
-    const startNative = document.getElementById('contracts-report-start-native');
-    const endNative = document.getElementById('contracts-report-end-native');
-    const startBtn = document.getElementById('contracts-report-start-btn');
-    const endBtn = document.getElementById('contracts-report-end-btn');
-    if (!modal || !openBtn || !downloadBtn) return;
-
-    const openModal = () => modal.classList.remove('hidden');
-    const closeModal = () => modal.classList.add('hidden');
-
-    openBtn.addEventListener('click', openModal);
-    closeBtn?.addEventListener('click', closeModal);
-    cancelBtn?.addEventListener('click', closeModal);
-    overlay?.addEventListener('click', closeModal);
-    if (startInput && startNative && startBtn) bindDatePicker(startInput, startNative, startBtn);
-    if (endInput && endNative && endBtn) bindDatePicker(endInput, endNative, endBtn);
-
-    downloadBtn.addEventListener('click', async () => {
-        const startIso = startInput ? parseDateInput(startInput.value, 'дата початку') : null;
-        if (startIso === undefined) return;
-        const endIso = endInput ? parseDateInput(endInput.value, 'дата завершення') : null;
-        if (endIso === undefined) return;
-
+function initParcelsReportModal() {
+    const openBtn = document.getElementById('parcels-report-btn');
+    if (!openBtn) return;
+    openBtn.addEventListener('click', async () => {
+        const landlordId = document.getElementById('parcels-filter-landlord')?.value;
         const params = new URLSearchParams();
-        const statusVal = document.getElementById('contracts-report-status')?.value;
-        if (statusVal) params.append('is_active', statusVal);
-        if (startIso) params.append('start_date', startIso);
-        if (endIso) params.append('end_date', endIso);
-
-        const path = `/leases/contracts/export${params.toString() ? `?${params}` : ''}`;
-        const response = await apiFetchBlob(path);
-        if (!response.ok) {
-            const error = await response.json().catch(() => null);
-            showToast(error?.detail || 'Не вдалося сформувати звіт', 'error');
-            return;
-        }
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = 'contracts_report.xlsx';
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.URL.revokeObjectURL(url);
+        if (landlordId) params.append('landlord_id', landlordId);
+        const response = await apiFetchBlob(`/leases/parcels/export${params.toString() ? `?${params}` : ''}`);
+        if (!response.ok) { showToast('Не вдалося сформувати звіт', 'error'); return; }
+        downloadBlob(response,'parcels_report.xlsx');
         showToast('Звіт сформовано', 'success');
-        closeModal();
     });
 }
 
 function initPaymentsReportModal() {
     const modal = document.getElementById('payments-report-modal');
     const openBtn = document.getElementById('payments-report-btn');
-    const closeBtn = document.getElementById('payments-report-close');
-    const cancelBtn = document.getElementById('payments-report-cancel');
     const downloadBtn = document.getElementById('payments-report-download');
     const overlay = modal?.querySelector('.modal-overlay');
     const startInput = document.getElementById('payments-report-start');
@@ -1995,8 +1452,7 @@ function initPaymentsReportModal() {
     const endBtn = document.getElementById('payments-report-end-btn');
     if (!modal || !openBtn || !downloadBtn) return;
 
-    const openModal = async () => {
-        // Якщо кеш порожній — перезавантажити орендодавців
+    const open = async () => {
         if (!landlordsCache.length) {
             const resp = await apiFetch('/leases/landlords');
             if (resp.ok) landlordsCache = await resp.json();
@@ -2004,17 +1460,16 @@ function initPaymentsReportModal() {
         const landlordSel = document.getElementById('payments-report-landlord');
         if (landlordSel) {
             landlordSel.innerHTML = '<option value="">Всі</option>' +
-                landlordsCache.map(l => `<option value="${l.id}">${l.full_name}</option>`).join('');
-            refreshCustomSelect(landlordSel);
+                landlordsCache.map(l => `<option value="${l.id}">${escapeHtml(l.full_name)}</option>`).join('');
+            if (typeof refreshCustomSelect === 'function') refreshCustomSelect(landlordSel);
         }
         modal.classList.remove('hidden');
     };
-    const closeModal = () => modal.classList.add('hidden');
-
-    openBtn.addEventListener('click', openModal);
-    closeBtn?.addEventListener('click', closeModal);
-    cancelBtn?.addEventListener('click', closeModal);
-    overlay?.addEventListener('click', closeModal);
+    const close = () => modal.classList.add('hidden');
+    openBtn.addEventListener('click', open);
+    document.getElementById('payments-report-close')?.addEventListener('click', close);
+    document.getElementById('payments-report-cancel')?.addEventListener('click', close);
+    overlay?.addEventListener('click', close);
     if (startInput && startNative && startBtn) bindDatePicker(startInput, startNative, startBtn);
     if (endInput && endNative && endBtn) bindDatePicker(endInput, endNative, endBtn);
 
@@ -2023,7 +1478,6 @@ function initPaymentsReportModal() {
         if (startIso === undefined) return;
         const endIso = endInput ? parseDateInput(endInput.value, 'дата завершення') : null;
         if (endIso === undefined) return;
-
         const params = new URLSearchParams();
         const landlordId = document.getElementById('payments-report-landlord')?.value;
         const typeVal = document.getElementById('payments-report-type')?.value;
@@ -2033,24 +1487,10 @@ function initPaymentsReportModal() {
         if (startIso) params.append('start_date', startIso);
         if (endIso) params.append('end_date', endIso);
         if (showCancelled) params.append('show_cancelled', 'true');
-
-        const path = `/leases/payments/export${params.toString() ? `?${params}` : ''}`;
-        const response = await apiFetchBlob(path);
-        if (!response.ok) {
-            const error = await response.json().catch(() => null);
-            showToast(error?.detail || 'Не вдалося сформувати звіт', 'error');
-            return;
-        }
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = 'payments_report.xlsx';
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.URL.revokeObjectURL(url);
+        const response = await apiFetchBlob(`/leases/payments/export${params.toString() ? `?${params}` : ''}`);
+        if (!response.ok) { showToast('Не вдалося сформувати звіт', 'error'); return; }
+        downloadBlob(response,'payments_report.xlsx');
         showToast('Звіт сформовано', 'success');
-        closeModal();
+        close();
     });
 }

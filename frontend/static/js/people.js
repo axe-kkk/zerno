@@ -256,6 +256,39 @@ function initPeopleSection() {
         }
     });
 
+    // Звіт залишків зерна у людей (зведена таблиця + Excel)
+    document.getElementById('people-balances-export-btn')?.addEventListener('click', () => {
+        if (typeof openPeopleBalancesModal === 'function') openPeopleBalancesModal();
+    });
+    const pbModal = document.getElementById('people-balances-modal');
+    if (pbModal) {
+        const closePb = () => pbModal.classList.add('hidden');
+        document.getElementById('people-balances-close')?.addEventListener('click', closePb);
+        document.getElementById('people-balances-close-btn')?.addEventListener('click', closePb);
+        pbModal.querySelector('.modal-overlay')?.addEventListener('click', closePb);
+        document.getElementById('people-balances-download-btn')?.addEventListener('click', async (event) => {
+            const btn = event.currentTarget;
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Готується...';
+            try {
+                const response = await apiFetchBlob('/grain/persons/balances/export');
+                if (!response.ok) {
+                    const err = await response.json().catch(() => null);
+                    showToast(err?.detail || 'Не вдалося сформувати звіт', 'error');
+                    return;
+                }
+                await downloadBlob(response, `persons_balances_${new Date().toISOString().slice(0, 10)}.xlsx`);
+                showToast('Звіт сформовано', 'success');
+            } catch (e) {
+                showToast('Помилка експорту', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        });
+    }
+
     document.getElementById('people-actions-export-btn')?.addEventListener('click', async () => {
         // Поважаємо поточні фільтри з UI
         const personId = document.getElementById('people-actions-filter-person')?.value || '';

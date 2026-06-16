@@ -596,8 +596,6 @@ class AgriFieldResponse(BaseModel):
     id: int
     name: str
     owner_name: str
-    landlord_id: Optional[int] = None
-    lease_contract_id: Optional[int] = None
     note: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
@@ -630,74 +628,115 @@ class LandlordUpdate(BaseModel):
     phone: Optional[str] = Field(default=None, description="Телефон")
 
 
-class LeaseContractItemCreate(BaseModel):
-    """Схема створення позиції контракту"""
+# ===== Ділянки (LeaseParcel) =====
+
+class LeasePeriodGrainItemCreate(BaseModel):
+    """Зернова позиція зобов'язання за рік"""
     culture_id: int = Field(..., description="Культура")
-    quantity_kg: float = Field(..., gt=0, description="Кількість зерна за оренду, кг")
-    price_per_kg_uah: float = Field(..., gt=0, description="Ціна зерна за кг в грн (для перерахунку)")
+    quantity_kg: float = Field(..., gt=0, description="Кількість зерна за рік, кг")
+    price_per_kg_uah: Optional[float] = Field(default=None, gt=0, description="Ціна грн за кг (за замовч. — поточна ціна культури)")
 
 
-class LeaseContractItemResponse(BaseModel):
-    """Схема відповіді для позиції контракту"""
+class LeasePeriodGrainItemResponse(BaseModel):
+    """Відповідь: зернова позиція року"""
     id: int
-    contract_id: int
+    period_id: int
     culture_id: int
     culture_name: Optional[str] = None
     quantity_kg: float
     price_per_kg_uah: float
+    paid_kg: float = 0.0
+    remaining_kg: float = 0.0
+    current_price_per_kg_uah: float = 0.0
+    remaining_cash_uah: float = 0.0
 
     class Config:
         from_attributes = True
 
 
-class LeaseContractCreate(BaseModel):
-    """Схема створення контракту оренди"""
+class LeasePeriodCreate(BaseModel):
+    """Схема відкриття нового року (періоду) на ділянці"""
+    year: int = Field(..., description="Рік періоду")
+    period_start: Optional[datetime] = Field(default=None, description="Початок (за замовч. — start_date ділянки зсунутий на рік)")
+    cash_amount: float = Field(default=0.0, ge=0, description="Річна грошова сума (cash / grain_cash)")
+    cash_currency: str = Field(default="UAH", description="Валюта грошової суми")
+    cash_rate: float = Field(default=1.0, gt=0, description="Курс грошової суми до грн (1.0 для UAH)")
+    grain_items: list[LeasePeriodGrainItemCreate] = Field(default_factory=list, description="Зернові позиції року")
+    note: Optional[str] = Field(default=None, description="Примітка")
+
+
+class LeasePeriodUpdate(BaseModel):
+    """Схема оновлення року (періоду)"""
+    cash_amount: Optional[float] = Field(default=None, ge=0)
+    cash_currency: Optional[str] = Field(default=None)
+    cash_rate: Optional[float] = Field(default=None, gt=0)
+    grain_items: Optional[list[LeasePeriodGrainItemCreate]] = Field(default=None)
+    note: Optional[str] = Field(default=None)
+
+
+class LeasePeriodResponse(BaseModel):
+    """Відповідь: рік (період) з балансом"""
+    id: int
+    parcel_id: int
+    year: int
+    period_start: datetime
+    period_end: datetime
+    cash_amount: float = 0.0
+    cash_currency: Optional[str] = "UAH"
+    cash_rate: float = 1.0
+    note: Optional[str] = None
+    grain_items: list[LeasePeriodGrainItemResponse] = Field(default_factory=list)
+    # Грошова частина
+    cash_paid_uah: float = 0.0
+    cash_remaining_uah: float = 0.0
+    # Сумарно по періоду (зерно по поточній ціні + гроші)
+    grain_remaining_cash_uah: float = 0.0
+    remaining_cash_uah: float = 0.0
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class LeaseParcelCreate(BaseModel):
+    """Схема створення ділянки"""
     landlord_id: int = Field(..., description="ID орендодавця")
-    field_name: str = Field(..., description="Назва поля")
-    contract_items: list[LeaseContractItemCreate] = Field(..., min_length=1, description="Позиції контракту")
-    contract_date: datetime = Field(..., description="Дата укладення контракту")
-    is_active: bool = Field(True, description="Чи активний контракт")
-    note: Optional[str] = Field(None, description="Примітка")
+    area_ha: float = Field(..., gt=0, description="Кількість га")
+    label: Optional[str] = Field(default=None, description="Примітка/мітка ділянки")
+    payment_terms: str = Field(default="grain", description="grain | cash | grain_cash")
+    start_date: datetime = Field(..., description="Дата початку оренди")
+    note: Optional[str] = Field(default=None, description="Примітка")
+    first_period: Optional[LeasePeriodCreate] = Field(default=None, description="Умови першого року (створюється разом із ділянкою)")
 
 
-class LeaseContractResponse(BaseModel):
-    """Схема відповіді для контракту оренди"""
+class LeaseParcelUpdate(BaseModel):
+    """Схема оновлення ділянки"""
+    area_ha: Optional[float] = Field(default=None, gt=0)
+    label: Optional[str] = Field(default=None)
+    payment_terms: Optional[str] = Field(default=None)
+    start_date: Optional[datetime] = Field(default=None)
+    is_active: Optional[bool] = Field(default=None)
+    note: Optional[str] = Field(default=None)
+
+
+class LeaseParcelResponse(BaseModel):
+    """Відповідь: ділянка з періодами та накопичувальним балансом"""
     id: int
     landlord_id: int
     landlord_full_name: str
-    field_name: str
-    contract_items: list[LeaseContractItemResponse]
-    contract_date: datetime
-    end_date: Optional[datetime] = None
-    parent_contract_id: Optional[int] = None
+    area_ha: float
+    label: Optional[str] = None
+    payment_terms: str
+    start_date: datetime
     is_active: bool
-    is_expired: bool = False
-    remaining_cash_uah: float = 0.0
-    has_debt: bool = False
-    is_overdue: bool = False
-    note: Optional[str]
+    note: Optional[str] = None
+    periods: list[LeasePeriodResponse] = Field(default_factory=list)
+    cumulative_balance_uah: float = 0.0
     created_at: datetime
-    updated_at: Optional[datetime]
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
-
-
-class LeaseContractRenewRequest(BaseModel):
-    """Схема перевипуску контракту"""
-    contract_date: datetime = Field(..., description="Дата початку нового контракту")
-    contract_items: list[LeaseContractItemCreate] = Field(..., min_length=1, description="Позиції нового контракту")
-    note: Optional[str] = Field(None, description="Примітка")
-
-
-class LeaseContractUpdate(BaseModel):
-    """Схема оновлення контракту оренди"""
-    landlord_id: Optional[int] = Field(default=None, description="ID орендодавця")
-    field_name: Optional[str] = Field(default=None, description="Назва поля")
-    contract_items: Optional[list[LeaseContractItemCreate]] = Field(default=None, min_length=1)
-    contract_date: Optional[datetime] = Field(default=None, description="Дата укладення контракту")
-    is_active: Optional[bool] = Field(default=None, description="Активний контракт")
-    note: Optional[str] = Field(default=None, description="Примітка")
 
 
 class LeasePaymentGrainItemCreate(BaseModel):
@@ -721,29 +760,38 @@ class LeasePaymentGrainItemResponse(BaseModel):
 
 
 class LeasePaymentCreate(BaseModel):
-    """Схема створення виплати по контракту"""
-    contract_id: int = Field(..., description="ID контракту")
+    """Схема створення виплати орендодавцю (на ділянку + рік)"""
+    parcel_id: int = Field(..., description="ID ділянки")
+    period_id: int = Field(..., description="ID періоду (рік)")
     payment_type: str = Field(..., description="Тип виплати: 'grain' або 'cash'")
+    applies_to: str = Field(default="grain", description="Що гасимо: 'grain' або 'cash' (для grain_cash)")
     # Для виплати зерном - массив позиций
     grain_items: Optional[list[LeasePaymentGrainItemCreate]] = Field(default=None, description="Позиції виплати зерном")
     # Для виплати грошима
     currency: Optional[str] = Field(default=None, description="Валюта (якщо виплата грошима)")
-    amount: Optional[float] = Field(default=None, gt=0, description="Сума (якщо виплата грошима)")
+    amount: Optional[float] = Field(default=None, gt=0, description="Сума у валюті виплати")
+    exchange_rate: Optional[float] = Field(default=None, gt=0, description="Курс до грн (для валюти)")
     # Загальні поля
     payment_date: datetime = Field(..., description="Дата виплати")
     note: Optional[str] = Field(default=None, description="Примітка")
 
 
 class LeasePaymentResponse(BaseModel):
-    """Схема відповіді для виплати по контракту"""
+    """Схема відповіді для виплати орендодавцю"""
     id: int
-    contract_id: int
-    contract_field_name: Optional[str] = None
+    parcel_id: int
+    period_id: int
+    period_year: Optional[int] = None
+    area_ha: Optional[float] = None
+    label: Optional[str] = None
     landlord_full_name: Optional[str] = None
     payment_type: str
+    applies_to: str = "grain"
     grain_items: Optional[list[LeasePaymentGrainItemResponse]] = None
     currency: Optional[str]
     amount: Optional[float]
+    exchange_rate: Optional[float] = None
+    amount_uah: Optional[float] = None
     payment_date: datetime
     note: Optional[str]
     created_by_user_id: Optional[int]

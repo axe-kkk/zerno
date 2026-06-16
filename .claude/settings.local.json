@@ -59,7 +59,10 @@
       "Bash(grep -E \"^\\\\.env$\")",
       "Bash(git -C /c/projects/zerno log --oneline --all -- .env)",
       "Bash(git -C C:/projects/zerno status)",
-      "Bash(git -C C:/projects/zerno ls-files)"
+      "Bash(git -C C:/projects/zerno ls-files)",
+      "Bash(ssh ubuntu@5.44.252.175:*)",
+      "Bash(ssh ubuntu@5.44.252.175:*)",
+      "Bash(python -c \"import paramiko*\")"
     ]
   }
 }

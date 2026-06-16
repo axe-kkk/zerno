@@ -26,23 +26,37 @@ def get_session():
 
 def init_db():
     """Инициализация базы данных (создание таблиц, супер админа и кассы)"""
+    # ── Редизайн оренди: знос старих lease-таблиць ПЕРЕД create_all ──────────
+    # Старі дані оренди стираємо (start-from-scratch), орендодавців лишаємо.
+    # Порядок важливий: спершу прибрати FK з agri_fields на lease_contracts,
+    # потім дропнути таблиці (CASCADE — через self-FK на lease_contracts).
+    with engine.connect() as conn:
+        # Одноразовий знос: ВИКОНУЄМО лише якщо в БД ще є СТАРА структура оренди
+        # (таблиця lease_contracts). Нові таблиці lease_payments /
+        # lease_payment_grain_items мають ТІ САМІ імена, тому без цієї перевірки
+        # вони дропалися б при КОЖНОМУ старті → втрата даних виплат.
+        old_lease_exists = conn.execute(
+            text("SELECT to_regclass('public.lease_contracts') IS NOT NULL")
+        ).scalar()
+        if old_lease_exists:
+            for ddl in [
+                "ALTER TABLE IF EXISTS agri_fields DROP COLUMN IF EXISTS lease_contract_id",
+                "ALTER TABLE IF EXISTS agri_fields DROP COLUMN IF EXISTS landlord_id",
+                "DROP TABLE IF EXISTS lease_payment_grain_items CASCADE",
+                "DROP TABLE IF EXISTS lease_payments CASCADE",
+                "DROP TABLE IF EXISTS lease_contract_items CASCADE",
+                "DROP TABLE IF EXISTS lease_contracts CASCADE",
+            ]:
+                try:
+                    conn.execute(text(ddl))
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+
     SQLModel.metadata.create_all(engine)
 
     # Міграції колонок: IF NOT EXISTS — без ERROR у логах Postgres при повторному init_db
     with engine.connect() as conn:
-        conn.execute(text(
-            "ALTER TABLE lease_payments ADD COLUMN IF NOT EXISTS is_cancelled BOOLEAN DEFAULT FALSE"
-        ))
-        conn.commit()
-
-        conn.execute(text(
-            "ALTER TABLE lease_payment_grain_items ADD COLUMN IF NOT EXISTS from_own_kg DOUBLE PRECISION DEFAULT 0"
-        ))
-        conn.execute(text(
-            "ALTER TABLE lease_payment_grain_items ADD COLUMN IF NOT EXISTS from_farmer_kg DOUBLE PRECISION DEFAULT 0"
-        ))
-        conn.commit()
-
         conn.execute(text(
             "ALTER TABLE grain_stock ADD COLUMN IF NOT EXISTS reserved_kg DOUBLE PRECISION DEFAULT 0"
         ))
@@ -115,24 +129,6 @@ def init_db():
             "ALTER TABLE purchase_records ADD COLUMN IF NOT EXISTS is_free BOOLEAN DEFAULT FALSE"
         ))
         conn.commit()
-
-        conn.execute(text(
-            "ALTER TABLE lease_contracts ADD COLUMN IF NOT EXISTS end_date TIMESTAMP"
-        ))
-        conn.execute(text(
-            "ALTER TABLE lease_contracts ADD COLUMN IF NOT EXISTS parent_contract_id INTEGER REFERENCES lease_contracts(id)"
-        ))
-        conn.commit()
-
-        # Заповнення end_date для існуючих контрактів (contract_date + 1 рік)
-        try:
-            conn.execute(text(
-                "UPDATE lease_contracts SET end_date = contract_date + INTERVAL '1 year' WHERE end_date IS NULL"
-            ))
-            conn.commit()
-            print("✅ Заповнено end_date для існуючих контрактів")
-        except Exception:
-            conn.rollback()
 
         conn.execute(text(
             "ALTER TABLE grain_intakes ADD COLUMN IF NOT EXISTS is_own_combine BOOLEAN DEFAULT FALSE"

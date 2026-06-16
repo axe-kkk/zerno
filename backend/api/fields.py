@@ -86,12 +86,6 @@ async def delete_field(
     if not field:
         raise HTTPException(status_code=404, detail="Поле не знайдено")
 
-    if field.lease_contract_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Неможливо видалити поле, прив'язане до контракту оренди"
-        )
-
     session.delete(field)
     session.commit()
     return field
@@ -109,7 +103,7 @@ async def export_fields(
     sheet = workbook.active
     sheet.title = "Поля"
 
-    headers = ["Назва поля", "Власник", "Контракт", "Примітка", "Дата створення"]
+    headers = ["Назва поля", "Власник", "Примітка", "Дата створення"]
     sheet.append(headers)
 
     header_fill = PatternFill("solid", fgColor="1F2937")
@@ -127,9 +121,8 @@ async def export_fields(
         cell.border = thin_border
 
     for f in fields:
-        contract_info = f"#{f.lease_contract_id}" if f.lease_contract_id else "-"
         created = f.created_at.strftime("%Y-%m-%d %H:%M") if f.created_at else "-"
-        sheet.append([f.name, f.owner_name, contract_info, f.note or "", created])
+        sheet.append([f.name, f.owner_name, f.note or "", created])
 
     for row in range(2, sheet.max_row + 1):
         for col in range(1, len(headers) + 1):
@@ -137,8 +130,8 @@ async def export_fields(
 
     sheet.freeze_panes = "A2"
     if sheet.max_row > 1:
-        sheet.auto_filter.ref = f"A1:E{sheet.max_row}"
-    column_widths = [28, 24, 12, 24, 18]
+        sheet.auto_filter.ref = f"A1:D{sheet.max_row}"
+    column_widths = [28, 24, 24, 18]
     for idx, w in enumerate(column_widths, start=1):
         sheet.column_dimensions[chr(64 + idx)].width = w
 
