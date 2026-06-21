@@ -31,6 +31,9 @@ let purchaseStockCache = [];
 let purchasesCache = [];
 let shipmentsCache = [];
 let openFarmerBalanceModal = null;
+// Перевантажує контент відкритої модалки балансу — викликається з refreshAfterMutation
+// після операцій, які змінюють зерно фермера або контракти (закриття/створення/виплата).
+let refreshFarmerBalanceIfOpen = null;
 // farmerContractsCache, farmerContractPaymentsCache, currentFarmerContractId,
 // openFarmerContractPaymentModal — у farmer-contracts.js
 // usersCache — у users.js
@@ -388,8 +391,14 @@ async function refreshAfterMutation(scopes) {
         shipments:              () => typeof loadShipments === 'function' ? loadShipments() : null,
         owners:                 () => typeof loadOwnersList === 'function' ? loadOwnersList('') : null,
         farmerMovements:        () => typeof loadFarmerMovements === 'function' ? loadFarmerMovements() : null,
-        farmerContracts:        () => typeof loadFarmerContracts === 'function' ? loadFarmerContracts() : null,
-        farmerContractPayments: () => typeof loadFarmerContractPayments === 'function' ? loadFarmerContractPayments() : null,
+        farmerContracts:        () => {
+            if (typeof refreshFarmerBalanceIfOpen === 'function') refreshFarmerBalanceIfOpen();
+            return typeof loadFarmerContracts === 'function' ? loadFarmerContracts() : null;
+        },
+        farmerContractPayments: () => {
+            if (typeof refreshFarmerBalanceIfOpen === 'function') refreshFarmerBalanceIfOpen();
+            return typeof loadFarmerContractPayments === 'function' ? loadFarmerContractPayments() : null;
+        },
         parcels:                () => typeof loadParcels === 'function' ? loadParcels() : null,
         payments:               () => typeof loadPayments === 'function' ? loadPayments() : null,
         landlords:              () => typeof loadLandlords === 'function' ? loadLandlords() : null,
@@ -1241,7 +1250,7 @@ async function loadOwnersList(query) {
         updateFarmerContractsFilterOptions();
         updateFarmerMovementFilterOptions();
         // Перезаповнюємо всі owner-селекти, що можуть бути на сторінці
-        ['intake-owner-select', 'farmer-contract-owner-select'].forEach(id => {
+        ['intake-owner-select', 'edit-owner-select', 'farmer-contract-owner-select'].forEach(id => {
             if (document.getElementById(id) && typeof populateOwnerSelect === 'function') {
                 populateOwnerSelect(id);
             }
@@ -1875,11 +1884,75 @@ function initFarmerBalanceModal() {
 
     const tableWrap = document.getElementById('farmer-balance-table-wrap');
     const cardsWrap = document.getElementById('farmer-balance-cards-wrap');
+    const debtsWrap = document.getElementById('farmer-balance-debts-wrap');
+    const debtsList = document.getElementById('farmer-balance-debts-list');
 
     const resetTable = (message) => {
         tableBody.innerHTML = '';
         if (cardsWrap) cardsWrap.innerHTML = '';
+        if (debtsList) debtsList.innerHTML = '';
+        if (debtsWrap) debtsWrap.classList.add('hidden');
         hint.textContent = message;
+    };
+
+    // Лейбли типів контрактів і напряму боргу.
+    // - DEBT  : фермер взяв у нас гроші/товар наперед — «винен нам»
+    // - PAYMENT: ми ще не виплатили за зерно — «ми винні»
+    // - EXCHANGE: товарний обмін у процесі
+    // - RESERVE : резерв позицій (статус «pending», не виводимо як борг)
+    const CONTRACT_TYPE_META = {
+        debt:     { label: 'Борг',    direction: 'Винен нам',   className: 'debt-card debt-card--in' },
+        payment:  { label: 'Викуп',   direction: 'Ми винні',    className: 'debt-card debt-card--out' },
+        exchange: { label: 'Обмін',   direction: 'В обміні',    className: 'debt-card debt-card--mid' },
+        reserve:  { label: 'Резерв',  direction: 'Резерв',      className: 'debt-card debt-card--mid' },
+    };
+
+    const renderDebts = async (kind, id) => {
+        if (!debtsWrap || !debtsList) return;
+        const param = kind === 'person' ? `person_id=${id}` : `owner_id=${id}`;
+        const res = await apiFetch(`/farmer-contracts?${param}&status_filter=open`);
+        if (!res.ok) {
+            debtsWrap.classList.add('hidden');
+            return;
+        }
+        const contracts = await res.json();
+        const open = (contracts || []).filter(c => (c.balance_uah || 0) > 0.01);
+        // Завжди чистимо список — інакше старі картки лишаться у DOM після того,
+        // як контракт закрили і borgs стали порожніми.
+        debtsList.innerHTML = '';
+        if (!open.length) {
+            debtsWrap.classList.add('hidden');
+            return;
+        }
+        open.forEach(c => {
+            const meta = CONTRACT_TYPE_META[c.contract_type] || { label: c.contract_type, direction: '', className: 'debt-card' };
+            const card = document.createElement('div');
+            card.className = 'fcp-grain-card ' + meta.className + ' debt-card--clickable';
+            card.setAttribute('role', 'button');
+            card.setAttribute('tabindex', '0');
+            card.title = 'Відкрити деталі контракту';
+            const noteSuffix = c.title ? ` · ${escapeHtml(c.title)}` : '';
+            card.innerHTML = `
+                <span class="fcp-grain-card__name">${meta.label} <span class="debt-card__direction">${meta.direction}${noteSuffix}</span></span>
+                <span class="fcp-grain-card__qty">${formatWeight(c.balance_uah)} грн</span>
+            `;
+            const openDetail = () => {
+                if (typeof openFcContractDetailModal !== 'function') {
+                    showToast('Модуль контрактів ще не завантажений', 'error');
+                    return;
+                }
+                openFcContractDetailModal(c.id);
+            };
+            card.addEventListener('click', openDetail);
+            card.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    openDetail();
+                }
+            });
+            debtsList.appendChild(card);
+        });
+        debtsWrap.classList.remove('hidden');
     };
 
     const loadBalance = async (kind, id) => {
@@ -1893,7 +1966,11 @@ function initFarmerBalanceModal() {
         if (tableWrap) tableWrap.classList.toggle('hidden', showCards);
         if (cardsWrap) cardsWrap.classList.toggle('hidden', !showCards);
 
-        const response = await apiFetch(endpoint);
+        // Зерно і відкриті контракти тягнемо паралельно — обидва незалежні.
+        const [response] = await Promise.all([
+            apiFetch(endpoint),
+            renderDebts(kind, id),
+        ]);
         if (!response.ok) {
             const error = await response.json().catch(() => null);
             showToast(error?.detail || 'Не вдалося отримати баланс', 'error');
@@ -1903,7 +1980,13 @@ function initFarmerBalanceModal() {
         tableBody.innerHTML = '';
         if (cardsWrap) cardsWrap.innerHTML = '';
         if (!items.length) {
-            resetTable(kind === 'person' ? 'Немає зерна на балансі.' : 'Немає невикупленого зерна.');
+            // Зерна немає — але контракти-борги вже могли відрендеритись; не скидаємо їх.
+            const hasDebts = debtsWrap && !debtsWrap.classList.contains('hidden');
+            tableBody.innerHTML = '';
+            if (cardsWrap) cardsWrap.innerHTML = '';
+            hint.textContent = hasDebts
+                ? (kind === 'person' ? 'Немає зерна на балансі.' : 'Немає невикупленого зерна.')
+                : (kind === 'person' ? 'Немає зерна на балансі.' : 'Немає невикупленого зерна.');
             return;
         }
         hint.textContent = '';
@@ -1987,6 +2070,14 @@ function initFarmerBalanceModal() {
     });
 
     openFarmerBalanceModal = openModal;
+    refreshFarmerBalanceIfOpen = () => {
+        // Якщо модалка балансу зараз відкрита для конкретного фермера/людини —
+        // переїлюємо її контент свіжими даними. Це робить очевидним для оператора,
+        // що закритий контракт зник із секції «Відкриті контракти».
+        if (!modal || modal.classList.contains('hidden')) return;
+        if (!farmerBalanceOwnerId) return;
+        loadBalance(farmerBalanceKind, farmerBalanceOwnerId);
+    };
 }
 
 let editingFarmerId = null;
@@ -3717,7 +3808,20 @@ function openIntakeEdit(intakeId) {
     updateEditFieldSelect();
     const editField = document.getElementById('edit-field');
     if (editField) editField.value = intake.field_id || '';
-    document.getElementById('edit-owner-name').value = intake.owner_full_name || '';
+    // Власник: ставимо у режим вибору зі списку, обираємо поточного фермера у дропдауні
+    setEditOwnerMode('select');
+    if (typeof populateOwnerSelect === 'function') populateOwnerSelect('edit-owner-select');
+    const editOwnerSelect = document.getElementById('edit-owner-select');
+    const editOwnerIdHidden = document.getElementById('edit-owner-id');
+    if (intake.owner_id) {
+        editOwnerSelect.value = String(intake.owner_id);
+        if (editOwnerIdHidden) editOwnerIdHidden.value = String(intake.owner_id);
+    } else {
+        editOwnerSelect.value = '';
+        if (editOwnerIdHidden) editOwnerIdHidden.value = '';
+    }
+    if (typeof refreshCustomSelect === 'function') refreshCustomSelect(editOwnerSelect);
+    document.getElementById('edit-owner-new-name').value = '';
     document.getElementById('edit-owner-phone').value = intake.owner_phone || '';
     document.getElementById('edit-internal-driver').checked = intake.is_internal_driver;
     document.getElementById('edit-driver').value = intake.driver_id || '';
@@ -3734,6 +3838,7 @@ function openIntakeEdit(intakeId) {
     initCustomSelects(document.getElementById('edit-culture'));
     initCustomSelects(document.getElementById('edit-vehicle'));
     initCustomSelects(document.getElementById('edit-driver'));
+    initCustomSelects(document.getElementById('edit-owner-select'));
 
     modal.classList.remove('hidden');
 }
@@ -3859,6 +3964,8 @@ function initNavigation() {
             case 'intake':
                 once('intakes', loadAllIntakes);
                 once('owners', () => loadOwnersList(''));
+                // Поля потрібні для селекту «Поле приходу» при is_own_grain=true
+                once('fields', loadFields);
                 break;
             case 'purchases':
                 once('purchases', loadPurchases);
@@ -4201,6 +4308,26 @@ function initIntakeEditModal() {
     internalCheckbox.addEventListener('change', syncEditDriverBlocks);
     ownGrainCheckbox.addEventListener('change', syncEditOwnerFields);
 
+    // Двохрежимний пікер фермера в редагуванні картки
+    const editOwnerSelect = document.getElementById('edit-owner-select');
+    const editOwnerIdHidden = document.getElementById('edit-owner-id');
+    const editOwnerPhone = document.getElementById('edit-owner-phone');
+    const editOwnerAdd = document.getElementById('edit-owner-add-btn');
+    const editOwnerBack = document.getElementById('edit-owner-back-btn');
+    editOwnerSelect?.addEventListener('change', () => {
+        const id = editOwnerSelect.value;
+        if (editOwnerIdHidden) editOwnerIdHidden.value = id;
+        if (id) {
+            const owner = (ownersCache || []).find(o => String(o.id) === String(id));
+            // Як і у новій картці — ЗАВЖДИ підставляємо телефон обраного фермера
+            if (owner && editOwnerPhone) editOwnerPhone.value = owner.phone || '';
+        } else if (editOwnerPhone) {
+            editOwnerPhone.value = '';
+        }
+    });
+    editOwnerAdd?.addEventListener('click', () => setEditOwnerMode('new'));
+    editOwnerBack?.addEventListener('click', () => setEditOwnerMode('select'));
+
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
         if (!editingIntakeId) {
@@ -4298,9 +4425,43 @@ function syncEditDriverBlocks() {
     document.getElementById('edit-external-driver-block').classList.toggle('hidden', isInternal);
 }
 
+function setEditOwnerMode(mode) {
+    const isNew = mode === 'new';
+    const modeSelectWrap = document.getElementById('edit-owner-mode-select');
+    const modeNewWrap = document.getElementById('edit-owner-mode-new');
+    modeSelectWrap?.classList.toggle('hidden', isNew);
+    modeNewWrap?.classList.toggle('hidden', !isNew);
+    const select = document.getElementById('edit-owner-select');
+    const idHidden = document.getElementById('edit-owner-id');
+    const newName = document.getElementById('edit-owner-new-name');
+    if (isNew) {
+        // Введення нового фермера — id чистимо, телефон не чіпаємо (оператор сам введе)
+        if (select) {
+            select.value = '';
+            if (typeof refreshCustomSelect === 'function') refreshCustomSelect(select);
+        }
+        if (idHidden) idHidden.value = '';
+        setTimeout(() => newName?.focus(), 30);
+    } else {
+        if (newName) newName.value = '';
+    }
+}
+
 function syncEditOwnerFields() {
     const isOwn = document.getElementById('edit-own-grain').checked;
-    document.getElementById('edit-owner-name').disabled = isOwn;
+    // Обидва режими дропдауна перекладаємо у disabled-стан при is_own_grain
+    const modeSelectWrap = document.getElementById('edit-owner-mode-select');
+    const modeNewWrap = document.getElementById('edit-owner-mode-new');
+    modeSelectWrap?.classList.toggle('opacity-disabled', isOwn);
+    modeNewWrap?.classList.toggle('opacity-disabled', isOwn);
+    const editOwnerSelect = document.getElementById('edit-owner-select');
+    if (editOwnerSelect) editOwnerSelect.disabled = isOwn;
+    const editOwnerAdd = document.getElementById('edit-owner-add-btn');
+    if (editOwnerAdd) editOwnerAdd.disabled = isOwn;
+    const editOwnerBack = document.getElementById('edit-owner-back-btn');
+    if (editOwnerBack) editOwnerBack.disabled = isOwn;
+    const editOwnerNew = document.getElementById('edit-owner-new-name');
+    if (editOwnerNew) editOwnerNew.disabled = isOwn;
     document.getElementById('edit-owner-phone').disabled = isOwn;
     const editFieldWrap = document.getElementById('edit-field-wrap');
     const editField = document.getElementById('edit-field');
@@ -4379,14 +4540,29 @@ function buildEditPayload() {
         return null;
     }
 
+    let editOwnerId = '';
+    let editOwnerName = '';
+    let editOwnerIsNewMode = false;
     if (!isOwnGrain) {
-        const ownerName = document.getElementById('edit-owner-name').value.trim();
-        const ownerPhone = document.getElementById('edit-owner-phone').value.trim();
-        if (!ownerName) {
-            setFormMessage('edit-message', 'Вкажіть власника зерна', true);
-            markEditIntakeFormFieldError('edit-owner-name');
-            document.getElementById('edit-owner-name')?.focus();
-            return null;
+        const newWrap = document.getElementById('edit-owner-mode-new');
+        editOwnerIsNewMode = newWrap && !newWrap.classList.contains('hidden');
+        if (editOwnerIsNewMode) {
+            editOwnerName = (document.getElementById('edit-owner-new-name')?.value || '').trim();
+            if (!editOwnerName) {
+                setFormMessage('edit-message', 'Введіть ПІБ нового фермера', true);
+                markEditIntakeFormFieldError('edit-owner-new-name');
+                document.getElementById('edit-owner-new-name')?.focus();
+                return null;
+            }
+        } else {
+            const sel = document.getElementById('edit-owner-select');
+            editOwnerId = sel?.value || document.getElementById('edit-owner-id')?.value || '';
+            if (!editOwnerId) {
+                setFormMessage('edit-message', 'Оберіть фермера зі списку', true);
+                markEditIntakeFormFieldError('edit-owner-select');
+                document.getElementById('edit-owner-select')?.focus();
+                return null;
+            }
         }
     }
 
@@ -4418,8 +4594,17 @@ function buildEditPayload() {
     };
 
     if (!payload.is_own_grain) {
-        payload.owner_full_name = document.getElementById('edit-owner-name').value.trim();
-        payload.owner_phone = document.getElementById('edit-owner-phone').value.trim() || null;
+        if (editOwnerIsNewMode) {
+            // Явно `owner_id: null` — інакше backend fallback'ить до поточного intake.owner_id
+            // і ми відредагуємо існуючого фермера замість створення нового.
+            payload.owner_id = null;
+            payload.owner_full_name = editOwnerName;
+            payload.owner_phone = document.getElementById('edit-owner-phone').value.trim() || null;
+        } else {
+            payload.owner_id = parseInt(editOwnerId, 10);
+            // Передаємо і телефон — якщо оператор його змінив у формі, бекенд оновить фермера у довіднику
+            payload.owner_phone = document.getElementById('edit-owner-phone').value.trim() || null;
+        }
     }
 
     if (payload.is_internal_driver) {
@@ -4557,6 +4742,9 @@ function buildIntakePayload() {
     if (!isOwnGrain) {
         if (ownerId) {
             payload.owner_id = parseInt(ownerId, 10);
+            // Передаємо телефон і при виборі існуючого фермера — якщо оператор його
+            // змінив у формі, бекенд оновить запис у довіднику.
+            payload.owner_phone = ownerPhone || null;
         } else {
             payload.owner_full_name = ownerName;
             payload.owner_phone = ownerPhone || null;
@@ -5156,7 +5344,9 @@ function positionContractSelectOptions(wrapper) {
 
     const spaceBelow = window.innerHeight - triggerRect.bottom - margin;
     const spaceAbove = triggerRect.top - margin;
-    const desired = Math.min(naturalHeight, 320);  // hard-cap навіть якщо багато місця
+    // Поміркований cap — щоб дропдаун не займав пів-екрану. Скрол всередині
+    // дозволяє побачити решту опцій.
+    const desired = Math.min(naturalHeight, 340);
 
     if (desired <= spaceBelow || spaceBelow >= spaceAbove) {
         // Показуємо нижче — обмежуємо max-height доступним простором,
@@ -5377,9 +5567,15 @@ function initOwnersSearch() {
             ownerIdInput.value = id;
             if (id) {
                 const owner = (ownersCache || []).find(o => String(o.id) === String(id));
-                if (owner && ownerPhoneInput && !ownerPhoneInput.value.trim()) {
+                // ЗАВЖДИ підставляємо телефон обраного фермера (раніше — тільки якщо
+                // поле пусте). Якщо поле редаговане і телефону у фермера ще немає
+                // — оператор просто вписує його і при збереженні картки бекенд
+                // оновить запис у довіднику.
+                if (owner && ownerPhoneInput) {
                     ownerPhoneInput.value = owner.phone || '';
                 }
+            } else if (ownerPhoneInput) {
+                ownerPhoneInput.value = '';
             }
         });
     }

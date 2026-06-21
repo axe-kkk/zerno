@@ -472,9 +472,15 @@ async def period_report(
             deducted[m.culture_id] = deducted.get(m.culture_id, 0.0) + kg
 
     # ─── Борги (відкриті контракти) ───
+    # Контракт вважаємо боргом тільки якщо одночасно: status == OPEN
+    # ТА залишок > 0. Закриті/скасовані контракти не показуємо, навіть якщо
+    # `balance_uah` в БД лишився ненульовим (поле денормалізоване).
     debts_rows: list[dict] = []
     open_contracts = session.exec(
-        select(FarmerContract).where(FarmerContract.balance_uah > 0.01)
+        select(FarmerContract).where(
+            FarmerContract.status == FarmerContractStatus.OPEN.value,
+            FarmerContract.balance_uah > 0.01,
+        )
     ).all()
     for c in open_contracts:
         if c.owner_id:

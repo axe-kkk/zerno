@@ -233,11 +233,14 @@ async def list_farmer_contracts(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
     owner_id: Optional[int] = Query(None),
+    person_id: Optional[int] = Query(None),
     status_filter: Optional[FarmerContractStatus] = Query(None)
 ):
     query = select(FarmerContract).order_by(FarmerContract.created_at.desc())
     if owner_id:
         query = query.where(FarmerContract.owner_id == owner_id)
+    if person_id:
+        query = query.where(FarmerContract.person_id == person_id)
     if status_filter:
         query = query.where(FarmerContract.status == status_filter.value)
     contracts = session.exec(query).all()

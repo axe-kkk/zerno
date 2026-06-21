@@ -6,19 +6,21 @@ from fastapi.responses import FileResponse
 
 from backend.auth import get_current_super_admin
 from backend.models import User
-from backend.backup import ensure_backup
+from backend.backup import make_backup
 
 router = APIRouter()
 
 
 @router.get("/db/backup/download")
 async def download_db_backup(current_admin: User = Depends(get_current_super_admin)):
-    """Скачати останню збережену резервну копію БД (.sql).
+    """Скачати ПОТОЧНУ резервну копію БД (.sql).
 
-    Копія оновлюється фоновою задачею щодоби (перезаписується). Якщо файлу ще
-    немає (перший запуск) — він знімається зараз."""
+    На кожне натискання знімається свіжий `pg_dump` — щоб оператор завжди
+    отримував БД у тому стані, в якому вона зараз. Фоновий планувальник
+    (`backup_scheduler`) лишається як страховка на випадок аварії, але кнопка
+    тепер не залежить від нього."""
     try:
-        path = await ensure_backup()
+        path = await make_backup()
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

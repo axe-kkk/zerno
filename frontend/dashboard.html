@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
-    <link rel="stylesheet" href="static/css/style.css?v=352">
+    <link rel="stylesheet" href="static/css/style.css?v=357">
 </head>
 <body class="dashboard-page">
     <div class="dashboard-container">
@@ -1678,11 +1678,19 @@
                             <option value="">Оберіть поле</option>
                         </select>
                     </div>
-                    <div class="form-field">
+                    <div class="form-field owner-field">
                         <label>Власник зерна</label>
-                        <input type="text" id="edit-owner-name" placeholder="ПІБ власника">
+                        <div class="select-with-add" id="edit-owner-mode-select">
+                            <select id="edit-owner-select" data-searchable="true" data-empty-message="Немає фермерів"></select>
+                            <button type="button" class="btn btn-secondary btn-small" id="edit-owner-add-btn" title="Ввести ПІБ нового фермера">+ Новий</button>
+                        </div>
+                        <div class="select-with-add hidden" id="edit-owner-mode-new">
+                            <input type="text" id="edit-owner-new-name" placeholder="Введіть ПІБ нового фермера" autocomplete="off">
+                            <button type="button" class="btn btn-secondary btn-small" id="edit-owner-back-btn" title="Обрати зі списку">← Зі списку</button>
+                        </div>
+                        <input type="hidden" id="edit-owner-id">
                     </div>
-                    <div class="form-field">
+                    <div class="form-field owner-field">
                         <label>Телефон власника</label>
                         <input type="text" id="edit-owner-phone" placeholder="+380...">
                     </div>
@@ -2777,6 +2785,11 @@
                 </div>
                 <!-- Спрощений вигляд картками — для людей (read-only) -->
                 <div class="fcp-grain-cards hidden" id="farmer-balance-cards-wrap"></div>
+                <!-- Відкриті контракти (борги в обидва боки) -->
+                <div class="farmer-balance-debts hidden" id="farmer-balance-debts-wrap">
+                    <div class="form-section-title">Відкриті контракти</div>
+                    <div class="fcp-grain-cards" id="farmer-balance-debts-list"></div>
+                </div>
                 <div class="hint" id="farmer-balance-hint">Завантаження...</div>
             </div>
             <div class="modal-actions">
@@ -4237,9 +4250,9 @@
     <script src="static/js/users.js?v=1"></script>
     <script src="static/js/people.js?v=4"></script>
     <script src="static/js/fields.js?v=2"></script>
-    <script src="static/js/leases.js?v=10"></script>
+    <script src="static/js/leases.js?v=11"></script>
     <script src="static/js/farmer-contracts.js?v=8"></script>
-    <script src="static/js/dashboard.js?v=261"></script>
+    <script src="static/js/dashboard.js?v=272"></script>
 </body>
 </html>
 

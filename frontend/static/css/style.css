@@ -1305,6 +1305,9 @@ body {
     padding-top: 12px;
     max-height: 70vh;
     overflow-y: auto;
+    /* Прибираємо горизонтальний скрол: контент у деяких випадках вилазить
+       на 1-2px через box-shadow/border полів, що породжує марний скролбар. */
+    overflow-x: hidden;
 }
 
 .intake-modal .form-section {
@@ -4151,6 +4154,78 @@ td .empty-value,
 .fcp-grain-card__qty {
     font-size: 11px;
     color: var(--text-muted);
+}
+
+/* ── Секція боргів у балансі фермера/людини ── */
+.farmer-balance-debts {
+    margin-top: 16px;
+}
+
+.farmer-balance-debts .form-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 8px;
+}
+
+/* Картка боргу: фон і ліва акцентна смуга підкреслюють напрям */
+.debt-card {
+    cursor: default;
+    border-left: 3px solid transparent;
+    padding-left: 10px;
+}
+
+.debt-card:hover {
+    border-color: var(--border);
+    background: var(--bg-hover);
+}
+
+/* Клікабельна картка: курсор + м'який hover-сигнал */
+.debt-card--clickable {
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+
+.debt-card--clickable:hover {
+    border-color: var(--primary);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+
+.debt-card--clickable:focus-visible {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.18);
+}
+
+.debt-card--in {
+    /* винен НАМ — зеленувата акцентна смуга */
+    border-left-color: #16a34a;
+}
+
+.debt-card--out {
+    /* ми винні — червонувата */
+    border-left-color: #dc2626;
+}
+
+.debt-card--mid {
+    border-left-color: #6b7280;
+}
+
+.debt-card__direction {
+    font-size: 10.5px;
+    font-weight: 500;
+    color: var(--text-muted);
+    margin-left: 6px;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.debt-card .fcp-grain-card__qty {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
 }
 
 .fcp-grain-empty {
@@ -7195,7 +7270,9 @@ body.user-is-not-admin [data-admin-action] {
 }
 
 .custom-options-list {
-    padding: 4px;
+    /* padding-bottom > top: зайвий простір знизу гарантує, що останній видимий
+       рядок при скролі не «приклеюється» до краю і не виглядає обрізаним. */
+    padding: 4px 4px 8px;
     max-height: 280px;
     overflow-y: auto;
     overflow-x: hidden;

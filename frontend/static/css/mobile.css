@@ -66,7 +66,9 @@ body.m-app {
     letter-spacing: -0.005em;
     min-height: 100dvh;
     padding-top: calc(var(--m-header-h) + var(--m-safe-top));
-    padding-bottom: calc(var(--m-bottom-h) + var(--m-safe-bottom));
+    /* Bottom-буфер реалізований через .m-main (див. там) — body padding-bottom
+       у нашому layout не доходить до останніх дочірніх елементів. */
+    padding-bottom: 0;
 }
 
 button {
@@ -145,7 +147,10 @@ input, textarea, select {
    ================================================================ */
 
 .m-main {
-    padding: 14px 14px 24px;
+    /* Великий bottom padding щоб останні рядки розкритих <details> не лягали
+       впритул до фіксованого нижнього таб-бару. Розрахунок: висота nav (64) +
+       safe-area + ~24px візуального буфера. */
+    padding: 14px 14px calc(var(--m-bottom-h) + var(--m-safe-bottom) + 24px);
     display: flex;
     flex-direction: column;
     gap: 14px;

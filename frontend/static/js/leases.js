@@ -38,6 +38,33 @@ function getCultureName(cultureId) {
     return found ? found.name : '-';
 }
 
+// ── Маленькі lookup-helpers для рендерів і пошуку ──────────────
+// Шукаються у відповідних кешах; повертають '-' якщо запис не знайдено
+// (наприклад, водій видалений, а інтейк лишився).
+function getDriverName(driverId) {
+    if (driverId == null) return '-';
+    const found = (driversCache || []).find(d => d.id === driverId);
+    return found ? found.full_name : '-';
+}
+
+function getVehicleName(vehicleTypeId) {
+    if (vehicleTypeId == null) return '-';
+    const found = (vehicleTypesCache || []).find(v => v.id === vehicleTypeId);
+    return found ? found.name : '-';
+}
+
+function getOwnerName(ownerId) {
+    if (ownerId == null) return '-';
+    const found = (ownersCache || []).find(o => o.id === ownerId);
+    return found ? found.full_name : '-';
+}
+
+function getFieldName(fieldId) {
+    if (fieldId == null) return '-';
+    const found = (fieldsCache || []).find(f => f.id === fieldId);
+    return found ? found.name : '-';
+}
+
 // Годинник у шапці (викликається з dashboard.js initializeDashboard)
 function updateTime() {
     const el = document.getElementById('current-time');

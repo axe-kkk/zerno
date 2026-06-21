@@ -1849,6 +1849,14 @@ async def create_intake(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Власника не знайдено"
                 )
+            # Якщо оператор у формі картки виправив/дописав телефон існуючому
+            # фермеру — оновлюємо його у довіднику. Порівнюємо з пробілами:
+            # порожній рядок і None трактуємо однаково.
+            incoming_phone = (payload.owner_phone or "").strip() or None
+            current_phone = (owner.phone or "").strip() or None
+            if incoming_phone and incoming_phone != current_phone:
+                owner.phone = incoming_phone
+                session.add(owner)
         else:
             owner = session.exec(
                 select(GrainOwner).where(
@@ -3508,6 +3516,16 @@ async def update_intake(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Власника не знайдено"
                 )
+            # Якщо у формі редагування картки оператор виправив телефон існуючому
+            # фермеру — оновлюємо запис у довіднику. Це робить редагування старих
+            # карток такою ж точкою введення контактів, як і нова картка.
+            incoming_phone_raw = update_data.get("owner_phone")
+            if incoming_phone_raw is not None:
+                incoming_phone = (incoming_phone_raw or "").strip() or None
+                current_phone = (owner.phone or "").strip() or None
+                if incoming_phone and incoming_phone != current_phone:
+                    owner.phone = incoming_phone
+                    session.add(owner)
             update_data["owner_full_name"] = owner.full_name
             update_data["owner_phone"] = owner.phone
         else:
