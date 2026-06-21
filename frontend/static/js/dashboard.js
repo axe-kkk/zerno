@@ -3974,9 +3974,16 @@ function initNavigation() {
             case 'stock':
                 once('stock', loadStock);
                 once('stock-adjustments', loadStockAdjustments);
+                // Таблиці «Добрива» і «Посівне зерно» рендеряться з purchaseStockCache.
+                // Без цього виклику вони залишаються скелетонами назавжди.
+                once('purchase-stock', loadPurchaseStock);
                 break;
             case 'drivers':
-                // Водії вже завантажені на старті (loadDrivers у Promise.all).
+                // Сам список водіїв вже завантажений на старті, але таблиця
+                // «Доставки водіїв» будується з intakesCache + shipmentsCache.
+                // Без них вона буде заклинена на скелетоні.
+                once('intakes', loadAllIntakes);
+                once('shipments', loadShipments);
                 break;
             case 'owners':
                 once('owners', () => loadOwnersList(''));
