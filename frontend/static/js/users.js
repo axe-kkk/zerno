@@ -10,7 +10,10 @@ let editingUserId = null;
 let pendingUserDeleteId = null;
 
 async function loadUsers() {
-    const response = await apiFetch('/users');
+    // Trailing slash обов'язково: без нього FastAPI віддає 307 redirect на
+    // `/users/`, і за nginx-proxy Location збирається без порту :8080 →
+    // браузер іде на :80 (Webuzo), дістає 404 → скелетон лишається назавжди.
+    const response = await apiFetch('/users/');
     if (!response.ok) {
         console.error('Помилка завантаження користувачів');
         return;
