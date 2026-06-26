@@ -96,18 +96,23 @@ function renderFieldIntakesTable() {
         tr.querySelector('[data-view]').addEventListener('click', () => openIntakeView(intake.id));
         tbody.appendChild(tr);
     });
-    // Підсумки: лише картки що дійшли на склад (intakeOnStock).
-    // Чекаючі тари/якості не рахуємо — їх вага може ще змінитись.
+    // Підсумки у стилі сторінки «Прийом зерна» (Σ карток + сірий hint + жирні кг)
     if (tfoot) {
         const onStock = sorted.filter(intakeOnStock);
         const totalKg = onStock.reduce((s, i) => s + (i.accepted_weight_kg || 0), 0);
         const pending = sorted.length - onStock.length;
-        const totalsKgEl = document.getElementById('field-intakes-totals-kg');
-        const totalsSummaryEl = document.getElementById('field-intakes-totals-summary');
-        if (totalsKgEl) totalsKgEl.textContent = formatWeight(totalKg) + ' кг';
-        if (totalsSummaryEl) {
-            totalsSummaryEl.textContent = `${sorted.length} ${pending ? `(+${pending} очікують)` : ''}`.trim();
-        }
+        const cardsLabel = sorted.length === 1 ? 'картка' : 'карток';
+        const pendingHint = pending > 0
+            ? ` <span class="td-secondary">(+ ${pending} очікують)</span>`
+            : '';
+        tfoot.innerHTML = `
+            <tr>
+                <td><strong>Σ ${sorted.length} ${cardsLabel}</strong>${pendingHint}</td>
+                <td class="td-secondary">Підсумок підтверджених</td>
+                <td class="td-weight"><strong>${formatWeight(totalKg)} кг</strong></td>
+                <td colspan="2"></td>
+            </tr>
+        `;
         tfoot.classList.remove('hidden');
     }
 }
