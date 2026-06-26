@@ -117,23 +117,32 @@ function renderPeopleActionsTable() {
     const filtered = applyPeopleActionsFilters();
     tbody.innerHTML = '';
     if (!filtered.length) {
-        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Немає дій</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="empty-state">Немає дій</td></tr>';
         if (hint) hint.textContent = 'Поки що дій немає.';
         return;
     }
     if (hint) hint.textContent = '';
+    // Кольорові бейджі типу — близько до Переміщення зерна фермерів
+    const typeBadge = (type) => {
+        if (type === 'transfer') return '<span class="inline-badge cash">Переміщення</span>';
+        if (type === 'contract') return '<span class="inline-badge grain">Контракт</span>';
+        if (type === 'contract_payment') return '<span class="inline-badge receive">Оплата</span>';
+        return `<span class="inline-badge">${escapeHtml(actionTypeLabel(type))}</span>`;
+    };
     filtered.forEach(a => {
         const tr = document.createElement('tr');
-        const culture = a.culture_name ? ` (${escapeHtml(a.culture_name)})` : '';
-        const qty = a.quantity_kg != null ? formatAmount(a.quantity_kg) : '—';
-        const sum = a.amount_uah != null ? formatAmount(a.amount_uah) : '—';
+        const qty = a.quantity_kg != null ? `${formatAmount(a.quantity_kg)} кг` : (typeof emptyValueHtml === 'function' ? emptyValueHtml() : '—');
+        const note = a.note ? escapeHtml(a.note) : (typeof emptyValueHtml === 'function' ? emptyValueHtml() : '—');
+        const fromLabel = a.from_label || a.person_name || '—';
+        const toLabel = a.to_label || '—';
         tr.innerHTML = `
             <td>${formatDate(a.created_at)}</td>
-            <td>${escapeHtml(a.person_name || '—')}</td>
-            <td>${escapeHtml(actionTypeLabel(a.action_type))}</td>
-            <td>${escapeHtml(a.description || '')}${culture}</td>
+            <td>${typeBadge(a.action_type)}</td>
+            <td><strong>${escapeHtml(fromLabel)}</strong></td>
+            <td>${escapeHtml(toLabel)}</td>
+            <td>${a.culture_name ? `<span class="inline-badge grain">${escapeHtml(a.culture_name)}</span>` : (typeof emptyValueHtml === 'function' ? emptyValueHtml() : '—')}</td>
             <td class="td-weight">${qty}</td>
-            <td class="td-amount">${sum}</td>
+            <td>${note}</td>
         `;
         tbody.appendChild(tr);
     });

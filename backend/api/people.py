@@ -142,6 +142,7 @@ async def list_person_actions(
 
     cultures_map = {c.id: c.name for c in session.exec(select(GrainCulture)).all()}
     owners_map = {o.id: o.full_name for o in session.exec(select(GrainOwner)).all()}
+    people_map = {p.id: p.full_name for p in session.exec(select(Person)).all()}
 
     actions: list[PersonActionResponse] = []
 
@@ -154,9 +155,12 @@ async def list_person_actions(
             id=c.id,
             action_type="contract",
             description=f"Контракт #{c.id} ({c.contract_type})",
+            from_label=people_map.get(person_id),
+            to_label="Підприємство",
             amount_uah=c.total_value_uah,
             quantity_kg=None,
             culture_name=None,
+            note=c.note,
             created_at=c.created_at,
             related_id=c.id,
         ))
@@ -171,28 +175,66 @@ async def list_person_actions(
             actions.append(PersonActionResponse(
                 id=p.id,
                 action_type="contract_payment",
-                description=f"Оплата по контракту #{p.contract_id}: {label}"
+                description=f"Оплата #{p.contract_id}: {label}"
                             + (" (скасовано)" if p.is_cancelled else ""),
+                from_label=people_map.get(person_id),
+                to_label="Підприємство",
                 amount_uah=p.amount_uah,
                 quantity_kg=p.quantity_kg,
                 culture_name=cultures_map.get(p.culture_id) if p.culture_id else None,
+                note=None,
                 created_at=p.payment_date or p.created_at,
                 related_id=p.contract_id,
             ))
 
-    transfers = session.exec(
+    # Incoming transfers — зерно ПРИЙШЛО людині
+    transfers_in = session.exec(
         select(FarmerGrainMovement).where(FarmerGrainMovement.to_person_id == person_id)
     ).all()
-    for m in transfers:
-        from_label = owners_map.get(m.from_owner_id, "?")
+    for m in transfers_in:
+        if m.from_owner_id:
+            from_label = owners_map.get(m.from_owner_id, "?")
+        elif m.from_person_id:
+            from_label = people_map.get(m.from_person_id, "?")
+        else:
+            from_label = "?"
         actions.append(PersonActionResponse(
             id=m.id,
             action_type="transfer",
-            description=f"Переказ зерна від фермера: {from_label}"
-                        + (f" — {m.note}" if m.note else ""),
+            description=f"Переказ від: {from_label}",
+            from_label=from_label,
+            to_label=people_map.get(person_id),
             amount_uah=None,
             quantity_kg=m.quantity_kg,
             culture_name=cultures_map.get(m.culture_id),
+            note=m.note,
+            created_at=m.created_at,
+            related_id=m.id,
+        ))
+
+    # Outgoing transfers — зерно ПЕРЕДАЛА сама людина
+    transfers_out = session.exec(
+        select(FarmerGrainMovement).where(FarmerGrainMovement.from_person_id == person_id)
+    ).all()
+    for m in transfers_out:
+        if m.to_owner_id:
+            to_label = owners_map.get(m.to_owner_id, "?")
+        elif m.to_person_id:
+            to_label = people_map.get(m.to_person_id, "?")
+        elif m.to_enterprise:
+            to_label = "Підприємство"
+        else:
+            to_label = "?"
+        actions.append(PersonActionResponse(
+            id=m.id,
+            action_type="transfer",
+            description=f"Переказ до: {to_label}",
+            from_label=people_map.get(person_id),
+            to_label=to_label,
+            amount_uah=None,
+            quantity_kg=m.quantity_kg,
+            culture_name=cultures_map.get(m.culture_id),
+            note=m.note,
             created_at=m.created_at,
             related_id=m.id,
         ))
@@ -226,9 +268,19 @@ async def get_person_balance(
         )
     ).all()
 
+    # OUT-перекази від цієї людини (зокрема людина → підприємство)
+    outgoing = session.exec(
+        select(FarmerGrainMovement).where(
+            FarmerGrainMovement.from_person_id == person_id,
+            FarmerGrainMovement.movement_type == "transfer",
+        )
+    ).all()
+
     totals: dict[int, float] = {}
     for m in incoming:
         totals[m.culture_id] = totals.get(m.culture_id, 0.0) + (m.quantity_kg or 0.0)
+    for m in outgoing:
+        totals[m.culture_id] = totals.get(m.culture_id, 0.0) - (m.quantity_kg or 0.0)
 
     # Витрати:
     #  1) GRAIN-оплати по DEBT-контрактах (людина платить за свій борг зерном)

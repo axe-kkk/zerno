@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
-    <link rel="stylesheet" href="static/css/style.css?v=357">
+    <link rel="stylesheet" href="static/css/style.css?v=358">
 </head>
 <body class="dashboard-page">
     <div class="dashboard-container">
@@ -766,7 +766,7 @@
                             <div class="table-filters" id="field-intakes-filters">
                                 <div class="form-field">
                                     <label>Поле</label>
-                                    <select id="field-intakes-filter-field">
+                                    <select id="field-intakes-filter-field" data-searchable="true">
                                         <option value="">Всі поля</option>
                                     </select>
                                 </div>
@@ -787,7 +787,7 @@
                                 </div>
                             </div>
                             <div class="table-wrapper">
-                                <table class="data-table" id="field-intakes-table">
+                                <table class="data-table intake-totals" id="field-intakes-table">
                                     <thead>
                                         <tr>
                                             <th>Поле</th>
@@ -798,6 +798,14 @@
                                         </tr>
                                     </thead>
                                     <tbody></tbody>
+                                    <tfoot id="field-intakes-totals" class="hidden">
+                                        <tr>
+                                            <td><strong>Усього за фільтром</strong></td>
+                                            <td id="field-intakes-totals-summary"></td>
+                                            <td class="td-weight"><strong id="field-intakes-totals-kg"></strong></td>
+                                            <td colspan="2"></td>
+                                        </tr>
+                                    </tfoot>
                                 </table>
                             </div>
                         </div>
@@ -1064,6 +1072,7 @@
                             <div class="card-header">
                                 <div class="card-title">Список людей</div>
                                 <div class="card-header-actions">
+                                    <button class="btn btn-secondary btn-small" id="person-transfer-btn" data-admin-only>Переміщення</button>
                                     <button class="btn btn-secondary btn-small" id="people-balances-export-btn" title="Залишки всіх людей по культурах (перегляд + Excel)">Звіт залишків</button>
                                     <button class="btn btn-secondary btn-small" id="people-list-export-btn">Звіт</button>
                                     <button class="btn btn-primary btn-small" id="person-add-btn">Додати</button>
@@ -1117,11 +1126,12 @@
                                     <thead>
                                         <tr>
                                             <th>Дата</th>
-                                            <th>Людина</th>
                                             <th>Тип</th>
-                                            <th>Опис</th>
+                                            <th>Від кого</th>
+                                            <th>Куди</th>
+                                            <th>Культура</th>
                                             <th>Кількість, кг</th>
-                                            <th>Сума, грн</th>
+                                            <th>Примітка</th>
                                         </tr>
                                     </thead>
                                     <tbody></tbody>
@@ -2845,6 +2855,19 @@
             </div>
             <div class="modal-body">
                 <div class="form-field full">
+                    <label>Від кого</label>
+                    <div class="counterparty-toggle" role="tablist">
+                        <label class="counterparty-toggle__item">
+                            <input type="radio" name="ft-sender" value="farmer" checked>
+                            <span>Фермер</span>
+                        </label>
+                        <label class="counterparty-toggle__item">
+                            <input type="radio" name="ft-sender" value="person">
+                            <span>Людина</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="form-field full">
                     <label>Кому</label>
                     <div class="counterparty-toggle" role="tablist">
                         <label class="counterparty-toggle__item">
@@ -2855,13 +2878,23 @@
                             <input type="radio" name="ft-receiver" value="person">
                             <span>Людині</span>
                         </label>
+                        <label class="counterparty-toggle__item">
+                            <input type="radio" name="ft-receiver" value="enterprise">
+                            <span>Підприємству</span>
+                        </label>
                     </div>
                 </div>
                 <div class="form-grid">
-                    <div class="form-field">
+                    <div class="form-field" id="ft-from-farmer-field">
                         <label>Від фермера</label>
                         <select id="farmer-transfer-from" data-searchable="true">
                             <option value="">Оберіть</option>
+                        </select>
+                    </div>
+                    <div class="form-field hidden" id="ft-from-person-field">
+                        <label>Від людини</label>
+                        <select id="farmer-transfer-from-person" data-searchable="true">
+                            <option value="">Оберіть людину</option>
                         </select>
                     </div>
                     <div class="form-field" id="ft-to-farmer-field">
@@ -3896,6 +3929,46 @@
     </div>
 
     <!-- Contract Close Confirm Modal -->
+    <!-- Швидкий розрахунок по PAYMENT-контракту (одним кліком) -->
+    <div class="modal hidden" id="fc-settle-modal">
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-width:540px;">
+            <div class="modal-header">
+                <h3>Виплата за контрактом <span id="fc-settle-id"></span></h3>
+                <button class="modal-close" id="fc-settle-close" aria-label="Закрити">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="fc-settle-info">
+                    <div><span class="muted">Контрагент:</span> <strong id="fc-settle-counterparty"></strong></div>
+                </div>
+                <div class="fc-settle-items">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Культура</th>
+                                <th>Кількість, кг</th>
+                                <th>Ціна, грн/кг</th>
+                                <th>Сума, грн</th>
+                            </tr>
+                        </thead>
+                        <tbody id="fc-settle-items-tbody"></tbody>
+                        <tfoot>
+                            <tr>
+                                <td colspan="3" style="text-align:right;"><strong>Разом до виплати:</strong></td>
+                                <td><strong id="fc-settle-total"></strong></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+                <p class="hint" id="fc-settle-hint">Натисніть «Виплатити» — зерно списується з балансу контрагента, гроші виплачуються з каси, контракт закривається.</p>
+                <div class="form-actions full" style="margin-top:16px;">
+                    <button class="btn btn-secondary" id="fc-settle-cancel">Скасувати</button>
+                    <button class="btn btn-primary" id="fc-settle-confirm">Виплатити</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="modal hidden" id="contract-close-modal">
         <div class="modal-overlay"></div>
         <div class="modal-content" style="max-width:480px;">
@@ -4244,15 +4317,15 @@
         </div>
     </div>
 
-    <script src="static/js/core.js?v=4"></script>
+    <script src="static/js/core.js?v=5"></script>
     <script src="static/js/cash.js?v=3"></script>
     <script src="static/js/vouchers.js?v=1"></script>
     <script src="static/js/users.js?v=2"></script>
-    <script src="static/js/people.js?v=4"></script>
-    <script src="static/js/fields.js?v=2"></script>
+    <script src="static/js/people.js?v=5"></script>
+    <script src="static/js/fields.js?v=4"></script>
     <script src="static/js/leases.js?v=11"></script>
-    <script src="static/js/farmer-contracts.js?v=8"></script>
-    <script src="static/js/dashboard.js?v=273"></script>
+    <script src="static/js/farmer-contracts.js?v=11"></script>
+    <script src="static/js/dashboard.js?v=277"></script>
 </body>
 </html>
 

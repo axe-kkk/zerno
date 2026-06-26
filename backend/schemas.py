@@ -195,9 +195,12 @@ class PersonActionResponse(BaseModel):
     id: int
     action_type: str  # contract | transfer | contract_payment
     description: str
+    from_label: Optional[str] = None  # «Від кого» — для відображення таблиці
+    to_label: Optional[str] = None    # «Куди»
     amount_uah: Optional[float] = None
     quantity_kg: Optional[float] = None
     culture_name: Optional[str] = None
+    note: Optional[str] = None
     created_at: datetime
     related_id: Optional[int] = None
 
@@ -230,12 +233,15 @@ class FarmerGrainDeductRequest(BaseModel):
 
 
 class FarmerGrainTransferRequest(BaseModel):
-    """Переміщення зерна від фермера до іншого фермера або людини.
-    Рівно одне з полів `to_owner_id`/`to_person_id` має бути задане.
+    """Переміщення зерна від фермера/людини до фермера, людини або підприємства.
+    Рівно одне з полів `from_owner_id`/`from_person_id` — джерело.
+    Рівно одне з `to_owner_id`/`to_person_id`/`to_enterprise=True` — отримувач.
     """
-    from_owner_id: int
+    from_owner_id: Optional[int] = None
+    from_person_id: Optional[int] = None
     to_owner_id: Optional[int] = None
     to_person_id: Optional[int] = None
+    to_enterprise: bool = False
     culture_id: int
     quantity_kg: float = Field(..., gt=0)
     note: Optional[str] = None
@@ -244,9 +250,11 @@ class FarmerGrainTransferRequest(BaseModel):
 class FarmerGrainMovementResponse(BaseModel):
     id: int
     movement_type: str
-    from_owner_id: int
-    to_owner_id: Optional[int]
+    from_owner_id: Optional[int] = None
+    from_person_id: Optional[int] = None
+    to_owner_id: Optional[int] = None
     to_person_id: Optional[int] = None
+    to_enterprise: bool = False
     culture_id: int
     quantity_kg: float
     note: Optional[str]

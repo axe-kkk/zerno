@@ -78,6 +78,19 @@ def init_db():
         ))
         conn.commit()
 
+        # Розширення farmer_grain_movements: from_person_id, to_enterprise +
+        # дозволяємо from_owner_id бути NULL (для рухів «людина → підприємство»).
+        conn.execute(text(
+            "ALTER TABLE farmer_grain_movements ADD COLUMN IF NOT EXISTS from_person_id INTEGER REFERENCES people(id)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE farmer_grain_movements ADD COLUMN IF NOT EXISTS to_enterprise BOOLEAN DEFAULT FALSE"
+        ))
+        conn.execute(text(
+            "ALTER TABLE farmer_grain_movements ALTER COLUMN from_owner_id DROP NOT NULL"
+        ))
+        conn.commit()
+
         # Міграція: конвертуємо enum-колонки в VARCHAR(32) для уникнення проблем з PostgreSQL enum
         for tbl, col in [
             ("farmer_contracts", "contract_type"),

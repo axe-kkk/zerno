@@ -187,13 +187,38 @@ function openFcPaymentCancelModal(payment) {
         'goods_issue': 'Видача',
         'goods_receive': 'Прийом',
         'cash': 'Гроші',
-        'grain': 'Зерно'
+        'grain': 'Зерно',
+        'settlement': 'Розрахунок',
+        'voucher': 'Талон'
     };
     const typeLabel = typeLabels[payment.payment_type] || payment.payment_type;
     if (info) {
         info.textContent = `${typeLabel}: ${payment.item_name || ''} — контракт #${payment.contract_id}`;
     }
     modal.classList.remove('hidden');
+
+    // Для SETTLEMENT — підтягуємо позиції контракту і показуємо що саме повернеться
+    // (зерно фермеру/людині + гроші у касу), щоб оператор бачив наслідки до confirm.
+    if (payment.payment_type === 'settlement' && info) {
+        info.textContent = `Розрахунок — контракт #${payment.contract_id}. Завантаження деталей...`;
+        apiFetch(`/farmer-contracts/${payment.contract_id}`).then(async (r) => {
+            if (!r.ok) return;
+            const c = await r.json();
+            const grainLines = (c.items || [])
+                .filter(it => it.item_type === 'grain' && (it.quantity_kg || 0) > 0)
+                .map(it => `${formatWeight(it.quantity_kg)} кг ${it.item_name || 'зерно'}`);
+            const cashLine = (payment.amount || 0) > 0
+                ? `${formatWeight(payment.amount)} ${payment.currency || 'UAH'} у касу`
+                : '';
+            const who = c.person_id ? 'людині' : 'фермеру';
+            const parts = [];
+            if (grainLines.length) parts.push(`${grainLines.join(', ')} ${who}`);
+            if (cashLine) parts.push(cashLine);
+            const tail = parts.length ? `\nБуде повернено: ${parts.join('; ')}.` : '';
+            info.textContent = `Розрахунок — контракт #${payment.contract_id}.${tail}`;
+            info.style.whiteSpace = 'pre-line';
+        }).catch(() => { /* deтail-load fail — лишається базовий текст */ });
+    }
 
     const close = () => modal.classList.add('hidden');
 
@@ -777,13 +802,20 @@ function renderFarmerContractsTable(contracts) {
         detailBtn.addEventListener('click', () => openFcContractDetailModal(contract.id));
         actionsCell.appendChild(detailBtn);
 
-        // Open contracts: pay/issue button
+        // Open contracts: pay/issue button.
+        // PAYMENT-контракти (Виплата) — окрема одноклікова модалка settlement;
+        // інші типи (DEBT/EXCHANGE) — стара мультитабна.
         if (contract.status === 'open') {
             const payBtn = document.createElement('button');
             payBtn.className = 'btn-icon btn-icon-primary';
-            payBtn.title = 'Операція';
             payBtn.innerHTML = ICONS.operation;
-            payBtn.addEventListener('click', () => openFarmerContractPaymentModal(contract));
+            if (contract.contract_type === 'payment') {
+                payBtn.title = 'Виплатити';
+                payBtn.addEventListener('click', () => openFarmerSettleModal(contract));
+            } else {
+                payBtn.title = 'Операція';
+                payBtn.addEventListener('click', () => openFarmerContractPaymentModal(contract));
+            }
             actionsCell.appendChild(payBtn);
         }
 
@@ -2360,4 +2392,120 @@ function initFarmerContractPaymentModal() {
             saveBtn.textContent = 'Зберегти';
         }
     });
+}
+
+// ───── Швидкий settlement для PAYMENT-контракту ─────
+// Показує позиції контракту + суму до виплати, один клік «Виплатити» →
+// бекенд виконує settlement атомарно (склад, каса, payment, статус).
+async function openFarmerSettleModal(contract) {
+    const modal = document.getElementById('fc-settle-modal');
+    if (!modal) return;
+    const closeBtn = document.getElementById('fc-settle-close');
+    const cancelBtn = document.getElementById('fc-settle-cancel');
+    const confirmBtn = document.getElementById('fc-settle-confirm');
+    const overlay = modal.querySelector('.modal-overlay');
+    const tbody = document.getElementById('fc-settle-items-tbody');
+    const idSpan = document.getElementById('fc-settle-id');
+    const counterpartyEl = document.getElementById('fc-settle-counterparty');
+    const totalEl = document.getElementById('fc-settle-total');
+
+    idSpan.textContent = `#${contract.id}`;
+    // Назва контрагента: спершу беремо з owner_name/person_name на контракті,
+    // інакше дивимось у локальні кеші.
+    let counterparty = contract.owner_name || contract.person_name || '';
+    if (!counterparty) {
+        if (contract.owner_id) {
+            const o = (ownersCache || []).find(x => x.id === contract.owner_id);
+            counterparty = o ? o.full_name : `Фермер #${contract.owner_id}`;
+        } else if (contract.person_id) {
+            const p = (peopleCache || []).find(x => x.id === contract.person_id);
+            counterparty = p ? `${p.full_name} (людина)` : `Людина #${contract.person_id}`;
+        }
+    }
+    counterpartyEl.textContent = counterparty || '—';
+
+    tbody.innerHTML = '<tr><td colspan="4" class="empty-state">Завантаження…</td></tr>';
+    totalEl.textContent = '—';
+    modal.classList.remove('hidden');
+
+    // Тягнемо позиції з бекенду — щоб точно мати qty/price з контракту
+    let detail = null;
+    try {
+        const r = await apiFetch(`/farmer-contracts/${contract.id}`);
+        if (!r.ok) {
+            const err = await r.json().catch(() => null);
+            tbody.innerHTML = `<tr><td colspan="4" class="empty-state">${escapeHtml(err?.detail || 'Не вдалося завантажити')}</td></tr>`;
+            return;
+        }
+        detail = await r.json();
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty-state">Помилка завантаження</td></tr>';
+        return;
+    }
+
+    const items = (detail.items || []).filter(i => i.item_type === 'grain' && (i.quantity_kg || 0) > 0);
+    if (!items.length) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty-state">У контракті немає позицій</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = '';
+    let totalUah = 0;
+    for (const it of items) {
+        const qty = it.quantity_kg || 0;
+        const price = it.price_per_kg || 0;
+        const sum = qty * price;
+        totalUah += sum;
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${escapeHtml(it.item_name || '—')}</td>
+            <td class="td-weight">${formatWeight(qty)}</td>
+            <td class="td-weight">${formatAmount(price)}</td>
+            <td class="td-weight">${formatAmount(sum)}</td>
+        `;
+        tbody.appendChild(tr);
+    }
+    const currency = detail.currency || 'UAH';
+    totalEl.textContent = `${formatAmount(totalUah)} грн` + (currency !== 'UAH' ? ` (≈ ${formatAmount(totalUah / (detail.exchange_rate || 1))} ${currency})` : '');
+
+    const close = () => modal.classList.add('hidden');
+
+    const onConfirm = async () => {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Виплата…';
+        try {
+            const resp = await apiFetch(`/farmer-contracts/${contract.id}/settle`, { method: 'POST' });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => null);
+                showToast(err?.detail || 'Не вдалося виконати виплату', 'error');
+                return;
+            }
+            showToast('Виплату виконано', 'success');
+            close();
+            await refreshAfterMutation([
+                'farmerContracts', 'farmerContractPayments',
+                'stock', 'stockAdjustments',
+                'cash', 'cashTransactions', 'owners',
+                'people', 'peopleActions', 'dashboard'
+            ]);
+        } finally {
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = 'Виплатити';
+        }
+    };
+
+    // Чисті слухачі через cloneNode (як в інших cancel-модалках)
+    const newConfirm = confirmBtn.cloneNode(true);
+    confirmBtn.parentNode.replaceChild(newConfirm, confirmBtn);
+    newConfirm.addEventListener('click', onConfirm);
+
+    const newCancel = cancelBtn.cloneNode(true);
+    cancelBtn.parentNode.replaceChild(newCancel, cancelBtn);
+    newCancel.addEventListener('click', close);
+
+    const newClose = closeBtn.cloneNode(true);
+    closeBtn.parentNode.replaceChild(newClose, closeBtn);
+    newClose.addEventListener('click', close);
+
+    overlay?.addEventListener('click', close, { once: true });
 }

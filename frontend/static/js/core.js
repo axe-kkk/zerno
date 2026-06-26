@@ -474,3 +474,29 @@ function renderPagedHint(hintId, state, reloadFn, labelNoun = 'записів') 
         await reloadFn({ append: false });
     });
 }
+
+// ── Глобальний прапор «модалка відкрита» ───────────────────────
+// Шукаємо .modal без класу .hidden — якщо є хоч одна, body отримує
+// .has-open-modal. Це дозволяє CSS-правилам паузити дорогі анімації
+// (skeleton-shimmer) у фоні, інакше вони змушують браузер repaint'ити
+// під blur-overlay'єм і scroll всередині модалки лагає на проді.
+(function watchOpenModals() {
+    const update = () => {
+        const anyOpen = document.querySelector('.modal:not(.hidden)') !== null;
+        document.body.classList.toggle('has-open-modal', anyOpen);
+    };
+    const startObserver = () => {
+        update();
+        const obs = new MutationObserver(() => update());
+        obs.observe(document.body, {
+            attributes: true,
+            attributeFilter: ['class'],
+            subtree: true,
+        });
+    };
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', startObserver, { once: true });
+    } else {
+        startObserver();
+    }
+})();

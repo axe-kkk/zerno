@@ -354,9 +354,14 @@ class FarmerGrainMovement(BaseModel, table=True):
     __tablename__ = "farmer_grain_movements"
 
     movement_type: str = Field(description="deduct / transfer")
-    from_owner_id: int = Field(foreign_key="grain_owners.id")
+    # Джерело: рівно одне з from_owner_id / from_person_id. from_owner_id
+    # nullable щоб можна було рухати «людина → підприємство».
+    from_owner_id: Optional[int] = Field(default=None, foreign_key="grain_owners.id")
+    from_person_id: Optional[int] = Field(default=None, foreign_key="people.id", description="Джерело — людина")
     to_owner_id: Optional[int] = Field(default=None, foreign_key="grain_owners.id")
     to_person_id: Optional[int] = Field(default=None, foreign_key="people.id", description="Переказ людині")
+    # Обидва `to_*` порожні + цей прапор → передача на власний склад підприємства.
+    to_enterprise: bool = Field(default=False, description="Переказ на власний склад підприємства")
     culture_id: int = Field(foreign_key="grain_cultures.id")
     quantity_kg: float = Field(description="Кількість, кг")
     note: Optional[str] = Field(default=None, description="Примітка")

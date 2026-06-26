@@ -50,6 +50,10 @@ router = APIRouter()
 _BALANCE_REDUCING_PAYMENT_TYPES = (
     FarmerContractPaymentType.CASH.value,
     FarmerContractPaymentType.GRAIN.value,
+    # SETTLEMENT — повне погашення боргу одним кроком (PAYMENT-контракт).
+    # Без цього balance закритого PAYMENT-контракту обчислюється як total
+    # замість 0, бо settlement-payment не враховувався як «оплата боргу».
+    FarmerContractPaymentType.SETTLEMENT.value,
 )
 
 
@@ -131,6 +135,15 @@ def _get_person_balance(session: Session, person_id: int, culture_id: int) -> fl
         )
     ).first() or 0.0
 
+    # OUT-перекази від цієї людини (наприклад, людина → підприємство або людина → фермер)
+    outgoing_transfer = session.exec(
+        select(func.sum(FarmerGrainMovement.quantity_kg)).where(
+            FarmerGrainMovement.from_person_id == person_id,
+            FarmerGrainMovement.culture_id == culture_id,
+            FarmerGrainMovement.movement_type == "transfer",
+        )
+    ).first() or 0.0
+
     contract_ids_query = select(FarmerContract.id).where(
         FarmerContract.person_id == person_id,
         FarmerContract.status != FarmerContractStatus.CANCELLED.value,
@@ -154,7 +167,7 @@ def _get_person_balance(session: Session, person_id: int, culture_id: int) -> fl
         )
     ).first() or 0.0
 
-    return float(incoming) - float(grain_spent) - float(payment_spent)
+    return float(incoming) - float(outgoing_transfer) - float(grain_spent) - float(payment_spent)
 
 
 def _normalize_name_for_match(name: str) -> str:
@@ -1116,6 +1129,146 @@ async def create_farmer_contract(
     )
 
 
+@router.post("/{contract_id}/settle", response_model=FarmerContractDetailResponse)
+async def settle_payment_contract(
+    contract_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_super_admin)
+):
+    """Виконати розрахунок по відкритому PAYMENT-контракту (Виплата).
+    Один крок: списати зерно з балансу контрагента, додати у склад підприємства,
+    видати гроші з каси, створити settlement-payment, закрити контракт.
+    Використовує позиції контракту як є (qty + price з створення).
+    """
+    contract = session.get(FarmerContract, contract_id)
+    if not contract:
+        raise HTTPException(status_code=404, detail="Контракт не знайдено")
+    if contract.contract_type != FarmerContractType.PAYMENT.value:
+        raise HTTPException(status_code=400, detail="Розрахунок можливий лише для контрактів типу Виплата")
+    if contract.status != FarmerContractStatus.OPEN.value:
+        raise HTTPException(status_code=400, detail="Контракт не у статусі «Відкритий»")
+
+    items = session.exec(
+        select(FarmerContractItem).where(FarmerContractItem.contract_id == contract_id)
+    ).all()
+    if not items:
+        raise HTTPException(status_code=400, detail="У контракті немає позицій")
+
+    is_person = bool(contract.person_id)
+    person = session.get(Person, contract.person_id) if is_person else None
+    owner = session.get(GrainOwner, contract.owner_id) if contract.owner_id else None
+    if is_person and not person:
+        raise HTTPException(status_code=404, detail="Людину не знайдено")
+    if not is_person and not owner:
+        raise HTTPException(status_code=404, detail="Фермера не знайдено")
+
+    # Перевіряємо доступний баланс по кожній GRAIN-позиції
+    farmer_total = 0.0
+    for item in items:
+        if item.item_type != FarmerContractItemType.GRAIN.value or not item.culture_id:
+            raise HTTPException(status_code=400, detail="У контракті виплати лише зернові позиції")
+        qty = item.quantity_kg or 0.0
+        if qty <= 0:
+            continue
+        if is_person:
+            available = _get_person_balance(session, contract.person_id, item.culture_id)
+        else:
+            available = _get_farmer_balance(session, contract.owner_id, item.culture_id)
+        if qty > available + 0.01:
+            culture = session.get(GrainCulture, item.culture_id)
+            cname = culture.name if culture else f"#{item.culture_id}"
+            raise HTTPException(
+                status_code=400,
+                detail=f"Недостатньо {cname} на балансі. Доступно: {available:.2f}, потрібно: {qty:.2f}"
+            )
+        farmer_total += qty * (item.price_per_kg or 0.0)
+
+    # Сума виплати у валюті контракту
+    currency_str = contract.currency or "UAH"
+    try:
+        currency_enum = Currency(currency_str)
+    except ValueError:
+        currency_enum = Currency.UAH
+    exchange_rate = contract.exchange_rate or 1.0
+    if currency_enum == Currency.UAH:
+        payout_amount = farmer_total
+    else:
+        if not exchange_rate or exchange_rate <= 0:
+            raise HTTPException(status_code=400, detail="Невалідний курс валюти у контракті")
+        payout_amount = round(farmer_total / exchange_rate, 2)
+
+    # Рух зерна: контрагент → склад підприємства
+    for item in items:
+        qty = item.quantity_kg or 0.0
+        if qty <= 0:
+            continue
+        stock = _get_or_create_grain_stock(session, item.culture_id)
+        if is_person:
+            stock.person_quantity_kg = max(0.0, (stock.person_quantity_kg or 0.0) - qty)
+        else:
+            stock.farmer_quantity_kg = max(0.0, stock.farmer_quantity_kg - qty)
+        stock.own_quantity_kg += qty
+        session.add(stock)
+        item.delivered_kg = qty
+        session.add(item)
+        # Списання з балансу фермера (для людини deduction-ів немає)
+        if not is_person:
+            session.add(FarmerGrainDeduction(
+                owner_id=contract.owner_id,
+                culture_id=item.culture_id,
+                quantity_kg=qty
+            ))
+
+    # Списуємо гроші з каси + Transaction
+    cash_register = _get_cash_register(session)
+    balance_field_map = {Currency.UAH: "uah_balance", Currency.USD: "usd_balance", Currency.EUR: "eur_balance"}
+    field = balance_field_map[currency_enum]
+    setattr(cash_register, field, getattr(cash_register, field) - payout_amount)
+    session.add(cash_register)
+    counterparty_label = (person.full_name if person else (owner.full_name if owner else "?"))
+    session.add(Transaction(
+        currency=currency_enum,
+        amount=payout_amount,
+        transaction_type=TransactionType.SUBTRACT,
+        user_id=current_user.id,
+        description=f"Виплата за контрактом #{contract.id} ({counterparty_label})",
+        uah_balance_after=cash_register.uah_balance,
+        usd_balance_after=cash_register.usd_balance,
+        eur_balance_after=cash_register.eur_balance
+    ))
+
+    # Settlement payment
+    session.add(FarmerContractPayment(
+        contract_id=contract.id,
+        payment_type=FarmerContractPaymentType.SETTLEMENT.value,
+        item_name=f"Виплата {currency_str}",
+        amount=payout_amount,
+        currency=currency_enum,
+        exchange_rate=exchange_rate,
+        amount_uah=farmer_total,
+        created_by_user_id=current_user.id
+    ))
+
+    # Закриваємо контракт
+    contract.balance_uah = 0.0
+    contract.status = FarmerContractStatus.CLOSED.value
+    session.add(contract)
+
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    session.refresh(contract)
+    fresh_items = session.exec(
+        select(FarmerContractItem).where(FarmerContractItem.contract_id == contract.id)
+    ).all()
+    return FarmerContractDetailResponse(
+        **contract.dict(),
+        items=[FarmerContractItemResponse.from_orm(i) for i in fresh_items]
+    )
+
+
 @router.post("/{contract_id}/activate", response_model=FarmerContractResponse)
 async def activate_reserve_contract(
     contract_id: int,
@@ -1887,9 +2040,82 @@ async def cancel_farmer_contract_payment(
 
         session.add(contract)
 
-    # ─── SETTLEMENT: авторозрахунок (контракт виплати) ───
+    # ─── SETTLEMENT: розрахунок (контракт виплати) ───
+    # Скасування дзеркалить creation: зерно з власного складу → на баланс
+    # фермера/людини, видаляємо deductions, гроші повертаємо у касу,
+    # контракт переводимо в OPEN з balance_uah=0 (нічого не винні —
+    # повернули і зерно, і гроші).
     elif payment.payment_type == FarmerContractPaymentType.SETTLEMENT.value:
-        raise HTTPException(status_code=400, detail="Неможливо скасувати авторозрахунок. Зверніться до адміністратора.")
+        items = session.exec(
+            select(FarmerContractItem).where(FarmerContractItem.contract_id == contract.id)
+        ).all()
+
+        for item in items:
+            if item.item_type != FarmerContractItemType.GRAIN.value or not item.culture_id:
+                continue
+            qty = item.quantity_kg or 0.0
+            if qty <= 0:
+                continue
+
+            stock = _get_or_create_grain_stock(session, item.culture_id)
+            stock.own_quantity_kg = max(0.0, stock.own_quantity_kg - qty)
+            if contract.person_id:
+                stock.person_quantity_kg = (stock.person_quantity_kg or 0.0) + qty
+            else:
+                stock.farmer_quantity_kg += qty
+            session.add(stock)
+
+            item.delivered_kg = max(0.0, (item.delivered_kg or 0.0) - qty)
+            session.add(item)
+
+            # Видаляємо запис списання з балансу фермера (для людини deduction-ів немає)
+            if not contract.person_id and contract.owner_id:
+                deduction = session.exec(
+                    select(FarmerGrainDeduction).where(
+                        FarmerGrainDeduction.owner_id == contract.owner_id,
+                        FarmerGrainDeduction.culture_id == item.culture_id,
+                        FarmerGrainDeduction.quantity_kg == qty,
+                    ).order_by(FarmerGrainDeduction.created_at.desc()).limit(1)
+                ).first()
+                if deduction:
+                    session.delete(deduction)
+
+        # Повертаємо гроші у касу
+        amount = payment.amount or 0.0
+        if amount > 0:
+            cash_register = _get_cash_register(session)
+            currency_str = payment.currency.value if hasattr(payment.currency, 'value') else (payment.currency or "UAH")
+            balance_field_map = {"UAH": "uah_balance", "USD": "usd_balance", "EUR": "eur_balance"}
+            balance_field = balance_field_map.get(currency_str, "uah_balance")
+            current_balance = getattr(cash_register, balance_field)
+            setattr(cash_register, balance_field, current_balance + amount)
+            session.add(cash_register)
+            try:
+                currency_enum = Currency(currency_str)
+            except ValueError:
+                currency_enum = Currency.UAH
+
+            if contract.person_id:
+                p = session.get(Person, contract.person_id)
+                counterparty_label = p.full_name if p else "Людина"
+            else:
+                counterparty_label = owner.full_name if owner else "?"
+
+            session.add(Transaction(
+                currency=currency_enum,
+                amount=amount,
+                transaction_type=TransactionType.ADD,
+                user_id=current_user.id,
+                description=f"Скасування розрахунку за контрактом #{contract.id} ({counterparty_label})",
+                uah_balance_after=cash_register.uah_balance,
+                usd_balance_after=cash_register.usd_balance,
+                eur_balance_after=cash_register.eur_balance
+            ))
+
+        # Контракт стає відкритим з нульовим балансом — зерно і гроші повернули,
+        # ніхто нікому нічого не винен. Оператор може створити нову операцію.
+        contract.balance_uah = 0.0
+        session.add(contract)
 
     # Якщо контракт був закритий — відкриваємо назад
     if contract.status == FarmerContractStatus.CLOSED.value:

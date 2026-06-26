@@ -7,6 +7,16 @@ from datetime import datetime, date, time, timedelta
 from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+import math
+
+
+def _round_kg(value: float) -> float:
+    """Округлення прийнятої ваги до цілих кг за правилом «округлення з 5 вгору».
+    0..4 у дробовій частині → вниз; 5..9 → вгору. Python round() використовує
+    банкірське округлення (round half to even), тому беремо math.floor(x + 0.5).
+    Чесно повертає float, щоб у БД лишався тип DOUBLE PRECISION без міграції.
+    """
+    return float(math.floor((value or 0.0) + 0.5))
 
 from backend.database import get_session
 from backend.models import (
@@ -1055,67 +1065,118 @@ async def transfer_farmer_grain(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_super_admin)
 ):
-    """Переміщення зерна від фермера до іншого фермера або людини.
+    """Переміщення зерна.
 
-    Фермер → фермер: зерно лишається на складі, переходить на баланс іншого фермера
-    (створюється синтетична картка приходу у отримувача, помічена `is_farmer_transfer`).
-    Фермер → людина: зерно фізично залишає склад (`farmer_quantity_kg -= qty`,
-    `quantity_kg -= qty`), у людини балансу не накопичується.
+    Джерело — рівно одне:
+      • `from_owner_id` — фермер (баланс ведеться через FarmerGrainDeduction);
+      • `from_person_id` — людина (баланс рахується по рухах).
+
+    Отримувач — рівно одне:
+      • `to_owner_id` — інший фермер (зерно лишається на складі, у отримувача
+        створюється синтетична картка приходу);
+      • `to_person_id` — людина (бакет складу `person_quantity_kg`);
+      • `to_enterprise=True` — у власний склад підприємства (own_quantity_kg).
+
+    Залежно від комбінації відбувається перепідвішування бакетів складу
+    (farmer/person/own) і фіксується запис у FarmerGrainMovement.
     """
-    has_owner = bool(payload.to_owner_id)
-    has_person = bool(payload.to_person_id)
-    if has_owner == has_person:
+    has_from_owner = bool(payload.from_owner_id)
+    has_from_person = bool(payload.from_person_id)
+    if has_from_owner == has_from_person:
         raise HTTPException(
             status_code=400,
-            detail="Вкажіть отримувача — фермера або людину (рівно одне з полів)"
+            detail="Вкажіть джерело — фермера або людину (рівно одне з полів)"
         )
-    if has_owner and payload.from_owner_id == payload.to_owner_id:
+
+    has_to_owner = bool(payload.to_owner_id)
+    has_to_person = bool(payload.to_person_id)
+    has_to_enterprise = bool(payload.to_enterprise)
+    if sum([has_to_owner, has_to_person, has_to_enterprise]) != 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Вкажіть отримувача — фермера, людину або підприємство (рівно одне з полів)"
+        )
+
+    if has_from_owner and has_to_owner and payload.from_owner_id == payload.to_owner_id:
+        raise HTTPException(status_code=400, detail="Не можна переміщувати зерно самому собі")
+    if has_from_person and has_to_person and payload.from_person_id == payload.to_person_id:
         raise HTTPException(status_code=400, detail="Не можна переміщувати зерно самому собі")
 
-    from_owner = session.get(GrainOwner, payload.from_owner_id)
-    if not from_owner:
-        raise HTTPException(status_code=404, detail="Фермера-відправника не знайдено")
+    from backend.models import Person
+    from_owner = None
+    from_person = None
+    sender_label = ""
+    if has_from_owner:
+        from_owner = session.get(GrainOwner, payload.from_owner_id)
+        if not from_owner:
+            raise HTTPException(status_code=404, detail="Фермера-відправника не знайдено")
+        sender_label = from_owner.full_name
+    else:
+        from_person = session.get(Person, payload.from_person_id)
+        if not from_person:
+            raise HTTPException(status_code=404, detail="Людину-відправника не знайдено")
+        sender_label = from_person.full_name
 
     to_owner = None
     to_person = None
-    receiver_label = ""
-    if has_owner:
+    if has_to_owner:
         to_owner = session.get(GrainOwner, payload.to_owner_id)
         if not to_owner:
             raise HTTPException(status_code=404, detail="Фермера-отримувача не знайдено")
-        receiver_label = to_owner.full_name
-    else:
-        from backend.models import Person
+    elif has_to_person:
         to_person = session.get(Person, payload.to_person_id)
         if not to_person:
-            raise HTTPException(status_code=404, detail="Людину не знайдено")
-        receiver_label = to_person.full_name
+            raise HTTPException(status_code=404, detail="Людину-отримувача не знайдено")
 
     culture = session.get(GrainCulture, payload.culture_id)
     if not culture:
         raise HTTPException(status_code=404, detail="Культуру не знайдено")
 
-    balance = await get_owner_balance(payload.from_owner_id, session, current_user)
-    culture_balance = next((b for b in balance if b.culture_id == payload.culture_id), None)
-    available = culture_balance.quantity_kg if culture_balance else 0.0
+    # Доступний баланс джерела
+    if has_from_owner:
+        balance = await get_owner_balance(payload.from_owner_id, session, current_user)
+        culture_balance = next((b for b in balance if b.culture_id == payload.culture_id), None)
+        available = culture_balance.quantity_kg if culture_balance else 0.0
+    else:
+        # _get_person_balance: incoming transfers − витрати по контрактах.
+        # Не враховує OUT-перекази між людьми — тут ми додаємо саме такий рух;
+        # компенсуємо у запиті балансу у farmer_contracts._get_person_balance.
+        from backend.api.farmer_contracts import _get_person_balance
+        available = _get_person_balance(session, payload.from_person_id, payload.culture_id)
 
-    if payload.quantity_kg > available:
+    if payload.quantity_kg > available + 0.01:
         raise HTTPException(
             status_code=400,
             detail=f"Недостатньо зерна у відправника. Доступно: {available:.2f} кг"
         )
 
-    deduction = FarmerGrainDeduction(
-        owner_id=payload.from_owner_id,
-        culture_id=payload.culture_id,
-        quantity_kg=payload.quantity_kg,
-        payment_id=None
-    )
-    session.add(deduction)
+    # ─── Списання у джерела (для фермера — через FarmerGrainDeduction) ───
+    if has_from_owner:
+        session.add(FarmerGrainDeduction(
+            owner_id=payload.from_owner_id,
+            culture_id=payload.culture_id,
+            quantity_kg=payload.quantity_kg,
+            payment_id=None
+        ))
 
-    if to_owner:
-        # Фермер → фермер: зерно фізично лишається на складі, отримувач накопичує баланс.
-        to_intake = GrainIntake(
+    # ─── Рух бакетів складу залежно від комбінації ───
+    stock = session.exec(
+        select(GrainStock).where(GrainStock.culture_id == payload.culture_id)
+    ).first()
+
+    if has_to_owner:
+        # Призначення — фермер: у джерела зменшуємо бакет (farmer або person),
+        # отримувач накопичує баланс через GrainIntake.is_farmer_transfer.
+        if stock:
+            if has_from_owner:
+                # farmer→farmer: зерно фізично лишається у farmer-бакеті — не рухаємо
+                pass
+            else:
+                # person→farmer: переходить з person-бакета у farmer-бакет
+                stock.person_quantity_kg = max(0.0, (stock.person_quantity_kg or 0.0) - payload.quantity_kg)
+                stock.farmer_quantity_kg += payload.quantity_kg
+                session.add(stock)
+        session.add(GrainIntake(
             culture_id=payload.culture_id,
             vehicle_type_id=1,
             owner_id=payload.to_owner_id,
@@ -1131,30 +1192,36 @@ async def transfer_farmer_grain(
             pending_tare=False,
             impurity_percent=0,
             has_trailer=False,
-            note=f"Трансфер від {from_owner.full_name}",
+            note=f"Трансфер від {sender_label}",
             is_farmer_transfer=True,
             created_by_user_id=current_user.id
-        )
-        session.add(to_intake)
-    else:
-        # Фермер → людина: зерно лишається у нас на складі, перевішується з
-        # farmer_quantity_kg у person_quantity_kg. Фізично нічого не вибуває —
-        # людина потім або забере, або обміняє за контрактом.
-        # quantity_kg (загальний фізичний об'єм) не змінюється, тому
-        # StockAdjustmentLog не пишемо — це не списання, а внутрішня переуступка.
-        stock = session.exec(
-            select(GrainStock).where(GrainStock.culture_id == payload.culture_id)
-        ).first()
+        ))
+    elif has_to_person:
+        # Призначення — людина: бакет person+=qty, бакет джерела -=qty.
         if stock:
-            stock.farmer_quantity_kg = max(0.0, stock.farmer_quantity_kg - payload.quantity_kg)
+            if has_from_owner:
+                stock.farmer_quantity_kg = max(0.0, stock.farmer_quantity_kg - payload.quantity_kg)
+            else:
+                stock.person_quantity_kg = max(0.0, (stock.person_quantity_kg or 0.0) - payload.quantity_kg)
             stock.person_quantity_kg = (stock.person_quantity_kg or 0.0) + payload.quantity_kg
+            session.add(stock)
+    else:
+        # Призначення — підприємство: бакет own+=qty, бакет джерела -=qty.
+        if stock:
+            if has_from_owner:
+                stock.farmer_quantity_kg = max(0.0, stock.farmer_quantity_kg - payload.quantity_kg)
+            else:
+                stock.person_quantity_kg = max(0.0, (stock.person_quantity_kg or 0.0) - payload.quantity_kg)
+            stock.own_quantity_kg += payload.quantity_kg
             session.add(stock)
 
     movement = FarmerGrainMovement(
         movement_type="transfer",
         from_owner_id=payload.from_owner_id,
+        from_person_id=payload.from_person_id,
         to_owner_id=payload.to_owner_id,
         to_person_id=payload.to_person_id,
+        to_enterprise=bool(payload.to_enterprise),
         culture_id=payload.culture_id,
         quantity_kg=payload.quantity_kg,
         note=payload.note,
@@ -1912,7 +1979,7 @@ async def create_intake(
         if payload.pending_quality:
             accepted_weight = 0.0
         else:
-            accepted_weight = net_weight * (1 - payload.impurity_percent / 100)
+            accepted_weight = _round_kg(net_weight * (1 - payload.impurity_percent / 100))
 
     field_id = payload.field_id if payload.is_own_grain else None
 
@@ -3368,7 +3435,7 @@ async def update_intake_quality(
             detail="Спочатку вкажіть тару в картці приходу",
         )
 
-    new_accepted = intake.net_weight_kg * (1 - payload.impurity_percent / 100)
+    new_accepted = _round_kg(intake.net_weight_kg * (1 - payload.impurity_percent / 100))
     old_accepted = intake.accepted_weight_kg
     was_pending = intake.pending_quality
 
@@ -3587,7 +3654,7 @@ async def update_intake(
         if pending:
             update_data["accepted_weight_kg"] = 0.0
         else:
-            update_data["accepted_weight_kg"] = net * (1 - float(impurity) / 100)
+            update_data["accepted_weight_kg"] = _round_kg(net * (1 - float(impurity) / 100))
 
     # Оновлюємо модель
     for field, value in update_data.items():

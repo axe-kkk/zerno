@@ -956,7 +956,7 @@ function initShipmentCreateModal() {
         if (form) clearFormValidationState(form, 'shipment-message');
         populateShipmentSelects();
         modal.classList.remove('hidden');
-        initCustomSelects();
+        modal.querySelectorAll('.form-field select').forEach(sel => initCustomSelects(sel));
     });
     closeBtn.addEventListener('click', closeShipmentCreateModal);
     overlay.addEventListener('click', closeShipmentCreateModal);
@@ -1143,7 +1143,7 @@ function openShipmentEditModal(item) {
         vehicleSelect.value = item.vehicle_type_id ? String(item.vehicle_type_id) : '';
     }
 
-    initCustomSelects();
+    modal.querySelectorAll('.form-field select').forEach(sel => initCustomSelects(sel));
     clearFormValidationState(document.getElementById('shipment-edit-form'), 'shipment-edit-message');
     modal.classList.remove('hidden');
 }
@@ -1301,6 +1301,10 @@ const farmerMovementsState = createPaginatedState({ pageSize: 100, periodDays: 9
 const cashTransactionsState = createPaginatedState({ pageSize: 100, periodDays: 90 });
 const stockAdjustmentsState = createPaginatedState({ pageSize: 100, periodDays: 90 });
 
+// Прапор фонового довантаження повної історії. Гарантує що паралельні
+// loadAllIntakes-виклики не запустять одночасно декілька циклів.
+let _intakesBackfillRunning = false;
+
 async function loadAllIntakes({ append = false } = {}) {
     if (!append) {
         intakesState.offset = 0;
@@ -1316,6 +1320,52 @@ async function loadAllIntakes({ append = false } = {}) {
     renderFarmerIntakesTable(applyFarmerIntakeFilters(intakesCache));
     updateIntakeMetrics(intakesCache);
     renderPagedHint('intakes-period-hint', intakesState, loadAllIntakes, 'карток');
+
+    // Якщо це був initial-fetch і ще є дані — фоном докачуємо решту,
+    // щоб «Доставки водіїв», «Інтейки фермера» та інші клієнт-кешові
+    // вкладки бачили повну історію, а не лише останні 100 за 90 днів.
+    if (!append && intakesState.hasMore()) {
+        backfillAllIntakesInBackground();
+    }
+}
+
+async function backfillAllIntakesInBackground() {
+    if (_intakesBackfillRunning) return;
+    _intakesBackfillRunning = true;
+    try {
+        while (intakesState.hasMore()) {
+            intakesState.offset = intakesState.items.length;
+            const path = '/grain/intakes' + intakesState.toQuery();
+            let chunk;
+            try {
+                chunk = await apiFetchCached(path, { force: true });
+            } catch (e) {
+                // Не лагаємо UX — просто припиняємо backfill якщо щось пішло не так.
+                console.warn('intakes backfill stopped', e);
+                break;
+            }
+            const data = chunk?.data || [];
+            if (!data.length) break;
+            // Дедуп за id — на випадок гонок із refreshAfterMutation під час backfill.
+            const seen = new Set(intakesState.items.map(i => i.id));
+            const fresh = data.filter(i => !seen.has(i.id));
+            intakesState.items = intakesState.items.concat(fresh);
+            intakesCache = intakesState.items;
+            // Перерендер тільки derived-views (основну intake-таблицю не чіпаємо
+            // — вона має свою пагінацію і не повинна несподівано розростатись).
+            if (typeof renderDriverDeliveriesTable === 'function') {
+                renderDriverDeliveriesTable(applyDriverDeliveryFilters());
+            }
+            if (typeof renderFarmerIntakesTable === 'function') {
+                renderFarmerIntakesTable(applyFarmerIntakeFilters(intakesCache));
+            }
+            if (typeof renderFieldIntakesTable === 'function') {
+                renderFieldIntakesTable();
+            }
+        }
+    } finally {
+        _intakesBackfillRunning = false;
+    }
 }
 
 function initDriverDeliveriesFilters() {
@@ -2277,18 +2327,29 @@ function renderFarmerMovementsTable(data) {
     }
     if (hint) hint.style.display = 'none';
     items.forEach(m => {
-        const fromOwner = ownersCache.find(o => o.id === m.from_owner_id);
+        const fromOwner = m.from_owner_id ? ownersCache.find(o => o.id === m.from_owner_id) : null;
+        const fromPerson = m.from_person_id ? (peopleCache || []).find(p => p.id === m.from_person_id) : null;
         const toOwner = m.to_owner_id ? ownersCache.find(o => o.id === m.to_owner_id) : null;
         const toPerson = m.to_person_id ? (peopleCache || []).find(p => p.id === m.to_person_id) : null;
         const culture = culturesCache.find(c => c.id === m.culture_id);
         const typeBadge = m.movement_type === 'transfer'
             ? '<span class="inline-badge cash">Переміщення</span>'
             : '<span class="inline-badge receive">Списання</span>';
+        let fromCell;
+        if (fromOwner) {
+            fromCell = `<strong>${escapeHtml(fromOwner.full_name)}</strong>`;
+        } else if (fromPerson) {
+            fromCell = `<strong>${escapeHtml(fromPerson.full_name)}</strong> <span class="status-badge info" style="font-size:10px;">людина</span>`;
+        } else {
+            fromCell = emptyValueHtml();
+        }
         let toCell;
         if (toOwner) {
             toCell = `<strong>${escapeHtml(toOwner.full_name)}</strong>`;
         } else if (toPerson) {
             toCell = `<strong>${escapeHtml(toPerson.full_name)}</strong> <span class="status-badge info" style="font-size:10px;">людина</span>`;
+        } else if (m.to_enterprise) {
+            toCell = `<strong>Підприємство</strong> <span class="status-badge success" style="font-size:10px;">склад</span>`;
         } else {
             toCell = emptyValueHtml();
         }
@@ -2296,7 +2357,7 @@ function renderFarmerMovementsTable(data) {
         row.innerHTML = `
             <td>${formatDate(m.created_at)}</td>
             <td>${typeBadge}</td>
-            <td><strong>${fromOwner ? escapeHtml(fromOwner.full_name) : emptyValueHtml()}</strong></td>
+            <td>${fromCell}</td>
             <td>${toCell}</td>
             <td>${culture ? escapeHtml(culture.name) : emptyValueHtml()}</td>
             <td class="td-weight">${formatWeight(m.quantity_kg)} кг</td>
@@ -2457,29 +2518,53 @@ function initFarmerTransferModal() {
     cancelBtn?.addEventListener('click', closeModal);
     overlay?.addEventListener('click', closeModal);
 
+    const fromPersonSelect = document.getElementById('farmer-transfer-from-person');
+    const ftFromFarmerField = document.getElementById('ft-from-farmer-field');
+    const ftFromPersonField = document.getElementById('ft-from-person-field');
+
     const populateOwners = () => {
-        const opts = '<option value="">Оберіть</option>' +
-            ownersCache.map(o => `<option value="${o.id}">${o.full_name}</option>`).join('');
-        fromSelect.innerHTML = opts;
-        toSelect.innerHTML = opts;
+        const ownerOpts = '<option value="">Оберіть</option>' +
+            (ownersCache || []).map(o => `<option value="${o.id}">${o.full_name}</option>`).join('');
+        fromSelect.innerHTML = ownerOpts;
+        toSelect.innerHTML = ownerOpts;
         initCustomSelects(fromSelect);
         initCustomSelects(toSelect);
+        // People (для нового from=person і існуючого to=person)
+        const peopleOpts = '<option value="">Оберіть людину</option>' +
+            (peopleCache || []).map(p => `<option value="${p.id}">${p.full_name}</option>`).join('');
+        if (fromPersonSelect) {
+            fromPersonSelect.innerHTML = peopleOpts;
+            initCustomSelects(fromPersonSelect);
+        }
+        if (personSelect) {
+            personSelect.innerHTML = peopleOpts;
+            initCustomSelects(personSelect);
+        }
     };
 
     const balanceSection = document.getElementById('farmer-transfer-balance');
     const balanceCards = document.getElementById('farmer-transfer-balance-cards');
 
+    const getSenderKind = () => {
+        const checked = modal.querySelector('input[name="ft-sender"]:checked');
+        return checked ? checked.value : 'farmer';
+    };
+
     const loadFromBalance = async () => {
-        const fromId = fromSelect.value;
+        const senderKind = getSenderKind();
+        const sourceId = senderKind === 'person' ? fromPersonSelect?.value : fromSelect.value;
         cultureSelect.innerHTML = '<option value="">Оберіть</option>';
         if (hint) hint.textContent = '';
         if (balanceSection) balanceSection.classList.add('hidden');
         if (balanceCards) balanceCards.innerHTML = '';
-        if (!fromId) {
+        if (!sourceId) {
             refreshCustomSelect(cultureSelect);
             return;
         }
-        const response = await apiFetch(`/grain/owners/${fromId}/balance`);
+        const endpoint = senderKind === 'person'
+            ? `/people/${sourceId}/balance`
+            : `/grain/owners/${sourceId}/balance`;
+        const response = await apiFetch(endpoint);
         if (!response.ok) return;
         const items = await response.json();
         if (!items.length) {
@@ -2525,8 +2610,9 @@ function initFarmerTransferModal() {
     };
 
     fromSelect.addEventListener('change', loadFromBalance);
+    fromPersonSelect?.addEventListener('change', loadFromBalance);
 
-    // ── Receiver toggle: фермер ↔ людина ──
+    // ── Receiver toggle: фермер ↔ людина ↔ підприємство ──
     const personSelect = document.getElementById('farmer-transfer-person');
     const ftToFarmerField = document.getElementById('ft-to-farmer-field');
     const ftToPersonField = document.getElementById('ft-to-person-field');
@@ -2538,13 +2624,14 @@ function initFarmerTransferModal() {
 
     const applyReceiverKind = () => {
         const kind = getReceiverKind();
-        const isPerson = kind === 'person';
-        ftToFarmerField?.classList.toggle('hidden', isPerson);
-        ftToPersonField?.classList.toggle('hidden', !isPerson);
-        if (isPerson) {
+        ftToFarmerField?.classList.toggle('hidden', kind !== 'farmer');
+        ftToPersonField?.classList.toggle('hidden', kind !== 'person');
+        // Очищаємо невидимі поля щоб не плутати валідацію
+        if (kind !== 'farmer' && toSelect) {
             toSelect.value = '';
             if (typeof refreshCustomSelect === 'function') refreshCustomSelect(toSelect);
-        } else if (personSelect) {
+        }
+        if (kind !== 'person' && personSelect) {
             personSelect.value = '';
             if (typeof refreshCustomSelect === 'function') refreshCustomSelect(personSelect);
         }
@@ -2554,7 +2641,31 @@ function initFarmerTransferModal() {
         r.addEventListener('change', applyReceiverKind);
     });
 
-    openBtn?.addEventListener('click', () => {
+    // ── Sender toggle: фермер ↔ людина ──
+    const applySenderKind = () => {
+        const kind = getSenderKind();
+        ftFromFarmerField?.classList.toggle('hidden', kind === 'person');
+        ftFromPersonField?.classList.toggle('hidden', kind !== 'person');
+        // Очищаємо невидиме поле джерела
+        if (kind === 'person' && fromSelect) {
+            fromSelect.value = '';
+            if (typeof refreshCustomSelect === 'function') refreshCustomSelect(fromSelect);
+        }
+        if (kind === 'farmer' && fromPersonSelect) {
+            fromPersonSelect.value = '';
+            if (typeof refreshCustomSelect === 'function') refreshCustomSelect(fromPersonSelect);
+        }
+        // Перезавантажуємо баланс під нове джерело
+        loadFromBalance();
+    };
+
+    modal.querySelectorAll('input[name="ft-sender"]').forEach(r => {
+        r.addEventListener('change', applySenderKind);
+    });
+
+    // Спільний open-handler. lockSender = 'farmer'|'person' замикає
+    // вибір джерела (приховує радіо «Від кого» — джерело визначає сторінка).
+    const openTransferModal = (lockSender) => {
         if (transferRoot) clearFormValidationState(transferRoot, 'farmer-transfer-message');
         populateOwners();
         cultureSelect.innerHTML = '<option value="">Оберіть</option>';
@@ -2564,40 +2675,75 @@ function initFarmerTransferModal() {
         if (hint) hint.textContent = '';
         if (balanceSection) balanceSection.classList.add('hidden');
         if (balanceCards) balanceCards.innerHTML = '';
-        // Скинути радіо отримувача
-        const farmerR = modal.querySelector('input[name="ft-receiver"][value="farmer"]');
-        if (farmerR) farmerR.checked = true;
+
+        const senderKind = lockSender === 'person' ? 'person' : 'farmer';
+        const senderRadio = modal.querySelector(`input[name="ft-sender"][value="${senderKind}"]`);
+        if (senderRadio) senderRadio.checked = true;
+        const senderToggleWrap = modal.querySelector('input[name="ft-sender"]')?.closest('.form-field');
+        if (senderToggleWrap) senderToggleWrap.classList.toggle('hidden', !!lockSender);
+
+        // Дефолтний отримувач: коли джерело — людина, дефолтом ставимо
+        // «Підприємству» (типовий сценарій із цієї сторінки).
+        const defaultReceiver = senderKind === 'person' ? 'enterprise' : 'farmer';
+        const receiverRadio = modal.querySelector(`input[name="ft-receiver"][value="${defaultReceiver}"]`);
+        if (receiverRadio) receiverRadio.checked = true;
+
         if (personSelect) personSelect.value = '';
+        if (fromPersonSelect) fromPersonSelect.value = '';
+        if (fromSelect) fromSelect.value = '';
+
+        applySenderKind();
         applyReceiverKind();
         modal.classList.remove('hidden');
-    });
+    };
+
+    openBtn?.addEventListener('click', () => openTransferModal('farmer'));
+    const personOpenBtn = document.getElementById('person-transfer-btn');
+    personOpenBtn?.addEventListener('click', () => openTransferModal('person'));
 
     confirmBtn.addEventListener('click', async () => {
-        const fromId = parseInt(fromSelect.value);
+        const senderKind = getSenderKind();
         const receiverKind = getReceiverKind();
+        const isPersonSender = senderKind === 'person';
+        const fromOwnerId = isPersonSender ? null : (parseInt(fromSelect.value) || null);
+        const fromPersonId = isPersonSender ? (parseInt(fromPersonSelect?.value || '') || null) : null;
         const isPersonReceiver = receiverKind === 'person';
-        const toId = isPersonReceiver ? null : parseInt(toSelect.value);
-        const personId = isPersonReceiver ? parseInt(personSelect?.value || '') : null;
+        const isEnterpriseReceiver = receiverKind === 'enterprise';
+        const toOwnerId = (receiverKind === 'farmer') ? (parseInt(toSelect.value) || null) : null;
+        const toPersonId = isPersonReceiver ? (parseInt(personSelect?.value || '') || null) : null;
         const cultureId = parseInt(cultureSelect.value);
         const qty = parseFloat(quantityInput.value);
-        if (!fromId) {
+
+        // Валідація джерела
+        if (isPersonSender) {
+            if (!fromPersonId) {
+                formShowValidationError(transferRoot, 'farmer-transfer-message', 'Оберіть людину-відправника', ['farmer-transfer-from-person']);
+                return;
+            }
+        } else if (!fromOwnerId) {
             formShowValidationError(transferRoot, 'farmer-transfer-message', 'Оберіть фермера-відправника', ['farmer-transfer-from']);
             return;
         }
-        if (isPersonReceiver) {
-            if (!personId) {
-                formShowValidationError(transferRoot, 'farmer-transfer-message', 'Оберіть людину', ['farmer-transfer-person']);
-                return;
-            }
-        } else {
-            if (!toId) {
+
+        // Валідація отримувача
+        if (receiverKind === 'farmer') {
+            if (!toOwnerId) {
                 formShowValidationError(transferRoot, 'farmer-transfer-message', 'Оберіть фермера-отримувача', ['farmer-transfer-to']);
                 return;
             }
-            if (fromId === toId) {
+            if (!isPersonSender && fromOwnerId === toOwnerId) {
                 const ff = fromSelect.closest('.form-field');
                 const tf = toSelect.closest('.form-field');
                 formShowValidationError(transferRoot, 'farmer-transfer-message', 'Відправник і отримувач повинні бути різними', [], [ff, tf].filter(Boolean));
+                return;
+            }
+        } else if (isPersonReceiver) {
+            if (!toPersonId) {
+                formShowValidationError(transferRoot, 'farmer-transfer-message', 'Оберіть людину', ['farmer-transfer-person']);
+                return;
+            }
+            if (isPersonSender && fromPersonId === toPersonId) {
+                formShowValidationError(transferRoot, 'farmer-transfer-message', 'Відправник і отримувач повинні бути різними', ['farmer-transfer-from-person', 'farmer-transfer-person']);
                 return;
             }
         }
@@ -2621,9 +2767,11 @@ function initFarmerTransferModal() {
         const response = await apiFetch('/grain/farmer-movements/transfer', {
             method: 'POST',
             body: JSON.stringify({
-                from_owner_id: fromId,
-                to_owner_id: toId,
-                to_person_id: personId,
+                from_owner_id: fromOwnerId,
+                from_person_id: fromPersonId,
+                to_owner_id: toOwnerId,
+                to_person_id: toPersonId,
+                to_enterprise: isEnterpriseReceiver,
                 culture_id: cultureId,
                 quantity_kg: qty,
                 note: note || null
@@ -4195,7 +4343,10 @@ function initIntakeForm() {
         const isInternal = internalDriverCheckbox.checked;
         internalBlock.classList.toggle('hidden', !isInternal);
         externalBlock.classList.toggle('hidden', isInternal);
-        initCustomSelects();
+        // Тут потрібно лише ре-ініціювати селекти всередині блоку водія,
+        // який щойно став видимим — не всі 100+ дропдаунів на сторінці.
+        const visibleBlock = isInternal ? internalBlock : externalBlock;
+        visibleBlock?.querySelectorAll('select').forEach(sel => initCustomSelects(sel));
     });
 
     form.addEventListener('submit', async (event) => {
@@ -4249,7 +4400,9 @@ function initIntakeCreateModal() {
         if (typeof populateOwnerSelect === 'function') {
             populateOwnerSelect('intake-owner-select');
         }
-        initCustomSelects();
+        // Лише select'и цієї модалки, а не всі 100+ на сторінці. Інакше відкриття
+        // картки на проді лагає 200-500ms через ребілд десятків custom-dropdown-ів.
+        modal.querySelectorAll('.form-field select').forEach(sel => initCustomSelects(sel));
     });
 
     closeBtn.addEventListener('click', closeIntakeCreateModal);

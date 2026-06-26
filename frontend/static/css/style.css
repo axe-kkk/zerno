@@ -3277,6 +3277,11 @@ td .empty-value,
     border-radius: var(--radius-lg);
     border: 1px solid var(--border);
     border-top: 3px solid var(--primary);
+    /* Промує модалку на окремий GPU compositor layer — браузер не змішує
+       її з blur backdrop-у на кожному кадрі скролу. Це критично коли
+       внизу сторінки крутиться skeleton-shimmer чи інша анімація. */
+    will-change: transform;
+    transform: translateZ(0);
     box-shadow: 0 20px 60px -12px rgba(0, 0, 0, 0.18), 0 4px 16px -4px rgba(0, 0, 0, 0.08);
     width: 100%;
     max-width: 520px;
@@ -7327,6 +7332,14 @@ body.user-is-not-admin [data-admin-action] {
     animation: skeleton-shimmer 1.4s ease-in-out infinite;
 }
 
+/* Коли над сторінкою висить модалка — паузимо нескінченні скелетон-анімації,
+   інакше вони змушують браузер перераховувати blur backdrop-у на кожен
+   кадр і scroll всередині модалки лагає. Сторінка під модалкою все одно
+   не видна оператору. */
+body.has-open-modal .skeleton {
+    animation: none;
+}
+
 @keyframes skeleton-shimmer {
     0%   { background-position: 200% 0; }
     100% { background-position: -200% 0; }
@@ -9370,8 +9383,8 @@ label {
 
 .modal {
     background: rgba(9, 9, 11, 0.45);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    /* backdrop-filter винесено лише на .modal-overlay щоб не подвоювати
+       перерахунок блюру (це душило scroll-fps усередині модалки). */
     padding: 32px 24px;
 }
 

@@ -16,6 +16,12 @@ async function loadFields() {
         if (res.ok) {
             fieldsCache = await res.json();
             renderFieldsTable(fieldsCache);
+            // Оновлюємо опції фільтра «Поле» у таблиці «Привезено з полів».
+            // Без цього після refreshAfterMutation(['fields']) дропдаун
+            // лишається без жодного поля окрім «Всі поля».
+            if (typeof updateFieldIntakesFilterOptions === 'function') {
+                updateFieldIntakesFilterOptions();
+            }
         }
     } catch (e) {
         console.error('loadFields error', e);
@@ -70,8 +76,10 @@ function renderFieldIntakesTable() {
     if (!tbody) return;
     const sorted = getFieldIntakesFiltered();
     tbody.innerHTML = '';
+    const tfoot = document.getElementById('field-intakes-totals');
     if (!sorted.length) {
         tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Ще немає приходів з полів (зерно підприємства)</td></tr>';
+        if (tfoot) tfoot.classList.add('hidden');
         return;
     }
     sorted.forEach(intake => {
@@ -88,6 +96,20 @@ function renderFieldIntakesTable() {
         tr.querySelector('[data-view]').addEventListener('click', () => openIntakeView(intake.id));
         tbody.appendChild(tr);
     });
+    // Підсумки: лише картки що дійшли на склад (intakeOnStock).
+    // Чекаючі тари/якості не рахуємо — їх вага може ще змінитись.
+    if (tfoot) {
+        const onStock = sorted.filter(intakeOnStock);
+        const totalKg = onStock.reduce((s, i) => s + (i.accepted_weight_kg || 0), 0);
+        const pending = sorted.length - onStock.length;
+        const totalsKgEl = document.getElementById('field-intakes-totals-kg');
+        const totalsSummaryEl = document.getElementById('field-intakes-totals-summary');
+        if (totalsKgEl) totalsKgEl.textContent = formatWeight(totalKg) + ' кг';
+        if (totalsSummaryEl) {
+            totalsSummaryEl.textContent = `${sorted.length} ${pending ? `(+${pending} очікують)` : ''}`.trim();
+        }
+        tfoot.classList.remove('hidden');
+    }
 }
 
 function applyFieldsFilters() {
