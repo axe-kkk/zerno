@@ -3277,11 +3277,12 @@ td .empty-value,
     border-radius: var(--radius-lg);
     border: 1px solid var(--border);
     border-top: 3px solid var(--primary);
-    /* Промує модалку на окремий GPU compositor layer — браузер не змішує
-       її з blur backdrop-у на кожному кадрі скролу. Це критично коли
-       внизу сторінки крутиться skeleton-shimmer чи інша анімація. */
-    will-change: transform;
-    transform: translateZ(0);
+    /* НЕ ставимо тут `transform: translateZ(0)` для GPU-layer — `transform`
+       на елементі-предку ламає `position: fixed` у нащадків (custom-select
+       дропдаун розраховує coords від viewport, але виявляється спозиціонованим
+       відносно .modal-content і «їде» вбік). Scroll-lag фіксимо паузою
+       skeleton-shimmer (`body.has-open-modal .skeleton { animation: none }`)
+       та прибраним дублікатом backdrop-filter — цього вистачає. */
     box-shadow: 0 20px 60px -12px rgba(0, 0, 0, 0.18), 0 4px 16px -4px rgba(0, 0, 0, 0.08);
     width: 100%;
     max-width: 520px;
